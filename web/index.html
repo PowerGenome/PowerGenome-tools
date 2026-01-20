@@ -718,6 +718,17 @@
                     </div>
 
                     <div class="section">
+                        <label>Region Definition Mode</label>
+                        <div class="selection-mode">
+                            <button class="mode-btn active" id="clusteringModeBtn" title="Automatically cluster BAs">🔄 Automatic Clustering</button>
+                            <button class="mode-btn" id="manualModeBtn" title="Manually define regions">✏️ Manual</button>
+                        </div>
+                        <div style="font-size: 11px; color: #666; margin-top: 4px;" id="modeHint">
+                            Automatic clustering uses transmission capacity to group BAs
+                        </div>
+                    </div>
+
+                    <div class="section" id="groupingSection">
                         <label>Grouping Column</label>
                         <select id="groupingColumn">
                             <option value="transgrp" selected>transgrp (Transmission Group)</option>
@@ -729,7 +740,7 @@
                         </select>
                     </div>
 
-                    <div class="section">
+                    <div class="section" id="esrSection">
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                             <input type="checkbox" id="esrCompatibleClustering" style="width: auto; margin: 0;">
                             ESR-compatible clustering
@@ -739,7 +750,7 @@
                         </div>
                     </div>
 
-                    <div class="section">
+                    <div class="section" id="targetRegionsSection">
                         <label>Number of Regions</label>
                         <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
                             <label
@@ -785,10 +796,42 @@
                         </div>
                     </div>
 
-                    <div class="section">
+                    <div class="section" id="noClusterSection">
                         <label>Groups to Keep Unclustered</label>
                         <div id="noClusterContainer" class="checkbox-group">
                             <em>Loading...</em>
+                        </div>
+                    </div>
+
+                    <!-- Manual Region Definition UI -->
+                    <div class="section" id="manualRegionSection" style="display: none;">
+                        <label>Manual Region Definition</label>
+                        <div style="font-size: 11px; color: #666; margin-bottom: 8px;">
+                            Create regions by selecting BAs on the map, then assign them to a named region.
+                        </div>
+                        
+                        <div class="button-group-with-input">
+                            <input id="newRegionName" type="text" placeholder="New region name (e.g., Northeast)" />
+                            <button class="btn btn-secondary" id="addManualRegionBtn" type="button">Add Region</button>
+                        </div>
+
+                        <div style="margin-top: 12px;">
+                            <label style="font-size: 12px;">Current Regions (<span id="manualRegionCount">0</span>)</label>
+                            <div id="manualRegionsList" class="ba-list" style="max-height: 200px;">
+                                <em>No regions defined yet</em>
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 12px;">
+                            <button class="btn btn-secondary" id="assignBAsBtn" disabled>Assign Selected BAs</button>
+                            <button class="btn btn-secondary" id="clearManualRegionsBtn">Clear All Regions</button>
+                        </div>
+
+                        <div style="margin-top: 12px;">
+                            <label style="font-size: 12px;">Unassigned BAs (<span id="unassignedCount">0</span>)</label>
+                            <div id="unassignedList" class="ba-list">
+                                <em>Select BAs on the map to start</em>
+                            </div>
                         </div>
                     </div>
 
@@ -814,10 +857,16 @@
                         </div>
                     </div>
 
-                    <div class="section">
+                    <div class="section" id="clusteringButtons">
                         <button class="btn btn-primary" id="runBtn" disabled>Run Clustering</button>
                         <button class="btn btn-secondary" id="selectAllBtn">Select All</button>
                         <button class="btn btn-secondary" id="clearSelectionBtn">Clear</button>
+                    </div>
+
+                    <div class="section" id="manualButtons" style="display: none;">
+                        <button class="btn btn-primary" id="finalizeManualBtn" disabled>Finalize Manual Regions</button>
+                        <button class="btn btn-secondary" id="selectAllBtn2">Select All</button>
+                        <button class="btn btn-secondary" id="clearSelectionBtn2">Clear</button>
                     </div>
 
                     <div class="section">
@@ -1451,6 +1500,45 @@ wacc_real: 0.05"></textarea>
             }
         }
 
+        function toggleRegionMode(isManual) {
+            // Update button states
+            const clusteringBtn = document.getElementById('clusteringModeBtn');
+            const manualBtn = document.getElementById('manualModeBtn');
+            const modeHint = document.getElementById('modeHint');
+
+            if (isManual) {
+                clusteringBtn.classList.remove('active');
+                manualBtn.classList.add('active');
+                modeHint.textContent = 'Manually define regions by assigning selected BAs';
+            } else {
+                clusteringBtn.classList.add('active');
+                manualBtn.classList.remove('active');
+                modeHint.textContent = 'Automatic clustering uses transmission capacity to group BAs';
+            }
+
+            // Show/hide relevant sections
+            const clusteringSections = [
+                'groupingSection', 'esrSection', 'targetRegionsSection', 
+                'clusteringMethodSection', 'noClusterSection', 'clusteringButtons'
+            ];
+            const manualSections = ['manualRegionSection', 'manualButtons'];
+
+            clusteringSections.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = isManual ? 'none' : 'block';
+            });
+
+            manualSections.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = isManual ? 'block' : 'none';
+            });
+
+            // Notify Python side about mode change
+            if (window.on_region_mode_change) {
+                window.on_region_mode_change(isManual);
+            }
+        }
+
         function toggleModFuelType() {
             const sel = document.getElementById('modFuelType');
             const standardRow = document.getElementById('modStandardFuelRow');
@@ -1518,6 +1606,12 @@ wacc_real: 0.05"></textarea>
 
         document.addEventListener('DOMContentLoaded', function () {
             document.getElementById('autoOptimize').addEventListener('change', toggleAutoOptimize);
+
+            // Mode toggle buttons
+            const clusteringModeBtn = document.getElementById('clusteringModeBtn');
+            const manualModeBtn = document.getElementById('manualModeBtn');
+            if (clusteringModeBtn) clusteringModeBtn.addEventListener('click', () => toggleRegionMode(false));
+            if (manualModeBtn) manualModeBtn.addEventListener('click', () => toggleRegionMode(true));
 
             const fuelType = document.getElementById('modFuelType');
             const cls = document.getElementById('modTagClass');

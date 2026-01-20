@@ -70,6 +70,11 @@ class AppState:
         self.omit_selected = set()  # technologies to omit (dual-list UI)
         self.omit_available = set()  # technologies available to include
 
+        # Manual region definition
+        self.is_manual_mode = False  # True when in manual region definition mode
+        self.manual_regions = {}  # region_name -> list[ba_id]
+        self.selected_manual_region = None  # currently selected region for assignment
+
         # Settings generation (Settings tab)
         self.settings_yamls = {}  # filename -> yaml string
         self.modified_new_resources = {}  # key -> metadata + schema for resources.yml
@@ -892,10 +897,16 @@ def update_selected_display():
         else:
             list_el.innerHTML = "<em>None selected</em>"
 
-    # Enable/disable run button
+    # Enable/disable run button for clustering mode
     run_btn = document.getElementById("runBtn")
     if run_btn:
         run_btn.disabled = len(state.selected_bas) < 2
+
+    # Update manual mode displays if in manual mode
+    if state.is_manual_mode:
+        update_unassigned_display()
+        update_manual_regions_display()
+
 
 
 def toggle_ba_selection(ba_id, layer):
@@ -3065,6 +3076,330 @@ def on_clear_selection(event):
 
 
 # ============================================================================
+# Manual Region Definition
+# ============================================================================
+
+
+def on_region_mode_change(is_manual):
+    """Handle switch between clustering and manual modes."""
+    state.is_manual_mode = is_manual
+    if is_manual:
+        # Clear any existing clustering results
+        state.cluster_colors = {}
+        state.ba_to_region = {}
+        state.is_clustered = False
+        state.region_aggregations = None
+        # Update UI
+        update_manual_regions_display()
+        update_unassigned_display()
+    else:
+        # Clear manual regions when switching back
+        state.manual_regions = {}
+        state.selected_manual_region = None
+        # Clear YAML output
+        yaml_out = document.getElementById("yamlOut")
+        if yaml_out:
+            yaml_out.value = ""
+
+
+def on_add_manual_region(event):
+    """Handle Add Region button click."""
+    name_input = document.getElementById("newRegionName")
+    if not name_input:
+        return
+    
+    region_name = name_input.value.strip()
+    if not region_name:
+        set_status("Please enter a region name", "error")
+        return
+    
+    # Check for duplicate names
+    if region_name in state.manual_regions:
+        set_status(f"Region '{region_name}' already exists", "error")
+        return
+    
+    # Add empty region
+    state.manual_regions[region_name] = []
+    state.selected_manual_region = region_name
+    
+    # Clear input
+    name_input.value = ""
+    
+    # Update display
+    update_manual_regions_display()
+    set_status(f"Region '{region_name}' created. Select BAs on the map and click 'Assign Selected BAs'.", "success")
+
+
+def on_assign_bas(event):
+    """Assign selected BAs to the selected manual region."""
+    if not state.selected_manual_region:
+        set_status("Please select a region first", "error")
+        return
+    
+    if not state.selected_bas:
+        set_status("Please select BAs on the map first", "error")
+        return
+    
+    # Get BAs that are not already assigned
+    assigned_bas = set()
+    for bas in state.manual_regions.values():
+        assigned_bas.update(bas)
+    
+    new_bas = state.selected_bas - assigned_bas
+    if not new_bas:
+        set_status("All selected BAs are already assigned to regions", "error")
+        return
+    
+    # Assign BAs to selected region
+    state.manual_regions[state.selected_manual_region].extend(new_bas)
+    
+    # Clear selection
+    state.selected_bas.clear()
+    update_selected_display()
+    
+    # Update displays
+    update_manual_regions_display()
+    update_unassigned_display()
+    
+    # Update map colors to show assignments
+    update_manual_region_colors()
+    
+    set_status(f"Assigned {len(new_bas)} BAs to region '{state.selected_manual_region}'", "success")
+
+
+def on_finalize_manual(event):
+    """Finalize manual region definitions and generate YAML."""
+    if not state.manual_regions:
+        set_status("Please define at least one region", "error")
+        return
+    
+    # Check that all regions have BAs
+    empty_regions = [name for name, bas in state.manual_regions.items() if not bas]
+    if empty_regions:
+        set_status(f"Regions {empty_regions} have no BAs assigned", "error")
+        return
+    
+    # Convert to region_aggregations format
+    state.region_aggregations = {name: list(bas) for name, bas in state.manual_regions.items()}
+    state.is_clustered = True
+    
+    # Build ba_to_region mapping
+    state.ba_to_region = {}
+    for region_name, bas in state.region_aggregations.items():
+        for ba in bas:
+            state.ba_to_region[ba] = region_name
+    
+    # Generate YAML (need model_regions list for generate_yaml function)
+    model_regions = sorted(state.region_aggregations.keys())
+    yaml_str = generate_yaml(model_regions, state.region_aggregations)
+    yaml_out = document.getElementById("yamlOut")
+    if yaml_out:
+        yaml_out.value = yaml_str
+    
+    # Update transmission lines if enabled
+    update_transmission_lines()
+    
+    # Update tooltips
+    update_tooltips()
+    
+    # Refresh plant cluster defaults
+    update_default_cluster_budget()
+    
+    num_regions = len(state.region_aggregations)
+    total_bas = sum(len(bas) for bas in state.region_aggregations.values())
+    set_status(f"Manual regions finalized! {num_regions} regions created with {total_bas} BAs.", "success")
+
+
+def on_clear_manual_regions(event):
+    """Clear all manual region definitions."""
+    state.manual_regions = {}
+    state.selected_manual_region = None
+    state.cluster_colors = {}
+    state.ba_to_region = {}
+    state.is_clustered = False
+    state.region_aggregations = None
+    
+    # Reset map colors
+    for ba_id, layer in state.ba_layers.items():
+        outline_color = get_outline_color(ba_id)
+        fill_color = get_fill_color(ba_id)
+        layer.setStyle(
+            to_js(
+                {
+                    "fillColor": fill_color,
+                    "fillOpacity": 0.5,
+                    "color": outline_color,
+                    "weight": 2,
+                }
+            )
+        )
+    
+    # Update displays
+    update_manual_regions_display()
+    update_unassigned_display()
+    update_tooltips()
+    
+    # Clear YAML
+    yaml_out = document.getElementById("yamlOut")
+    if yaml_out:
+        yaml_out.value = ""
+    
+    set_status("All manual regions cleared", "info")
+
+
+def update_manual_regions_display():
+    """Update the list of manual regions in the UI."""
+    count_el = document.getElementById("manualRegionCount")
+    list_el = document.getElementById("manualRegionsList")
+    assign_btn = document.getElementById("assignBAsBtn")
+    finalize_btn = document.getElementById("finalizeManualBtn")
+    
+    if count_el:
+        count_el.textContent = str(len(state.manual_regions))
+    
+    if list_el:
+        if not state.manual_regions:
+            list_el.innerHTML = "<em>No regions defined yet</em>"
+        else:
+            html_parts = []
+            for region_name, bas in sorted(state.manual_regions.items()):
+                is_selected = region_name == state.selected_manual_region
+                selected_class = ' style="background: #e3f2fd; font-weight: 500;"' if is_selected else ""
+                ba_count = len(bas)
+                ba_list = ", ".join(sorted(bas)[:5])
+                if len(bas) > 5:
+                    ba_list += f", ... ({ba_count - 5} more)"
+                
+                # Add click handler to select region
+                html_parts.append(
+                    f'<div class="candidate-item"{selected_class} '
+                    f'onclick="window.selectManualRegion(\'{region_name}\')" '
+                    f'style="cursor: pointer;">'
+                    f'<strong>{html.escape(region_name)}</strong> ({ba_count} BAs)<br>'
+                    f'<small style="color: #666;">{html.escape(ba_list)}</small><br>'
+                    f'<button onclick="event.stopPropagation(); window.removeManualRegion(\'{region_name}\')" '
+                    f'style="margin-top: 4px; padding: 2px 6px; font-size: 11px;">Remove</button>'
+                    f'</div>'
+                )
+            list_el.innerHTML = "".join(html_parts)
+    
+    # Enable/disable assign button
+    if assign_btn:
+        assign_btn.disabled = state.selected_manual_region is None or not state.selected_bas
+    
+    # Enable finalize button if we have regions with BAs
+    if finalize_btn:
+        has_complete_regions = any(len(bas) > 0 for bas in state.manual_regions.values())
+        finalize_btn.disabled = not has_complete_regions
+
+
+def update_unassigned_display():
+    """Update the list of unassigned BAs."""
+    count_el = document.getElementById("unassignedCount")
+    list_el = document.getElementById("unassignedList")
+    
+    # Get all assigned BAs
+    assigned_bas = set()
+    for bas in state.manual_regions.values():
+        assigned_bas.update(bas)
+    
+    # Unassigned are selected BAs minus assigned BAs
+    unassigned_bas = state.selected_bas - assigned_bas
+    
+    if count_el:
+        count_el.textContent = str(len(unassigned_bas))
+    
+    if list_el:
+        if not unassigned_bas:
+            list_el.innerHTML = "<em>No unassigned BAs</em>"
+        else:
+            sorted_bas = sorted(unassigned_bas)
+            html_list = "".join(
+                f'<span class="ba-tag unclustered">{ba}</span>' for ba in sorted_bas
+            )
+            list_el.innerHTML = html_list
+
+
+def update_manual_region_colors():
+    """Update map colors to show manual region assignments."""
+    # Build color mapping
+    state.cluster_colors = {}
+    for i, (region_name, bas) in enumerate(sorted(state.manual_regions.items())):
+        color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
+        for ba in bas:
+            state.cluster_colors[ba] = color
+    
+    # Update layer styles
+    for ba_id, layer in state.ba_layers.items():
+        if ba_id in state.cluster_colors:
+            # Assigned BA
+            fill_color = state.cluster_colors[ba_id]
+            outline_color = get_outline_color(ba_id)
+            layer.setStyle(
+                to_js(
+                    {
+                        "fillColor": fill_color,
+                        "fillOpacity": 0.7,
+                        "color": outline_color,
+                        "weight": 3,
+                    }
+                )
+            )
+        elif ba_id in state.selected_bas:
+            # Selected but unassigned
+            outline_color = get_outline_color(ba_id)
+            layer.setStyle(
+                to_js(
+                    {
+                        "fillColor": "#2196F3",
+                        "fillOpacity": 0.6,
+                        "color": outline_color,
+                        "weight": 3,
+                    }
+                )
+            )
+        else:
+            # Unselected
+            outline_color = get_outline_color(ba_id)
+            fill_color = get_fill_color(ba_id)
+            layer.setStyle(
+                to_js(
+                    {
+                        "fillColor": fill_color,
+                        "fillOpacity": 0.5,
+                        "color": outline_color,
+                        "weight": 2,
+                    }
+                )
+            )
+
+
+def select_manual_region(region_name):
+    """Select a manual region for BA assignment."""
+    state.selected_manual_region = region_name
+    update_manual_regions_display()
+
+
+def remove_manual_region(region_name):
+    """Remove a manual region."""
+    if region_name in state.manual_regions:
+        del state.manual_regions[region_name]
+        if state.selected_manual_region == region_name:
+            state.selected_manual_region = None
+        update_manual_regions_display()
+        update_unassigned_display()
+        update_manual_region_colors()
+        set_status(f"Region '{region_name}' removed", "info")
+
+
+# Export functions to JavaScript
+window.selectManualRegion = create_proxy(select_manual_region)
+window.removeManualRegion = create_proxy(remove_manual_region)
+window.on_region_mode_change = create_proxy(on_region_mode_change)
+
+
+
+# ============================================================================
 # Box Selection Mode
 # ============================================================================
 
@@ -5181,6 +5516,27 @@ async def main():
         document.getElementById("clearSelectionBtn").addEventListener(
             "click", create_proxy(on_clear_selection)
         )
+        
+        # Manual region mode buttons
+        document.getElementById("addManualRegionBtn").addEventListener(
+            "click", create_proxy(on_add_manual_region)
+        )
+        document.getElementById("assignBAsBtn").addEventListener(
+            "click", create_proxy(on_assign_bas)
+        )
+        document.getElementById("finalizeManualBtn").addEventListener(
+            "click", create_proxy(on_finalize_manual)
+        )
+        document.getElementById("clearManualRegionsBtn").addEventListener(
+            "click", create_proxy(on_clear_manual_regions)
+        )
+        document.getElementById("selectAllBtn2").addEventListener(
+            "click", create_proxy(on_select_all)
+        )
+        document.getElementById("clearSelectionBtn2").addEventListener(
+            "click", create_proxy(on_clear_selection)
+        )
+        
         document.getElementById("copyYamlBtn").addEventListener(
             "click", create_proxy(on_copy_yaml)
         )

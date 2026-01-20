@@ -8,7 +8,7 @@ The PowerGenome Settings Builder is a comprehensive web-based interface for buil
 
 The guided workflow ensures you configure all necessary settings in the correct order:
 
-1. **Regions** - Define model regions by clustering Balancing Authorities
+1. **Regions** - Define model regions through automatic clustering or manual assignment of Balancing Authorities
 2. **Model Setup** - Configure planning years and financial parameters
 3. **Existing Plants** - Aggregate existing generators within regions
 4. **New Resources** - Select new-build technologies and define custom resources
@@ -20,9 +20,39 @@ Each step builds on the previous ones, with the Regions step being the foundatio
 
 ## Step 1: Regions
 
-The Regions step allows you to select Balancing Authorities and cluster them into model regions based on transmission capacity. This is the foundation of your PowerGenome model configuration.
+The Regions step allows you to define model regions using two different approaches: **Automatic Clustering** (algorithm-driven) or **Manual Definition** (user-controlled). This is the foundation of your PowerGenome model configuration, determining how plants are aggregated and how model boundaries are defined.
 
-### How to Use Region Clustering
+### Choosing Your Approach
+
+The Regions step offers two modes for defining model regions:
+
+| Mode | Best For | Approach |
+| ---- | -------- | -------- |
+| **Automatic Clustering** | Grid-operational coherence, exploratory analysis, transmission-based regions | Uses clustering algorithms and transmission capacity data to automatically group Balancing Authorities |
+| **Manual Definition** | Policy-driven regions, specific jurisdictional boundaries, full control over regional structure | Create named regions and manually assign Balancing Authorities to them |
+
+**Use Automatic Clustering when:**
+
+* You want regions that reflect transmission network structure
+* You're exploring different regional configurations
+* You need balanced regions optimized for grid operations
+* You want algorithmic optimization based on transmission capacity
+
+**Use Manual Definition when:**
+
+* You have predetermined regional boundaries (e.g., ISO/RTO territories, state groupings)
+* Your analysis requires specific policy jurisdictions
+* You need complete control over BA assignments
+* You want to match regions from previous studies or external requirements
+
+!!! tip
+    Both modes produce identical outputs for downstream steps. Once regions are defined (either automatically or manually), plant clustering, transmission lines, and YAML generation work exactly the same way.
+
+### Automatic Clustering
+
+Automatic clustering uses transmission capacity between BAs to create aggregated regions. BAs are first clustered within their selected grouping (e.g., NERC region), then groups are merged to reach the target number of regions.
+
+#### How to Use Region Clustering
 
 1. **Select BAs**: Click on regions in the map to select them. Use **Box Select** mode to drag and select multiple BAs at once.
 2. **Choose grouping**: The *Grouping Column* determines how BAs are grouped for clustering (colored outlines show groups).
@@ -33,6 +63,60 @@ The Regions step allows you to select Balancing Authorities and cluster them int
 
 !!! tip
     The clustering uses transmission capacity between BAs to create aggregated regions. BAs are first clustered within their selected grouping (e.g., NERC region), then groups are merged to reach the target number of regions. The selected grouping affects the clustering results, so experiment with different options to see what works best for your case!
+
+### Manual Definition
+
+Manual definition mode allows you to create named regions and assign Balancing Authorities to them with complete control. This is ideal when you have predetermined regional boundaries or specific jurisdictional requirements.
+
+#### How to Use Manual Region Definition
+
+1. **Switch to Manual mode**: Click the **✏️ Manual** button at the top of the Regions step.
+2. **Select BAs**: Click on regions in the map to select them. Use **Box Select** mode to drag and select multiple BAs at once. Selected BAs appear in the "Selected BAs (not yet assigned)" list.
+3. **Create a region**: Enter a name in the "Region name" field and click **Add Region**. The new region appears in the "Manual Regions" list.
+4. **Assign BAs to regions**:
+   * Click on a region in the "Manual Regions" list to select it (highlighted in blue)
+   * Select the BAs you want to assign (using the map)
+   * Click **Assign Selected BAs** to add them to the selected region
+5. **Review assignments**: Each region shows its BA count and the list of assigned BAs. Unassigned selected BAs remain in the "Selected BAs" list.
+6. **Manage regions**: Use **Remove** buttons to delete individual regions (BAs become unassigned) or **Clear All Regions** to start over.
+7. **Finalize**: Click **Finalize Manual Regions** when complete. This converts your manual regions to the format used by all downstream steps.
+
+#### Manual Region Best Practices
+
+**Naming conventions:**
+
+* Use clear, descriptive names (e.g., "California", "PJM", "Southeast", "MISO_North")
+* Avoid spaces in region names if possible (use underscores instead)
+* Be consistent with capitalization and naming patterns
+
+**BA assignments:**
+
+* Each BA can only be assigned to one region (the app prevents duplicates automatically)
+* All selected BAs should be assigned before finalizing
+* Review the BA count for each region to ensure balanced regions if needed
+* Use the map visualization to verify geographic coherence
+
+**Workflow tips:**
+
+* **Start with large regions first**: Define major territories before subdividing
+* **Group by proximity**: Assign geographically adjacent BAs to minimize transmission line complexity
+* **Check for orphans**: Before finalizing, verify the "Selected BAs" list is empty
+* **Test incrementally**: Finalize early versions to test downstream steps, then return to refine
+
+!!! warning
+    Switching between Automatic and Manual modes clears the data from the other mode. If you want to preserve work, export your YAML before switching modes.
+
+#### When Manual Regions Are Especially Useful
+
+**ISO/RTO boundaries**: If your analysis focuses on specific market operators, manually define regions matching their territories (e.g., CAISO, ERCOT, PJM, MISO, ISO-NE).
+
+**State-level analysis**: Create one region per state or group states according to policy coalitions, regional compacts, or shared regulatory frameworks.
+
+**Policy scenarios**: Model regions that align with multi-state policy initiatives (e.g., Western Climate Initiative, Regional Greenhouse Gas Initiative) or federal policy zones.
+
+**Comparison studies**: Match regions from previous research, regulatory dockets, or industry reports to enable direct comparison of results.
+
+**Hybrid approaches**: Start with automatic clustering to explore network structure, note the results, switch to manual mode, and use clustering insights to inform your manual assignments.
 
 ### Clustering Configuration Guide
 
