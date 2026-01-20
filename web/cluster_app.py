@@ -236,80 +236,128 @@ def can_states_trade_transitively(states_set, rectable_df):
     return len(visited) == len(states_list)
 
 
-def build_esr_zones(region_aggregations, hierarchy_df, rectable_df):
-    """Infer ESR zones (groups of regions that can trade with each other).
+def build_state_trading_zones(all_states, rectable_df, state_to_interconnect=None):
+    """Build trading zones based on state-level trading rules.
 
-    Each ESR zone represents a group of regions that can all participate in
-    the same REC/credit trading market. Regions are placed in separate zones
-    if they cannot trade with each other.
+    Groups states into zones where all states in a zone can trade with each other
+    (directly or transitively through other states in the zone).
 
-    If a region contains states that cannot trade transitively, it is split
-    into sub-regions for ESR purposes.
+    If state_to_interconnect is provided, trading is limited to within the same
+    interconnect (Western, Eastern, ERCOT).
 
     Returns:
-        (zones, expanded_region_aggregations): zones is a list of lists of region names,
-        expanded_region_aggregations is a dict mapping region names to BA lists
-        (including any _esr1, _esr2 split regions)
+        list of sets, where each set contains states that form a trading zone
     """
-    # First, handle regions with non-trading states by splitting them
-    expanded_region_aggregations = {}
-    for region_name, region_bas in region_aggregations.items():
-        # Check if this region needs to be split
-        trading_subgroups = split_bas_by_trading_zones(
-            region_bas, hierarchy_df, rectable_df
-        )
-        if len(trading_subgroups) == 1:
-            # No split needed
-            expanded_region_aggregations[region_name] = region_bas
-        else:
-            # Split into sub-regions for ESR purposes
-            for i, subgroup in enumerate(trading_subgroups):
-                sub_name = f"{region_name}_esr{i+1}"
-                expanded_region_aggregations[sub_name] = list(subgroup)
+    if rectable_df is None or len(all_states) <= 1:
+        return [set(all_states)]
 
-    # Build zones by grouping regions that can ALL trade with each other
-    # Each region gets its own zone initially, then we try to merge compatible zones
-    regions = list(expanded_region_aggregations.keys())
+    states_list = list(all_states)
 
-    # Get states for each region
-    region_states = {}
-    for region in regions:
-        region_states[region] = get_states_in_region(
-            expanded_region_aggregations[region], hierarchy_df
-        )
+    # Build a graph of direct trading relationships between states
+    trading_graph = {s: set() for s in states_list}
+    for i, s1 in enumerate(states_list):
+        for s2 in states_list[i + 1 :]:
+            # Check interconnect constraint first (if provided)
+            if state_to_interconnect is not None:
+                ic1 = state_to_interconnect.get(s1)
+                ic2 = state_to_interconnect.get(s2)
+                # If both states have known interconnects and they differ, skip
+                if ic1 and ic2 and ic1 != ic2:
+                    continue
 
-    # Helper to check if two regions can trade (any state in region1 can trade with any in region2)
-    def regions_can_trade(r1, r2):
-        for s1 in region_states[r1]:
-            for s2 in region_states[r2]:
-                if can_states_trade(s1, s2, rectable_df):
-                    return True
-        return False
+            if can_states_trade(s1, s2, rectable_df):
+                trading_graph[s1].add(s2)
+                trading_graph[s2].add(s1)
 
-    # Helper to check if a region can trade with ALL regions in a zone
-    def region_can_join_zone(region, zone_regions):
-        for existing_region in zone_regions:
-            if not regions_can_trade(region, existing_region):
-                return False
-        return True
-
-    # Build zones: each region joins the first zone where it can trade with ALL members
-    # If no such zone exists, create a new zone
+    # Find connected components (trading zones) using DFS
+    visited = set()
     zones = []
-    for region in regions:
-        joined = False
-        for zone in zones:
-            if region_can_join_zone(region, zone):
-                zone.append(region)
-                joined = True
-                break
-        if not joined:
-            zones.append([region])
 
-    # Sort zones for consistent output
-    zones = [sorted(zone) for zone in zones]
+    def dfs(state, zone):
+        visited.add(state)
+        zone.add(state)
+        for neighbor in trading_graph[state]:
+            if neighbor not in visited:
+                dfs(neighbor, zone)
 
-    return zones, expanded_region_aggregations
+    for state in states_list:
+        if state not in visited:
+            zone = set()
+            dfs(state, zone)
+            zones.append(zone)
+
+    return zones
+
+
+def build_state_to_interconnect_map(hierarchy_df):
+    """Build a mapping from state to interconnect.
+
+    If a state spans multiple interconnects, uses the interconnect with the most BAs
+    for that state. Returns lowercase state codes mapped to interconnect names.
+    """
+    if hierarchy_df is None or "interconnect" not in hierarchy_df.columns:
+        return {}
+
+    # Count BAs per (state, interconnect) pair
+    state_ic_counts = {}
+    for _, row in hierarchy_df.iterrows():
+        st = str(row.get("st", "")).lower()
+        ic = str(row.get("interconnect", "")).strip()
+        if not st or not ic:
+            continue
+        key = (st, ic)
+        state_ic_counts[key] = state_ic_counts.get(key, 0) + 1
+
+    # For each state, pick the interconnect with most BAs
+    state_to_ic = {}
+    state_best_count = {}
+    for (st, ic), count in state_ic_counts.items():
+        if st not in state_to_ic or count > state_best_count.get(st, 0):
+            state_to_ic[st] = ic
+            state_best_count[st] = count
+
+    return state_to_ic
+
+
+def build_esr_zones(region_aggregations, hierarchy_df, rectable_df):
+    """Build ESR trading zones based on state-level trading rules.
+
+    Unlike ESR-compatible clustering which ensures regions only contain states
+    that can trade, this function handles regions that may span multiple
+    non-trading states by assigning each state to its appropriate zone.
+
+    A single region can participate in multiple ESR zones if it contains
+    states from different trading groups. The ESR constraint values are
+    weighted by the demand fraction from each state.
+
+    Trading is limited to within the same interconnect (Western, Eastern, ERCOT).
+
+    Returns:
+        (state_zones, state_to_zone):
+            - state_zones: list of sets, each set contains states in a trading zone
+            - state_to_zone: dict mapping state -> zone_index
+    """
+    # Collect all states present in any region
+    all_states = set()
+    for region_bas in region_aggregations.values():
+        states = get_states_in_region(region_bas, hierarchy_df)
+        all_states.update(states)
+
+    # Build state to interconnect mapping
+    state_to_interconnect = build_state_to_interconnect_map(hierarchy_df)
+
+    # Build trading zones at the state level (limited by interconnect)
+    state_zones = build_state_trading_zones(
+        all_states, rectable_df, state_to_interconnect
+    )
+
+    # Create state -> zone index mapping
+    state_to_zone = {}
+    for zone_idx, zone_states in enumerate(state_zones):
+        for state in zone_states:
+            state_to_zone[state] = zone_idx
+
+    return state_zones, state_to_zone
 
 
 def get_qualified_technologies(plants_df, new_resources, allowed_techs_df):
@@ -344,17 +392,15 @@ def get_qualified_technologies(plants_df, new_resources, allowed_techs_df):
     return rps_qualified, ces_qualified
 
 
-def aggregate_policy_for_region(
-    region_bas, year, policy_type, hierarchy_df, pop_fraction_df, policy_df
-):
-    """Compute population-weighted average policy requirement for a model region in a given year.
+def compute_state_demand_fractions(region_bas, hierarchy_df, pop_fraction_df):
+    """Compute the demand fraction for each state within a region.
 
-    The result is a weighted average of each state's policy requirement, where the weights
-    are the fraction of the region's total population that resides in each state.
+    Uses population as a proxy for demand. Returns a dict mapping
+    state -> demand_fraction where fractions sum to 1.0.
     """
     ba_to_state_val = extract_state_for_region(region_bas, hierarchy_df)
 
-    # First, compute total population in this region and population per state
+    # Compute total population in this region and population per state
     region_total_pop = 0.0
     state_pop_in_region = {}  # state -> total population from that state in this region
 
@@ -375,26 +421,47 @@ def aggregate_policy_for_region(
         )
 
     if region_total_pop == 0:
+        return {}
+
+    # Convert to fractions
+    return {state: pop / region_total_pop for state, pop in state_pop_in_region.items()}
+
+
+def get_state_policy_value(state, year, policy_type, policy_df):
+    """Get the policy value for a specific state and year.
+
+    Returns 0.0 if no policy is found.
+    """
+    policy_row = policy_df[(policy_df["year"] == year) & (policy_df["st"] == state)]
+    if policy_row.empty:
         return 0.0
 
-    # Now compute weighted average of policy requirements by state
+    col_name = "rps_all" if policy_type == "RPS" else "Value"
+    if col_name not in policy_row.columns:
+        return 0.0
+
+    return float(policy_row.iloc[0][col_name])
+
+
+def aggregate_policy_for_region(
+    region_bas, year, policy_type, hierarchy_df, pop_fraction_df, policy_df
+):
+    """Compute population-weighted average policy requirement for a model region in a given year.
+
+    The result is a weighted average of each state's policy requirement, where the weights
+    are the fraction of the region's total population that resides in each state.
+    """
+    state_fractions = compute_state_demand_fractions(
+        region_bas, hierarchy_df, pop_fraction_df
+    )
+
+    if not state_fractions:
+        return 0.0
+
+    # Compute weighted average of policy requirements by state
     total_requirement = 0.0
-    for state_val, state_pop in state_pop_in_region.items():
-        weight = state_pop / region_total_pop
-
-        policy_row = policy_df[
-            (policy_df["year"] == year) & (policy_df["st"] == state_val)
-        ]
-        if policy_row.empty:
-            policy_value = 0.0
-        else:
-            col_name = "rps_all" if policy_type == "RPS" else "Value"
-            policy_value = (
-                float(policy_row.iloc[0][col_name])
-                if col_name in policy_row.columns
-                else 0.0
-            )
-
+    for state_val, weight in state_fractions.items():
+        policy_value = get_state_policy_value(state_val, year, policy_type, policy_df)
         total_requirement += weight * policy_value
 
     return total_requirement
@@ -403,7 +470,8 @@ def aggregate_policy_for_region(
 def generate_emission_policies_csv(
     region_aggregations,
     model_years,
-    zones,
+    state_zones,
+    state_to_zone,
     hierarchy_df,
     pop_fraction_df,
     rps_df,
@@ -414,6 +482,26 @@ def generate_emission_policies_csv(
 ):
     """Generate emission_policies.csv data.
 
+    This function handles regions that may span multiple trading zones. For each
+    region, the ESR constraint value for each zone is computed as:
+        sum(state_demand_fraction * state_policy) for states in that zone
+
+    A single region can have non-zero values in multiple ESR columns if it contains
+    states from different trading zones.
+
+    Args:
+        region_aggregations: dict mapping region_name -> list of BAs
+        model_years: list of years to generate policies for
+        state_zones: list of sets, each set contains states in a trading zone
+        state_to_zone: dict mapping state -> zone_index
+        hierarchy_df: DataFrame with BA hierarchy info
+        pop_fraction_df: DataFrame with population fractions per BA/state
+        rps_df: DataFrame with RPS policy values
+        ces_df: DataFrame with CES policy values
+        include_rps: whether to include RPS constraints
+        include_ces: whether to include CES constraints
+        case_id: case identifier string
+
     Returns:
         (df, esr_map, esr_type_map):
             - df: DataFrame with emission policies
@@ -423,77 +511,109 @@ def generate_emission_policies_csv(
     max_year_in_data_rps = rps_df["year"].max()
     max_year_in_data_ces = ces_df["year"].max()
 
-    rows = []
+    # Build ESR column names for each zone
     esr_constraint_num = 1
     esr_map = {}
-    esr_type_map = {}  # Track whether each ESR is RPS or CES
-    zone_esr_map = {}
+    esr_type_map = {}
+    zone_esr_map = {}  # zone_idx -> (rps_col, ces_col)
 
-    for zone_idx, zone_regions in enumerate(zones):
+    for zone_idx in range(len(state_zones)):
         zone_rps = None
         zone_ces = None
         if include_rps:
             zone_rps = f"ESR_{esr_constraint_num}"
-            esr_map[zone_rps] = zone_regions
+            esr_map[zone_rps] = (
+                []
+            )  # Will be filled with regions that have non-zero values
             esr_type_map[zone_rps] = "RPS"
             esr_constraint_num += 1
         if include_ces:
             zone_ces = f"ESR_{esr_constraint_num}"
-            esr_map[zone_ces] = zone_regions
+            esr_map[zone_ces] = []
             esr_type_map[zone_ces] = "CES"
             esr_constraint_num += 1
         zone_esr_map[zone_idx] = (zone_rps, zone_ces)
 
+    rows = []
+
     for region_name, region_bas in region_aggregations.items():
-        region_zone = None
-        for zone_idx, zone_regions in enumerate(zones):
-            if region_name in zone_regions:
-                region_zone = zone_idx
-                break
-        if region_zone is None:
+        # Get state demand fractions for this region
+        state_fractions = compute_state_demand_fractions(
+            region_bas, hierarchy_df, pop_fraction_df
+        )
+
+        if not state_fractions:
             continue
 
-        zone_rps, zone_ces = zone_esr_map[region_zone]
         for year in model_years:
             row = {"case_id": case_id, "year": int(year), "region": region_name}
             use_year_rps = min(year, max_year_in_data_rps)
             use_year_ces = min(year, max_year_in_data_ces)
-            if zone_rps:
-                rps_val = aggregate_policy_for_region(
-                    region_bas,
-                    use_year_rps,
-                    "RPS",
-                    hierarchy_df,
-                    pop_fraction_df,
-                    rps_df,
-                )
-                row[zone_rps] = round(float(rps_val), 3)
-            if zone_ces:
-                ces_val = aggregate_policy_for_region(
-                    region_bas,
-                    use_year_ces,
-                    "CES",
-                    hierarchy_df,
-                    pop_fraction_df,
-                    ces_df,
-                )
-                row[zone_ces] = round(float(ces_val), 3)
+
+            # For each zone, compute the weighted policy value from states in that zone
+            for zone_idx, zone_states in enumerate(state_zones):
+                zone_rps_col, zone_ces_col = zone_esr_map[zone_idx]
+
+                # Sum demand_fraction * policy for states in this zone that are in this region
+                rps_val = 0.0
+                ces_val = 0.0
+
+                for state_val, demand_frac in state_fractions.items():
+                    if state_val not in zone_states:
+                        continue
+
+                    if include_rps:
+                        state_rps = get_state_policy_value(
+                            state_val, use_year_rps, "RPS", rps_df
+                        )
+                        rps_val += demand_frac * state_rps
+
+                    if include_ces:
+                        state_ces = get_state_policy_value(
+                            state_val, use_year_ces, "CES", ces_df
+                        )
+                        ces_val += demand_frac * state_ces
+
+                # Only add to row if there's a non-zero contribution
+                if zone_rps_col and rps_val > 0:
+                    row[zone_rps_col] = round(float(rps_val), 3)
+                    if region_name not in esr_map[zone_rps_col]:
+                        esr_map[zone_rps_col].append(region_name)
+
+                if zone_ces_col and ces_val > 0:
+                    row[zone_ces_col] = round(float(ces_val), 3)
+                    if region_name not in esr_map[zone_ces_col]:
+                        esr_map[zone_ces_col].append(region_name)
+
             rows.append(row)
 
     df = pd.DataFrame(rows)
 
-    for zone_idx, zone_regions in enumerate(zones):
-        zone_rps, zone_ces = zone_esr_map[zone_idx]
-        if zone_rps and zone_ces:
-            for idx, row in df.iterrows():
-                if row["region"] in zone_regions:
-                    rps_val = df.at[idx, zone_rps]
-                    ces_val = df.at[idx, zone_ces]
+    # Ensure CES >= RPS for each zone (RPS resources also qualify for CES)
+    for zone_idx in range(len(state_zones)):
+        zone_rps_col, zone_ces_col = zone_esr_map[zone_idx]
+        if zone_rps_col and zone_ces_col:
+            if zone_rps_col in df.columns and zone_ces_col in df.columns:
+                for idx in df.index:
+                    rps_val = (
+                        df.at[idx, zone_rps_col]
+                        if pd.notna(df.at[idx, zone_rps_col])
+                        else 0.0
+                    )
+                    ces_val = (
+                        df.at[idx, zone_ces_col]
+                        if pd.notna(df.at[idx, zone_ces_col])
+                        else 0.0
+                    )
                     if ces_val < rps_val:
-                        df.at[idx, zone_ces] = rps_val
+                        df.at[idx, zone_ces_col] = rps_val
 
-    # Sort ESR columns by numeric ID (ESR_1, ESR_2, ... ESR_10, ESR_11, not ESR_1, ESR_10, ESR_11, ESR_2)
+    # Fill NaN with 0 for ESR columns
     esr_cols = [c for c in df.columns if c.startswith("ESR_")]
+    for col in esr_cols:
+        df[col] = df[col].fillna(0.0)
+
+    # Sort ESR columns by numeric ID
     esr_cols_sorted = sorted(esr_cols, key=lambda x: int(x.split("_")[1]))
     columns = ["case_id", "year", "region"] + esr_cols_sorted
     df = df[columns]
@@ -4893,10 +5013,35 @@ def render_esr_results():
         else:
             ces_list.innerHTML = "<em>No CES-qualified technologies found.</em>"
 
-    # Render zones
-    if zones_list and state.esr_zones:
+    # Render ESR constraints (showing which regions participate in each ESR zone)
+    if zones_list and state.esr_map and state.esr_type_map:
+        zones_html_parts = []
+        for esr_name in sorted(
+            state.esr_map.keys(), key=lambda x: int(x.split("_")[1])
+        ):
+            regions = state.esr_map.get(esr_name, [])
+            esr_type = state.esr_type_map.get(esr_name, "Unknown")
+            # Find which state zone this ESR corresponds to
+            zone_idx = (
+                int(esr_name.split("_")[1]) - 1
+            ) // 2  # ESR_1,2 -> zone 0, ESR_3,4 -> zone 1, etc.
+            zone_states = (
+                sorted(state.esr_zones[zone_idx])
+                if zone_idx < len(state.esr_zones)
+                else []
+            )
+            zones_html_parts.append(
+                f"<div class='candidate-item'>"
+                f"<strong>{esr_name} ({esr_type}):</strong> "
+                f"States: {', '.join(zone_states)}<br>"
+                f"Regions: {', '.join(sorted(regions)) if regions else '<em>none</em>'}"
+                f"</div>"
+            )
+        zones_list.innerHTML = "".join(zones_html_parts)
+    elif zones_list and state.esr_zones:
+        # Fallback: show state zones if esr_map not available
         zones_html = "".join(
-            f"<div class='candidate-item'><strong>Zone {i+1}:</strong> {', '.join(zone)}</div>"
+            f"<div class='candidate-item'><strong>Trading Zone {i+1}:</strong> States: {', '.join(sorted(zone))}</div>"
             for i, zone in enumerate(state.esr_zones)
         )
         zones_list.innerHTML = zones_html
@@ -4952,8 +5097,8 @@ def on_run_esr_analysis(event):
             set_esr_status("Enable at least one of RPS or CES constraints.", "error")
             return
 
-        # Build ESR zones
-        state.esr_zones, esr_region_aggregations = build_esr_zones(
+        # Build ESR zones (state-based trading zones)
+        state.esr_zones, state_to_zone = build_esr_zones(
             state.region_aggregations, state.hierarchy_df, state.rectable_df
         )
 
@@ -4966,12 +5111,14 @@ def on_run_esr_analysis(event):
             state.plants_df, new_resources, state.allowed_techs_df
         )
 
-        # Generate emission policies CSV using expanded region aggregations
+        # Generate emission policies CSV using original region aggregations
+        # (no region name splitting - regions can span multiple ESR zones)
         state.emission_policies_df, state.esr_map, state.esr_type_map = (
             generate_emission_policies_csv(
-                esr_region_aggregations,
+                state.region_aggregations,
                 model_years,
                 state.esr_zones,
+                state_to_zone,
                 state.hierarchy_df,
                 state.pop_fraction_df,
                 state.rps_df,
