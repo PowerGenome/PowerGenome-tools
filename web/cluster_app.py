@@ -3069,8 +3069,9 @@ def on_finalize_manual(event):
         for ba in bas:
             state.ba_to_region[ba] = region_name
     
-    # Generate YAML
-    yaml_str = generate_yaml_output(state.region_aggregations)
+    # Generate YAML (need model_regions list for generate_yaml function)
+    model_regions = sorted(state.region_aggregations.keys())
+    yaml_str = generate_yaml(model_regions, state.region_aggregations)
     yaml_out = document.getElementById("yamlOut")
     if yaml_out:
         yaml_out.value = yaml_str
