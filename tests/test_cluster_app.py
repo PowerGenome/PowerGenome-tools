@@ -1944,5 +1944,875 @@ class TestESRFunctions:
         assert result[0] == {"ca"}
 
 
+# ============================================================================
+# Manual Region Definition Tests
+# ============================================================================
+
+
+class MockAppState:
+    """Mock AppState class for testing manual region functionality."""
+
+    def __init__(self):
+        self.is_manual_mode = False
+        self.manual_regions = {}
+        self.selected_manual_region = None
+        self.selected_bas = set()
+        self.cluster_colors = {}
+        self.ba_to_region = {}
+        self.is_clustered = False
+        self.region_aggregations = None
+
+
+def add_manual_region_logic(state, region_name):
+    """Logic for adding a manual region (without DOM dependencies)."""
+    # Strip whitespace first
+    region_name = region_name.strip() if region_name else ""
+    
+    if not region_name:
+        return False, "Please enter a region name"
+
+    if region_name in state.manual_regions:
+        return False, f"Region '{region_name}' already exists"
+
+    state.manual_regions[region_name] = []
+    state.selected_manual_region = region_name
+    return True, f"Region '{region_name}' created"
+
+
+def assign_bas_logic(state, bas_to_assign):
+    """Logic for assigning BAs to a region (without DOM dependencies)."""
+    if not state.selected_manual_region:
+        return False, "Please select a region first"
+
+    if not bas_to_assign:
+        return False, "Please select BAs on the map first"
+
+    # Get BAs that are not already assigned
+    assigned_bas = set()
+    for bas in state.manual_regions.values():
+        assigned_bas.update(bas)
+
+    new_bas = bas_to_assign - assigned_bas
+    if not new_bas:
+        return False, "All selected BAs are already assigned to regions"
+
+    # Assign BAs to selected region
+    state.manual_regions[state.selected_manual_region].extend(new_bas)
+    return True, f"Assigned {len(new_bas)} BAs to region '{state.selected_manual_region}'"
+
+
+def finalize_manual_logic(state):
+    """Logic for finalizing manual regions (without DOM dependencies)."""
+    if not state.manual_regions:
+        return False, "Please define at least one region"
+
+    # Check that all regions have BAs
+    empty_regions = [name for name, bas in state.manual_regions.items() if not bas]
+    if empty_regions:
+        return False, f"Regions {empty_regions} have no BAs assigned"
+
+    # Convert to region_aggregations format
+    state.region_aggregations = {name: list(bas) for name, bas in state.manual_regions.items()}
+    state.is_clustered = True
+
+    # Build ba_to_region mapping
+    state.ba_to_region = {}
+    for region_name, bas in state.region_aggregations.items():
+        for ba in bas:
+            state.ba_to_region[ba] = region_name
+
+    num_regions = len(state.region_aggregations)
+    total_bas = sum(len(bas) for bas in state.region_aggregations.values())
+    return True, f"Manual regions finalized! {num_regions} regions created with {total_bas} BAs."
+
+
+def clear_manual_regions_logic(state):
+    """Logic for clearing manual regions (without DOM dependencies)."""
+    state.manual_regions = {}
+    state.selected_manual_region = None
+    state.cluster_colors = {}
+    state.ba_to_region = {}
+    state.is_clustered = False
+    state.region_aggregations = None
+
+
+def select_manual_region_logic(state, region_name):
+    """Logic for selecting a manual region (without DOM dependencies)."""
+    state.selected_manual_region = region_name
+
+
+def remove_manual_region_logic(state, region_name):
+    """Logic for removing a manual region (without DOM dependencies)."""
+    if region_name in state.manual_regions:
+        del state.manual_regions[region_name]
+        if state.selected_manual_region == region_name:
+            state.selected_manual_region = None
+        return True, f"Region '{region_name}' removed"
+    return False, f"Region '{region_name}' not found"
+
+
+def on_region_mode_change_logic(state, is_manual):
+    """Logic for switching between clustering and manual modes (without DOM dependencies)."""
+    state.is_manual_mode = is_manual
+    if is_manual:
+        # Clear any existing clustering results
+        state.cluster_colors = {}
+        state.ba_to_region = {}
+        state.is_clustered = False
+        state.region_aggregations = None
+    else:
+        # Clear manual regions when switching back
+        state.manual_regions = {}
+        state.selected_manual_region = None
+
+
+class TestManualRegionCreation:
+    """Test manual region creation functionality."""
+
+    def test_add_region_success(self):
+        """Test successfully adding a new region."""
+        state = MockAppState()
+        success, msg = add_manual_region_logic(state, "Region1")
+
+        assert success is True
+        assert "Region1" in state.manual_regions
+        assert state.manual_regions["Region1"] == []
+        assert state.selected_manual_region == "Region1"
+
+    def test_add_multiple_regions(self):
+        """Test adding multiple regions."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        add_manual_region_logic(state, "Region2")
+        add_manual_region_logic(state, "Region3")
+
+        assert len(state.manual_regions) == 3
+        assert "Region1" in state.manual_regions
+        assert "Region2" in state.manual_regions
+        assert "Region3" in state.manual_regions
+        assert state.selected_manual_region == "Region3"  # Last added is selected
+
+    def test_add_region_empty_name(self):
+        """Test that empty region names are rejected."""
+        state = MockAppState()
+        success, msg = add_manual_region_logic(state, "")
+
+        assert success is False
+        assert "enter a region name" in msg.lower()
+        assert len(state.manual_regions) == 0
+
+    def test_add_region_whitespace_name(self):
+        """Test that whitespace-only names are rejected."""
+        state = MockAppState()
+        success, msg = add_manual_region_logic(state, "   ")
+
+        assert success is False
+        assert len(state.manual_regions) == 0
+
+    def test_add_region_duplicate_name(self):
+        """Test that duplicate region names are rejected."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        success, msg = add_manual_region_logic(state, "Region1")
+
+        assert success is False
+        assert "already exists" in msg
+        assert len(state.manual_regions) == 1
+
+    def test_add_region_case_sensitive(self):
+        """Test that region names are case-sensitive."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        success, msg = add_manual_region_logic(state, "region1")
+
+        assert success is True
+        assert len(state.manual_regions) == 2
+        assert "Region1" in state.manual_regions
+        assert "region1" in state.manual_regions
+
+    def test_remove_region_success(self):
+        """Test successfully removing a region."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        success, msg = remove_manual_region_logic(state, "Region1")
+
+        assert success is True
+        assert "Region1" not in state.manual_regions
+        assert state.selected_manual_region is None
+
+    def test_remove_region_with_bas(self):
+        """Test removing a region that has BAs assigned."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        state.manual_regions["Region1"] = ["ba1", "ba2"]
+        remove_manual_region_logic(state, "Region1")
+
+        assert "Region1" not in state.manual_regions
+        assert len(state.manual_regions) == 0
+
+    def test_remove_region_nonexistent(self):
+        """Test removing a region that doesn't exist."""
+        state = MockAppState()
+        success, msg = remove_manual_region_logic(state, "NonExistent")
+
+        assert success is False
+        assert "not found" in msg.lower()
+
+    def test_remove_selected_region(self):
+        """Test removing the currently selected region."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        add_manual_region_logic(state, "Region2")
+        select_manual_region_logic(state, "Region1")
+
+        remove_manual_region_logic(state, "Region1")
+
+        assert state.selected_manual_region is None
+        assert "Region1" not in state.manual_regions
+        assert "Region2" in state.manual_regions
+
+    def test_remove_unselected_region(self):
+        """Test removing a region that is not selected."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        add_manual_region_logic(state, "Region2")
+        select_manual_region_logic(state, "Region1")
+
+        remove_manual_region_logic(state, "Region2")
+
+        assert state.selected_manual_region == "Region1"
+        assert "Region2" not in state.manual_regions
+
+
+class TestBAAssignment:
+    """Test BA assignment to regions."""
+
+    def test_assign_bas_success(self):
+        """Test successfully assigning BAs to a region."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        state.selected_bas = {"ba1", "ba2", "ba3"}
+
+        success, msg = assign_bas_logic(state, state.selected_bas)
+
+        assert success is True
+        assert set(state.manual_regions["Region1"]) == {"ba1", "ba2", "ba3"}
+
+    def test_assign_bas_no_region_selected(self):
+        """Test that assignment fails if no region is selected."""
+        state = MockAppState()
+        state.selected_bas = {"ba1", "ba2"}
+
+        success, msg = assign_bas_logic(state, state.selected_bas)
+
+        assert success is False
+        assert "select a region first" in msg.lower()
+
+    def test_assign_bas_no_bas_selected(self):
+        """Test that assignment fails if no BAs are selected."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+
+        success, msg = assign_bas_logic(state, set())
+
+        assert success is False
+        assert "select bas" in msg.lower()
+
+    def test_assign_bas_already_assigned(self):
+        """Test that already assigned BAs are not reassigned."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        state.manual_regions["Region1"] = ["ba1", "ba2"]
+
+        add_manual_region_logic(state, "Region2")
+        state.selected_bas = {"ba1", "ba2"}
+
+        success, msg = assign_bas_logic(state, state.selected_bas)
+
+        assert success is False
+        assert "already assigned" in msg.lower()
+
+    def test_assign_bas_partial_overlap(self):
+        """Test assigning BAs when some are already assigned."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        state.manual_regions["Region1"] = ["ba1", "ba2"]
+
+        add_manual_region_logic(state, "Region2")
+        state.selected_bas = {"ba1", "ba2", "ba3", "ba4"}
+
+        success, msg = assign_bas_logic(state, state.selected_bas)
+
+        assert success is True
+        assert set(state.manual_regions["Region2"]) == {"ba3", "ba4"}
+        assert set(state.manual_regions["Region1"]) == {"ba1", "ba2"}
+
+    def test_assign_bas_to_multiple_regions(self):
+        """Test assigning different BAs to multiple regions."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        state.selected_bas = {"ba1", "ba2"}
+        assign_bas_logic(state, state.selected_bas)
+
+        add_manual_region_logic(state, "Region2")
+        state.selected_bas = {"ba3", "ba4"}
+        assign_bas_logic(state, state.selected_bas)
+
+        assert set(state.manual_regions["Region1"]) == {"ba1", "ba2"}
+        assert set(state.manual_regions["Region2"]) == {"ba3", "ba4"}
+
+    def test_assign_single_ba(self):
+        """Test assigning a single BA to a region."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        state.selected_bas = {"ba1"}
+
+        success, msg = assign_bas_logic(state, state.selected_bas)
+
+        assert success is True
+        assert state.manual_regions["Region1"] == ["ba1"]
+
+    def test_assign_bas_incrementally(self):
+        """Test assigning BAs to the same region incrementally."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+
+        state.selected_bas = {"ba1"}
+        assign_bas_logic(state, state.selected_bas)
+
+        state.selected_bas = {"ba2", "ba3"}
+        assign_bas_logic(state, state.selected_bas)
+
+        assert set(state.manual_regions["Region1"]) == {"ba1", "ba2", "ba3"}
+
+
+class TestRegionSelection:
+    """Test region selection functionality."""
+
+    def test_select_region(self):
+        """Test selecting a region."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        add_manual_region_logic(state, "Region2")
+
+        select_manual_region_logic(state, "Region1")
+
+        assert state.selected_manual_region == "Region1"
+
+    def test_select_different_region(self):
+        """Test changing selected region."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        add_manual_region_logic(state, "Region2")
+
+        select_manual_region_logic(state, "Region1")
+        select_manual_region_logic(state, "Region2")
+
+        assert state.selected_manual_region == "Region2"
+
+    def test_select_nonexistent_region(self):
+        """Test selecting a nonexistent region (allowed but won't affect functionality)."""
+        state = MockAppState()
+        select_manual_region_logic(state, "NonExistent")
+
+        assert state.selected_manual_region == "NonExistent"
+
+
+class TestFinalization:
+    """Test finalization of manual regions."""
+
+    def test_finalize_success(self):
+        """Test successful finalization of manual regions."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        state.manual_regions["Region1"] = ["ba1", "ba2"]
+        add_manual_region_logic(state, "Region2")
+        state.manual_regions["Region2"] = ["ba3", "ba4"]
+
+        success, msg = finalize_manual_logic(state)
+
+        assert success is True
+        assert state.is_clustered is True
+        assert state.region_aggregations == {
+            "Region1": ["ba1", "ba2"],
+            "Region2": ["ba3", "ba4"],
+        }
+        assert state.ba_to_region == {
+            "ba1": "Region1",
+            "ba2": "Region1",
+            "ba3": "Region2",
+            "ba4": "Region2",
+        }
+
+    def test_finalize_no_regions(self):
+        """Test that finalization fails if no regions exist."""
+        state = MockAppState()
+        success, msg = finalize_manual_logic(state)
+
+        assert success is False
+        assert "at least one region" in msg.lower()
+
+    def test_finalize_empty_region(self):
+        """Test that finalization fails if a region has no BAs."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        state.manual_regions["Region1"] = ["ba1"]
+        add_manual_region_logic(state, "Region2")
+        # Region2 has no BAs
+
+        success, msg = finalize_manual_logic(state)
+
+        assert success is False
+        assert "no bas assigned" in msg.lower()
+        assert "Region2" in msg
+
+    def test_finalize_multiple_empty_regions(self):
+        """Test finalization with multiple empty regions."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        add_manual_region_logic(state, "Region2")
+        add_manual_region_logic(state, "Region3")
+        state.manual_regions["Region2"] = ["ba1"]
+
+        success, msg = finalize_manual_logic(state)
+
+        assert success is False
+        assert "Region1" in msg or "Region3" in msg
+
+    def test_finalize_single_region(self):
+        """Test finalizing a single region."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        state.manual_regions["Region1"] = ["ba1", "ba2", "ba3"]
+
+        success, msg = finalize_manual_logic(state)
+
+        assert success is True
+        assert len(state.region_aggregations) == 1
+        assert state.region_aggregations["Region1"] == ["ba1", "ba2", "ba3"]
+
+    def test_finalize_ba_to_region_mapping(self):
+        """Test that BA to region mapping is correct after finalization."""
+        state = MockAppState()
+        add_manual_region_logic(state, "West")
+        state.manual_regions["West"] = ["ca", "nv", "co"]
+        add_manual_region_logic(state, "East")
+        state.manual_regions["East"] = ["tx", "ok", "ne"]
+
+        finalize_manual_logic(state)
+
+        assert state.ba_to_region["ca"] == "West"
+        assert state.ba_to_region["nv"] == "West"
+        assert state.ba_to_region["co"] == "West"
+        assert state.ba_to_region["tx"] == "East"
+        assert state.ba_to_region["ok"] == "East"
+        assert state.ba_to_region["ne"] == "East"
+
+    def test_finalize_message_content(self):
+        """Test that finalization message contains correct counts."""
+        state = MockAppState()
+        add_manual_region_logic(state, "R1")
+        state.manual_regions["R1"] = ["ba1", "ba2"]
+        add_manual_region_logic(state, "R2")
+        state.manual_regions["R2"] = ["ba3"]
+
+        success, msg = finalize_manual_logic(state)
+
+        assert "2 regions" in msg.lower()
+        assert "3 bas" in msg.lower()
+
+
+class TestClearManualRegions:
+    """Test clearing manual regions."""
+
+    def test_clear_regions(self):
+        """Test clearing all manual regions."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        state.manual_regions["Region1"] = ["ba1", "ba2"]
+        add_manual_region_logic(state, "Region2")
+        state.manual_regions["Region2"] = ["ba3"]
+        state.is_clustered = True
+        state.region_aggregations = {"Region1": ["ba1", "ba2"]}
+
+        clear_manual_regions_logic(state)
+
+        assert state.manual_regions == {}
+        assert state.selected_manual_region is None
+        assert state.cluster_colors == {}
+        assert state.ba_to_region == {}
+        assert state.is_clustered is False
+        assert state.region_aggregations is None
+
+    def test_clear_empty_state(self):
+        """Test clearing when no regions exist."""
+        state = MockAppState()
+        clear_manual_regions_logic(state)
+
+        assert state.manual_regions == {}
+        assert state.selected_manual_region is None
+
+    def test_clear_preserves_other_state(self):
+        """Test that clearing doesn't affect unrelated state."""
+        state = MockAppState()
+        state.selected_bas = {"ba1", "ba2"}
+        add_manual_region_logic(state, "Region1")
+
+        clear_manual_regions_logic(state)
+
+        # selected_bas should not be cleared
+        assert state.selected_bas == {"ba1", "ba2"}
+
+
+class TestModeSwitching:
+    """Test switching between clustering and manual modes."""
+
+    def test_switch_to_manual_mode(self):
+        """Test switching to manual mode."""
+        state = MockAppState()
+        state.is_clustered = True
+        state.cluster_colors = {"ba1": "#ff0000"}
+        state.ba_to_region = {"ba1": "Region1"}
+        state.region_aggregations = {"Region1": ["ba1"]}
+
+        on_region_mode_change_logic(state, is_manual=True)
+
+        assert state.is_manual_mode is True
+        assert state.cluster_colors == {}
+        assert state.ba_to_region == {}
+        assert state.is_clustered is False
+        assert state.region_aggregations is None
+
+    def test_switch_to_clustering_mode(self):
+        """Test switching to clustering mode."""
+        state = MockAppState()
+        state.is_manual_mode = True
+        add_manual_region_logic(state, "Region1")
+        state.manual_regions["Region1"] = ["ba1", "ba2"]
+
+        on_region_mode_change_logic(state, is_manual=False)
+
+        assert state.is_manual_mode is False
+        assert state.manual_regions == {}
+        assert state.selected_manual_region is None
+
+    def test_switch_back_and_forth(self):
+        """Test switching between modes multiple times."""
+        state = MockAppState()
+
+        # To manual
+        on_region_mode_change_logic(state, is_manual=True)
+        assert state.is_manual_mode is True
+
+        # Back to clustering
+        on_region_mode_change_logic(state, is_manual=False)
+        assert state.is_manual_mode is False
+
+        # To manual again
+        on_region_mode_change_logic(state, is_manual=True)
+        assert state.is_manual_mode is True
+
+    def test_switching_clears_manual_data(self):
+        """Test that switching to clustering mode clears manual data."""
+        state = MockAppState()
+        on_region_mode_change_logic(state, is_manual=True)
+        add_manual_region_logic(state, "Region1")
+        add_manual_region_logic(state, "Region2")
+        state.manual_regions["Region1"] = ["ba1", "ba2"]
+
+        on_region_mode_change_logic(state, is_manual=False)
+
+        assert len(state.manual_regions) == 0
+        assert state.selected_manual_region is None
+
+    def test_switching_clears_clustering_data(self):
+        """Test that switching to manual mode clears clustering data."""
+        state = MockAppState()
+        state.is_clustered = True
+        state.cluster_colors = {"ba1": "#ff0000", "ba2": "#00ff00"}
+        state.ba_to_region = {"ba1": "R1", "ba2": "R2"}
+        state.region_aggregations = {"R1": ["ba1"], "R2": ["ba2"]}
+
+        on_region_mode_change_logic(state, is_manual=True)
+
+        assert state.is_clustered is False
+        assert state.cluster_colors == {}
+        assert state.ba_to_region == {}
+        assert state.region_aggregations is None
+
+
+class TestManualRegionIntegration:
+    """Integration tests for manual region workflow."""
+
+    def test_complete_manual_workflow(self):
+        """Test complete workflow from creation to finalization."""
+        state = MockAppState()
+
+        # Switch to manual mode
+        on_region_mode_change_logic(state, is_manual=True)
+        assert state.is_manual_mode is True
+
+        # Create regions
+        add_manual_region_logic(state, "West")
+        add_manual_region_logic(state, "Central")
+        add_manual_region_logic(state, "East")
+
+        # Assign BAs
+        select_manual_region_logic(state, "West")
+        state.selected_bas = {"ca", "nv", "co"}
+        assign_bas_logic(state, state.selected_bas)
+
+        select_manual_region_logic(state, "Central")
+        state.selected_bas = {"tx", "ok"}
+        assign_bas_logic(state, state.selected_bas)
+
+        select_manual_region_logic(state, "East")
+        state.selected_bas = {"ne", "fl", "ga"}
+        assign_bas_logic(state, state.selected_bas)
+
+        # Finalize
+        success, msg = finalize_manual_logic(state)
+
+        assert success is True
+        assert len(state.region_aggregations) == 3
+        assert state.is_clustered is True
+        assert len(state.ba_to_region) == 8
+
+    def test_workflow_with_region_removal(self):
+        """Test workflow with region creation and removal."""
+        state = MockAppState()
+        on_region_mode_change_logic(state, is_manual=True)
+
+        # Create regions
+        add_manual_region_logic(state, "Region1")
+        add_manual_region_logic(state, "Region2")
+        add_manual_region_logic(state, "Region3")
+
+        # Assign BAs
+        state.manual_regions["Region1"] = ["ba1"]
+        state.manual_regions["Region2"] = ["ba2"]
+        state.manual_regions["Region3"] = ["ba3"]
+
+        # Remove middle region
+        remove_manual_region_logic(state, "Region2")
+
+        # Finalize
+        success, msg = finalize_manual_logic(state)
+
+        assert success is True
+        assert len(state.region_aggregations) == 2
+        assert "Region2" not in state.region_aggregations
+
+    def test_workflow_with_reassignment(self):
+        """Test workflow with BA reassignment."""
+        state = MockAppState()
+        on_region_mode_change_logic(state, is_manual=True)
+
+        # Create regions
+        add_manual_region_logic(state, "Region1")
+        state.manual_regions["Region1"] = ["ba1", "ba2"]
+
+        add_manual_region_logic(state, "Region2")
+
+        # Try to assign already-assigned BAs (should fail)
+        state.selected_bas = {"ba1", "ba3"}
+        success, msg = assign_bas_logic(state, state.selected_bas)
+
+        # Only ba3 should be assigned
+        assert success is True
+        assert "ba3" in state.manual_regions["Region2"]
+        assert "ba1" not in state.manual_regions["Region2"]
+
+    def test_workflow_yaml_generation(self):
+        """Test that finalization creates correct region_aggregations format."""
+        state = MockAppState()
+        on_region_mode_change_logic(state, is_manual=True)
+
+        add_manual_region_logic(state, "WECC")
+        state.manual_regions["WECC"] = ["ciso", "nevp", "pace"]
+
+        add_manual_region_logic(state, "ERCOT")
+        state.manual_regions["ERCOT"] = ["tre"]
+
+        finalize_manual_logic(state)
+
+        # Verify format matches what clustering produces
+        assert isinstance(state.region_aggregations, dict)
+        assert all(isinstance(v, list) for v in state.region_aggregations.values())
+        assert state.region_aggregations["WECC"] == ["ciso", "nevp", "pace"]
+        assert state.region_aggregations["ERCOT"] == ["tre"]
+
+    def test_workflow_with_single_ba_regions(self):
+        """Test workflow with regions containing single BAs."""
+        state = MockAppState()
+        on_region_mode_change_logic(state, is_manual=True)
+
+        add_manual_region_logic(state, "R1")
+        state.manual_regions["R1"] = ["ba1"]
+
+        add_manual_region_logic(state, "R2")
+        state.manual_regions["R2"] = ["ba2"]
+
+        add_manual_region_logic(state, "R3")
+        state.manual_regions["R3"] = ["ba3"]
+
+        success, msg = finalize_manual_logic(state)
+
+        assert success is True
+        assert len(state.region_aggregations) == 3
+        assert all(len(bas) == 1 for bas in state.region_aggregations.values())
+
+    def test_workflow_with_many_bas_single_region(self):
+        """Test workflow with single region containing many BAs."""
+        state = MockAppState()
+        on_region_mode_change_logic(state, is_manual=True)
+
+        add_manual_region_logic(state, "USA")
+        bas = [f"ba{i}" for i in range(1, 51)]  # 50 BAs
+        state.manual_regions["USA"] = bas
+
+        success, msg = finalize_manual_logic(state)
+
+        assert success is True
+        assert len(state.region_aggregations) == 1
+        assert len(state.region_aggregations["USA"]) == 50
+
+    def test_workflow_clear_and_restart(self):
+        """Test clearing and restarting the workflow."""
+        state = MockAppState()
+        on_region_mode_change_logic(state, is_manual=True)
+
+        # First attempt
+        add_manual_region_logic(state, "Region1")
+        state.manual_regions["Region1"] = ["ba1", "ba2"]
+
+        # Clear
+        clear_manual_regions_logic(state)
+
+        # Start over
+        add_manual_region_logic(state, "NewRegion")
+        state.manual_regions["NewRegion"] = ["ba3", "ba4"]
+
+        success, msg = finalize_manual_logic(state)
+
+        assert success is True
+        assert len(state.region_aggregations) == 1
+        assert "NewRegion" in state.region_aggregations
+        assert "Region1" not in state.region_aggregations
+
+    def test_manual_regions_compatible_with_downstream_processing(self):
+        """Test that manual regions produce same data structure as clustering."""
+        state_manual = MockAppState()
+        on_region_mode_change_logic(state_manual, is_manual=True)
+        add_manual_region_logic(state_manual, "R1")
+        state_manual.manual_regions["R1"] = ["ba1", "ba2"]
+        add_manual_region_logic(state_manual, "R2")
+        state_manual.manual_regions["R2"] = ["ba3", "ba4"]
+        finalize_manual_logic(state_manual)
+
+        # Simulate clustering result
+        state_cluster = MockAppState()
+        state_cluster.region_aggregations = {
+            "R1": ["ba1", "ba2"],
+            "R2": ["ba3", "ba4"],
+        }
+        state_cluster.is_clustered = True
+        state_cluster.ba_to_region = {
+            "ba1": "R1",
+            "ba2": "R1",
+            "ba3": "R2",
+            "ba4": "R2",
+        }
+
+        # Both should have identical structure
+        assert state_manual.region_aggregations == state_cluster.region_aggregations
+        assert state_manual.is_clustered == state_cluster.is_clustered
+        assert state_manual.ba_to_region == state_cluster.ba_to_region
+
+
+class TestEdgeCases:
+    """Test edge cases and boundary conditions."""
+
+    def test_special_characters_in_region_name(self):
+        """Test region names with special characters."""
+        state = MockAppState()
+        special_names = [
+            "Region-1",
+            "Region_2",
+            "Region 3",
+            "Region(4)",
+            "Region[5]",
+            "Region.6",
+        ]
+
+        for name in special_names:
+            success, msg = add_manual_region_logic(state, name)
+            assert success is True
+            assert name in state.manual_regions
+
+    def test_unicode_in_region_name(self):
+        """Test region names with Unicode characters."""
+        state = MockAppState()
+        unicode_names = ["Région1", "地区2", "منطقة3"]
+
+        for name in unicode_names:
+            success, msg = add_manual_region_logic(state, name)
+            assert success is True
+
+    def test_very_long_region_name(self):
+        """Test region with very long name."""
+        state = MockAppState()
+        long_name = "A" * 1000
+        success, msg = add_manual_region_logic(state, long_name)
+
+        assert success is True
+        assert long_name in state.manual_regions
+
+    def test_numeric_region_name(self):
+        """Test region with numeric name."""
+        state = MockAppState()
+        add_manual_region_logic(state, "123")
+        add_manual_region_logic(state, "456")
+
+        assert "123" in state.manual_regions
+        assert "456" in state.manual_regions
+
+    def test_assign_same_ba_set_twice(self):
+        """Test assigning the same BA set twice (should fail second time)."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        bas = {"ba1", "ba2"}
+        state.selected_bas = bas
+        assign_bas_logic(state, state.selected_bas)
+
+        # Try again with same BAs
+        state.selected_bas = bas
+        success, msg = assign_bas_logic(state, state.selected_bas)
+
+        assert success is False
+
+    def test_finalize_preserves_manual_regions(self):
+        """Test that finalization doesn't clear manual_regions."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        state.manual_regions["Region1"] = ["ba1"]
+
+        finalize_manual_logic(state)
+
+        # manual_regions should still exist
+        assert state.manual_regions == {"Region1": ["ba1"]}
+
+    def test_empty_ba_id(self):
+        """Test handling of empty string BA ID."""
+        state = MockAppState()
+        add_manual_region_logic(state, "Region1")
+        state.selected_bas = {"", "ba1"}
+
+        success, msg = assign_bas_logic(state, state.selected_bas)
+
+        # Should assign both (including empty string if that's what's selected)
+        assert success is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
