@@ -1,12 +1,12 @@
 # Web Application
 
-The PowerGenome Design Wizard is a comprehensive web-based interface for building complete PowerGenome settings files. It guides users through a 7-step process to define model regions, configure resources, and export ready-to-use configuration files. The application runs entirely in the browser using PyScript—no installation required.
+The PowerGenome Settings Builder is a comprehensive web-based interface for building complete PowerGenome settings files. It guides users through a step-by-step workflow to define model regions, configure resources, and export ready-to-use configuration files. The application runs entirely in the browser using PyScript—no installation required.
 
 [Launch Web App](https://gschivley.github.io/PowerGenome-tools/web/){ .md-button .md-button--primary }
 
 ## Overview
 
-The wizard approach ensures you configure all necessary settings in the correct order:
+The guided workflow ensures you configure all necessary settings in the correct order:
 
 1. **Regions** - Define model regions by clustering Balancing Authorities
 2. **Model Setup** - Configure planning years and financial parameters
@@ -230,28 +230,36 @@ For each fuel (coal, natural gas, distillate, uranium), choose a price scenario:
 
 The ESR Policies step allows you to configure Energy Share Requirements for state-level policies like Renewable Portfolio Standards (RPS) and Clean Energy Standards (CES). This step is optional—uncheck "Include ESR policies" if your analysis doesn't require policy constraints.
 
+For detailed technical information about how ESR zones are created and calculated, see the [ESR Policies documentation](esr_policies.md).
+
 ### How ESR Zones Work
 
-The app automatically groups your model regions into ESR zones based on state trading rules defined in `rectable.csv`. States that can trade renewable energy credits (RECs) or clean energy credits with each other are placed in the same zone.
+The app automatically groups your model regions into ESR zones based on:
 
-### Automatic Region Splitting
+1. **State trading rules**: Which states can trade RECs/clean energy credits with each other
+2. **Interconnect boundaries**: Trading is limited to within the same interconnect (Eastern, Western, or ERCOT)
+3. **Transitive relationships**: If State A trades with C and State B trades with C, all three are in the same zone
 
-If a model region contains states that **cannot** trade with each other (even transitively), the app automatically splits that region into sub-regions for ESR purposes:
+### ESR Configuration Options
 
-* Sub-regions are named with `_esr1`, `_esr2`, etc. suffixes (e.g., `MidAtlantic_esr1`, `MidAtlantic_esr2`)
-* Each sub-region contains only states that can trade with each other
-* The generated CSV output uses these expanded region names
+* **Include ESR policies**: Uncheck to skip ESR generation entirely
+* **Include RPS constraints**: Generate RPS columns in emission_policies.csv
+* **Include CES constraints**: Generate CES columns in emission_policies.csv
+
+### Multi-Zone Regions
+
+If a model region contains states from different trading zones, the app handles this by assigning values to **multiple ESR columns**. Each column represents the weighted contribution from states in that zone, using population as a proxy for demand.
 
 !!! tip
-    To avoid region splitting, enable **ESR-compatible clustering** in Step 1. This builds trading constraints into the clustering algorithm upfront, ensuring all BAs in a region can trade within the same ESR zone.
+    To avoid multi-zone regions, enable **ESR-compatible clustering** in Step 1. This ensures BAs are only clustered together if their states can trade within the same ESR zone.
 
 ### Generated Output
 
-The ESR step generates a CSV file (`emission_policies.csv`) containing:
+The ESR step generates `emission_policies.csv` containing:
 
-* ESR zone assignments for each region (or sub-region)
-* Policy requirements (RPS and CES fractions) by zone and year
-* Technology qualification mappings
+* **ESR zone columns** (ESR_1, ESR_2, ...): Each zone gets an RPS column and a CES column
+* **Policy requirements**: Fraction of demand that must be met by qualifying resources
+* **Technology tags**: Updated in `resource_tags.yml` to mark qualifying technologies
 
 ## Step 7: Export
 
