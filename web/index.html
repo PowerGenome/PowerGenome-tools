@@ -720,8 +720,10 @@
                     <div class="section">
                         <label>Region Definition Mode</label>
                         <div class="selection-mode">
-                            <button class="mode-btn active" id="clusteringModeBtn" title="Automatically cluster BAs">🔄 Automatic Clustering</button>
-                            <button class="mode-btn" id="manualModeBtn" title="Manually define regions">✏️ Manual</button>
+                            <button class="mode-btn active" id="clusteringModeBtn" title="Automatically cluster BAs">🔄
+                                Automatic Clustering</button>
+                            <button class="mode-btn" id="manualModeBtn" title="Manually define regions">✏️
+                                Manual</button>
                         </div>
                         <div style="font-size: 11px; color: #666; margin-top: 4px;" id="modeHint">
                             Automatic clustering uses transmission capacity to group BAs
@@ -807,31 +809,36 @@
                     <div class="section" id="manualRegionSection" style="display: none;">
                         <label>Manual Region Definition</label>
                         <div style="font-size: 11px; color: #666; margin-bottom: 8px;">
-                            Create regions by selecting BAs on the map, then assign them to a named region. Or paste YAML region definitions below.
+                            Create regions by selecting BAs on the map, then assign them to a named region. Or paste
+                            YAML region definitions below.
                         </div>
-                        
+
                         <!-- YAML Paste Section -->
                         <div style="margin-bottom: 12px;">
                             <label style="font-size: 12px; display: flex; align-items: center; gap: 4px;">
                                 Paste YAML Region Definition
-                                <span style="cursor: help; color: #888;" title="Paste YAML with region definitions. Supports multiple formats including region_aggregations and direct region mappings.">ⓘ</span>
+                                <span class="info-icon"
+                                    data-tooltip="Paste YAML with region definitions. Supports multiple formats including region_aggregations and direct region mappings.">?</span>
                             </label>
-                            <textarea id="yamlRegionInput" 
-                                      placeholder="Paste YAML region definitions here (see formats below)"
-                                      style="width: 100%; min-height: 100px; font-family: monospace; font-size: 11px; resize: vertical; margin-top: 4px;">
+                            <textarea id="yamlRegionInput"
+                                placeholder="Paste YAML region definitions here (see formats below)"
+                                style="width: 100%; min-height: 100px; font-family: monospace; font-size: 11px; resize: vertical; margin-top: 4px;"></textarea>
                             <div style="font-size: 10px; color: #666; margin-top: 4px; line-height: 1.3;">
-                                Supports 3 formats: (1) Full with model_regions list, (2) region_aggregations only, (3) Direct region mappings
+                                Supports 3 formats: (1) Full with model_regions list, (2) region_aggregations only, (3)
+                                Direct region mappings
                             </div>
-                            <button class="btn btn-secondary" id="parseYamlBtn" type="button" style="margin-top: 6px;">Load from YAML</button>
+                            <button class="btn btn-secondary" id="parseYamlBtn" type="button"
+                                style="margin-top: 6px;">Load from YAML</button>
                         </div>
-                        
+
                         <div class="button-group-with-input">
                             <input id="newRegionName" type="text" placeholder="New region name (e.g., Northeast)" />
                             <button class="btn btn-secondary" id="addManualRegionBtn" type="button">Add Region</button>
                         </div>
 
                         <div style="margin-top: 12px;">
-                            <label style="font-size: 12px;">Current Regions (<span id="manualRegionCount">0</span>)</label>
+                            <label style="font-size: 12px;">Current Regions (<span
+                                    id="manualRegionCount">0</span>)</label>
                             <div id="manualRegionsList" class="ba-list" style="max-height: 200px;">
                                 <em>No regions defined yet</em>
                             </div>
@@ -1533,7 +1540,7 @@ wacc_real: 0.05"></textarea>
 
             // Show/hide relevant sections
             const clusteringSections = [
-                'groupingSection', 'esrSection', 'targetRegionsSection', 
+                'groupingSection', 'esrSection', 'targetRegionsSection',
                 'clusteringMethodSection', 'noClusterSection', 'clusteringButtons'
             ];
             const manualSections = ['manualRegionSection', 'manualButtons'];
