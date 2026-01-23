@@ -3413,12 +3413,12 @@ def on_parse_yaml_regions(event):
         
         # Determine format and extract region_aggregations
         region_aggregations = None
-        model_regions_list = None
         
         # Format 1: Full definition with model_regions and region_aggregations
         if "region_aggregations" in parsed:
             region_aggregations = parsed["region_aggregations"]
-            model_regions_list = parsed.get("model_regions", None)
+            # Note: model_regions is extracted for format validation but not used in manual mode
+            # since manual regions are always derived from region_aggregations keys
             
             if not isinstance(region_aggregations, dict):
                 set_status("region_aggregations must be a dictionary", "error")
@@ -3491,8 +3491,10 @@ def on_parse_yaml_regions(event):
         
         num_regions = len(state.manual_regions)
         total_bas = sum(len(bas) for bas in state.manual_regions.values())
+        region_word = "region" if num_regions == 1 else "regions"
+        ba_word = "BA" if total_bas == 1 else "BAs"
         set_status(
-            f"Successfully loaded {num_regions} regions with {total_bas} BAs from YAML",
+            f"Successfully loaded {num_regions} {region_word} with {total_bas} {ba_word} from YAML",
             "success"
         )
         

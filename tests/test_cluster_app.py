@@ -2882,7 +2882,9 @@ def parse_yaml_regions_logic(state, yaml_text):
         
         num_regions = len(state.manual_regions)
         total_bas = sum(len(bas) for bas in state.manual_regions.values())
-        return True, f"Successfully loaded {num_regions} regions with {total_bas} BAs from YAML"
+        region_word = "region" if num_regions == 1 else "regions"
+        ba_word = "BA" if total_bas == 1 else "BAs"
+        return True, f"Successfully loaded {num_regions} {region_word} with {total_bas} {ba_word} from YAML"
         
     except yaml.YAMLError as e:
         return False, f"Invalid YAML format: {str(e)}"
@@ -3135,7 +3137,7 @@ SingleRegion:
         success, msg = parse_yaml_regions_logic(state, yaml_text)
         
         assert success is True
-        assert "1 regions with 3 BAs" in msg
+        assert "1 region" in msg and "3 BAs" in msg
         assert len(state.manual_regions) == 1
     
     def test_many_regions(self):
