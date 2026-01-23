@@ -2814,5 +2814,348 @@ class TestEdgeCases:
         assert success is True
 
 
+# ============================================================================
+# YAML Region Parsing Tests
+# ============================================================================
+
+
+def parse_yaml_regions_logic(state, yaml_text):
+    """
+    Parse YAML region definitions and load them into manual regions.
+    
+    Returns (success, message) tuple.
+    """
+    try:
+        # Parse YAML
+        parsed = yaml.safe_load(yaml_text)
+        
+        if not isinstance(parsed, dict):
+            return False, "YAML must be a dictionary/mapping"
+        
+        # Determine format and extract region_aggregations
+        region_aggregations = None
+        
+        # Format 1: Full definition with model_regions and region_aggregations
+        if "region_aggregations" in parsed:
+            region_aggregations = parsed["region_aggregations"]
+            
+            if not isinstance(region_aggregations, dict):
+                return False, "region_aggregations must be a dictionary"
+        # Format 2 & 3: Direct region mappings
+        else:
+            region_aggregations = parsed
+        
+        # Validate region_aggregations structure
+        if not region_aggregations:
+            return False, "No region definitions found in YAML"
+        
+        for region_name, bas in region_aggregations.items():
+            if not isinstance(bas, list):
+                return False, f"Region '{region_name}' must map to a list of BAs"
+            if not all(isinstance(ba, str) for ba in bas):
+                return False, f"All BAs in region '{region_name}' must be strings"
+        
+        # Validate that all BAs exist in our data
+        invalid_bas = []
+        for region_name, bas in region_aggregations.items():
+            for ba in bas:
+                if ba not in state.all_bas:
+                    invalid_bas.append(ba)
+        
+        if invalid_bas:
+            unique_invalid = sorted(set(invalid_bas))
+            return False, f"Invalid BA codes in YAML: {', '.join(unique_invalid[:10])}"
+        
+        # Check for duplicate BAs across regions
+        all_bas = []
+        for bas in region_aggregations.values():
+            all_bas.extend(bas)
+        
+        if len(all_bas) != len(set(all_bas)):
+            duplicates = [ba for ba in set(all_bas) if all_bas.count(ba) > 1]
+            return False, f"Duplicate BAs found in multiple regions: {', '.join(duplicates[:5])}"
+        
+        # Load regions from YAML
+        state.manual_regions.clear()
+        for region_name, bas in region_aggregations.items():
+            state.manual_regions[region_name] = list(bas)
+        
+        num_regions = len(state.manual_regions)
+        total_bas = sum(len(bas) for bas in state.manual_regions.values())
+        region_word = "region" if num_regions == 1 else "regions"
+        ba_word = "BA" if total_bas == 1 else "BAs"
+        return True, f"Successfully loaded {num_regions} {region_word} with {total_bas} {ba_word} from YAML"
+        
+    except yaml.YAMLError as e:
+        return False, f"Invalid YAML format: {str(e)}"
+    except Exception as e:
+        return False, f"Error parsing YAML: {str(e)}"
+
+
+class TestYAMLRegionParsing:
+    """Test YAML region parsing functionality."""
+    
+    def test_format1_full_definition(self):
+        """Test Format 1: Full definition with model_regions and region_aggregations."""
+        state = MockAppState()
+        state.all_bas = {"p8", "p9", "p10", "p11", "p27", "p28", "p29", "p30", "p31"}
+        
+        yaml_text = """
+model_regions:
+  - AZ
+  - CA
+  - p31
+region_aggregations:
+  CA:
+    - p8
+    - p9
+    - p10
+    - p11
+  AZ:
+    - p29
+    - p28
+    - p27
+    - p30
+"""
+        
+        success, msg = parse_yaml_regions_logic(state, yaml_text)
+        
+        assert success is True
+        assert "2 regions with 8 BAs" in msg
+        assert "CA" in state.manual_regions
+        assert "AZ" in state.manual_regions
+        assert set(state.manual_regions["CA"]) == {"p8", "p9", "p10", "p11"}
+        assert set(state.manual_regions["AZ"]) == {"p29", "p28", "p27", "p30"}
+    
+    def test_format2_region_aggregations_only(self):
+        """Test Format 2: Only region_aggregations without model_regions."""
+        state = MockAppState()
+        state.all_bas = {"p8", "p9", "p10", "p11", "p27", "p28", "p29", "p30"}
+        
+        yaml_text = """
+region_aggregations:
+  CA:
+    - p8
+    - p9
+    - p10
+    - p11
+  AZ:
+    - p29
+    - p28
+    - p27
+    - p30
+"""
+        
+        success, msg = parse_yaml_regions_logic(state, yaml_text)
+        
+        assert success is True
+        assert "2 regions with 8 BAs" in msg
+        assert "CA" in state.manual_regions
+        assert "AZ" in state.manual_regions
+    
+    def test_format3_direct_mappings(self):
+        """Test Format 3: Direct region mappings without region_aggregations wrapper."""
+        state = MockAppState()
+        state.all_bas = {"p8", "p9", "p10", "p11", "p27", "p28", "p29", "p30"}
+        
+        yaml_text = """
+CA:
+  - p8
+  - p9
+  - p10
+  - p11
+AZ:
+  - p29
+  - p28
+  - p27
+  - p30
+"""
+        
+        success, msg = parse_yaml_regions_logic(state, yaml_text)
+        
+        assert success is True
+        assert "2 regions with 8 BAs" in msg
+        assert "CA" in state.manual_regions
+        assert "AZ" in state.manual_regions
+    
+    def test_invalid_yaml_format(self):
+        """Test handling of invalid YAML syntax."""
+        state = MockAppState()
+        state.all_bas = {"p8", "p9"}
+        
+        yaml_text = """
+CA:
+  - p8
+  invalid syntax here
+"""
+        
+        success, msg = parse_yaml_regions_logic(state, yaml_text)
+        
+        assert success is False
+        assert "Invalid YAML format" in msg
+    
+    def test_non_dict_yaml(self):
+        """Test handling of YAML that's not a dictionary."""
+        state = MockAppState()
+        state.all_bas = {"p8", "p9"}
+        
+        yaml_text = """
+- p8
+- p9
+"""
+        
+        success, msg = parse_yaml_regions_logic(state, yaml_text)
+        
+        assert success is False
+        assert "must be a dictionary" in msg
+    
+    def test_region_not_list(self):
+        """Test handling of region that doesn't map to a list."""
+        state = MockAppState()
+        state.all_bas = {"p8", "p9"}
+        
+        yaml_text = """
+CA: p8
+"""
+        
+        success, msg = parse_yaml_regions_logic(state, yaml_text)
+        
+        assert success is False
+        assert "must map to a list" in msg
+    
+    def test_invalid_ba_codes(self):
+        """Test handling of BA codes that don't exist."""
+        state = MockAppState()
+        state.all_bas = {"p8", "p9"}
+        
+        yaml_text = """
+CA:
+  - p8
+  - invalid_ba
+  - another_invalid
+"""
+        
+        success, msg = parse_yaml_regions_logic(state, yaml_text)
+        
+        assert success is False
+        assert "Invalid BA codes" in msg
+        assert "invalid_ba" in msg or "another_invalid" in msg
+    
+    def test_duplicate_bas_across_regions(self):
+        """Test handling of duplicate BAs in multiple regions."""
+        state = MockAppState()
+        state.all_bas = {"p8", "p9", "p10"}
+        
+        yaml_text = """
+CA:
+  - p8
+  - p9
+AZ:
+  - p9
+  - p10
+"""
+        
+        success, msg = parse_yaml_regions_logic(state, yaml_text)
+        
+        assert success is False
+        assert "Duplicate BAs" in msg
+        assert "p9" in msg
+    
+    def test_empty_yaml(self):
+        """Test handling of empty YAML."""
+        state = MockAppState()
+        state.all_bas = {"p8", "p9"}
+        
+        yaml_text = ""
+        
+        success, msg = parse_yaml_regions_logic(state, yaml_text)
+        
+        # Empty YAML returns None, which is not a dict
+        assert success is False
+    
+    def test_empty_region_aggregations(self):
+        """Test handling of empty region_aggregations."""
+        state = MockAppState()
+        state.all_bas = {"p8", "p9"}
+        
+        yaml_text = """
+region_aggregations: {}
+"""
+        
+        success, msg = parse_yaml_regions_logic(state, yaml_text)
+        
+        assert success is False
+        assert "No region definitions found" in msg
+    
+    def test_non_string_ba_ids(self):
+        """Test handling of non-string BA IDs."""
+        state = MockAppState()
+        state.all_bas = {"8", "9"}
+        
+        yaml_text = """
+CA:
+  - 8
+  - 9
+"""
+        
+        success, msg = parse_yaml_regions_logic(state, yaml_text)
+        
+        # Numbers are valid in YAML but should be caught as non-strings
+        assert success is False
+        assert "must be strings" in msg
+    
+    def test_clears_existing_regions(self):
+        """Test that parsing new YAML clears existing manual regions."""
+        state = MockAppState()
+        state.all_bas = {"p8", "p9", "p10"}
+        state.manual_regions = {"OldRegion": ["p8"]}
+        
+        yaml_text = """
+NewRegion:
+  - p9
+  - p10
+"""
+        
+        success, msg = parse_yaml_regions_logic(state, yaml_text)
+        
+        assert success is True
+        assert "OldRegion" not in state.manual_regions
+        assert "NewRegion" in state.manual_regions
+    
+    def test_single_region(self):
+        """Test parsing YAML with a single region."""
+        state = MockAppState()
+        state.all_bas = {"p8", "p9", "p10"}
+        
+        yaml_text = """
+SingleRegion:
+  - p8
+  - p9
+  - p10
+"""
+        
+        success, msg = parse_yaml_regions_logic(state, yaml_text)
+        
+        assert success is True
+        assert "1 region" in msg and "3 BAs" in msg
+        assert len(state.manual_regions) == 1
+    
+    def test_many_regions(self):
+        """Test parsing YAML with many regions."""
+        state = MockAppState()
+        state.all_bas = {f"ba{i}" for i in range(20)}
+        
+        yaml_parts = []
+        for i in range(10):
+            yaml_parts.append(f"Region{i}:\n  - ba{i*2}\n  - ba{i*2+1}")
+        yaml_text = "\n".join(yaml_parts)
+        
+        success, msg = parse_yaml_regions_logic(state, yaml_text)
+        
+        assert success is True
+        assert "10 regions with 20 BAs" in msg
+        assert len(state.manual_regions) == 10
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

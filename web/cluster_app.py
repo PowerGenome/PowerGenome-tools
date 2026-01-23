@@ -3392,6 +3392,118 @@ def remove_manual_region(region_name):
         set_status(f"Region '{region_name}' removed", "info")
 
 
+def on_parse_yaml_regions(event):
+    """Parse YAML region definitions and load them into manual regions."""
+    yaml_input = document.getElementById("yamlRegionInput")
+    if not yaml_input:
+        return
+    
+    yaml_text = yaml_input.value.strip()
+    if not yaml_text:
+        set_status("Please paste YAML region definitions first", "error")
+        return
+    
+    try:
+        # Parse YAML
+        parsed = yaml.safe_load(yaml_text)
+        
+        if not isinstance(parsed, dict):
+            set_status("YAML must be a dictionary/mapping", "error")
+            return
+        
+        # Determine format and extract region_aggregations
+        region_aggregations = None
+        
+        # Format 1: Full definition with model_regions and region_aggregations
+        if "region_aggregations" in parsed:
+            region_aggregations = parsed["region_aggregations"]
+            # Note: model_regions is extracted for format validation but not used in manual mode
+            # since manual regions are always derived from region_aggregations keys
+            
+            if not isinstance(region_aggregations, dict):
+                set_status("region_aggregations must be a dictionary", "error")
+                return
+        # Format 2 & 3: Direct region mappings (could be at top level or wrapped)
+        else:
+            # All keys should map to lists of BAs
+            region_aggregations = parsed
+        
+        # Validate region_aggregations structure
+        if not region_aggregations:
+            set_status("No region definitions found in YAML", "error")
+            return
+        
+        for region_name, bas in region_aggregations.items():
+            if not isinstance(bas, list):
+                set_status(f"Region '{region_name}' must map to a list of BAs", "error")
+                return
+            if not all(isinstance(ba, str) for ba in bas):
+                set_status(f"All BAs in region '{region_name}' must be strings", "error")
+                return
+        
+        # Validate that all BAs exist in our data
+        invalid_bas = []
+        for region_name, bas in region_aggregations.items():
+            for ba in bas:
+                if ba not in state.all_bas:
+                    invalid_bas.append(ba)
+        
+        if invalid_bas:
+            unique_invalid = sorted(set(invalid_bas))
+            set_status(
+                f"Invalid BA codes in YAML: {', '.join(unique_invalid[:10])}"
+                + (f" and {len(unique_invalid) - 10} more" if len(unique_invalid) > 10 else ""),
+                "error"
+            )
+            return
+        
+        # Check for duplicate BAs across regions
+        all_bas = []
+        for bas in region_aggregations.values():
+            all_bas.extend(bas)
+        
+        if len(all_bas) != len(set(all_bas)):
+            duplicates = [ba for ba in set(all_bas) if all_bas.count(ba) > 1]
+            set_status(f"Duplicate BAs found in multiple regions: {', '.join(duplicates[:5])}", "error")
+            return
+        
+        # Clear existing manual regions
+        state.manual_regions = {}
+        state.selected_manual_region = None
+        
+        # Load regions from YAML
+        for region_name, bas in region_aggregations.items():
+            state.manual_regions[region_name] = list(bas)
+        
+        # Select all BAs that are in the YAML
+        state.selected_bas.clear()
+        for bas in region_aggregations.values():
+            state.selected_bas.update(bas)
+        
+        # Update displays
+        update_selected_display()
+        update_manual_regions_display()
+        update_unassigned_display()
+        update_manual_region_colors()
+        
+        # Clear YAML input
+        yaml_input.value = ""
+        
+        num_regions = len(state.manual_regions)
+        total_bas = sum(len(bas) for bas in state.manual_regions.values())
+        region_word = "region" if num_regions == 1 else "regions"
+        ba_word = "BA" if total_bas == 1 else "BAs"
+        set_status(
+            f"Successfully loaded {num_regions} {region_word} with {total_bas} {ba_word} from YAML",
+            "success"
+        )
+        
+    except yaml.YAMLError as e:
+        set_status(f"Invalid YAML format: {str(e)}", "error")
+    except Exception as e:
+        set_status(f"Error parsing YAML: {str(e)}", "error")
+
+
 # Export functions to JavaScript
 window.selectManualRegion = create_proxy(select_manual_region)
 window.removeManualRegion = create_proxy(remove_manual_region)
@@ -5520,6 +5632,9 @@ async def main():
         # Manual region mode buttons
         document.getElementById("addManualRegionBtn").addEventListener(
             "click", create_proxy(on_add_manual_region)
+        )
+        document.getElementById("parseYamlBtn").addEventListener(
+            "click", create_proxy(on_parse_yaml_regions)
         )
         document.getElementById("assignBAsBtn").addEventListener(
             "click", create_proxy(on_assign_bas)
