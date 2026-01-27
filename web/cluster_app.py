@@ -102,6 +102,7 @@ class AppState:
         self.esr_zones = None  # Computed ESR zones
         self.esr_map = None  # ESR constraint name -> regions mapping
         self.esr_type_map = None  # ESR constraint name -> "RPS" or "CES"
+        self.esr_policy_states = None  # ESR constraint name -> set of policy states
         self.emission_policies_df = None  # Generated emission_policies.csv
 
 
@@ -199,14 +200,68 @@ def split_bas_by_trading_zones(bas, hierarchy_df, rectable_df):
     return ba_groups
 
 
-def can_states_trade(state1, state2, rectable_df):
-    """Check if two states can trade REC/ESR credits based on rectable.csv."""
+def can_states_trade(state1, state2, rectable_df, transitive_only=False):
+    """Check if two states can trade REC/ESR credits based on rectable.csv.
+
+    Args:
+        state1: First state code (case-insensitive)
+        state2: Second state code (case-insensitive)
+        rectable_df: DataFrame with trading rules (states as index and columns)
+        transitive_only: If True, only return True for value=1 (transitive trading allowed).
+                        If False, return True for any value > 0 (including value=2 direct-only).
+
+    Trading values in rectable.csv:
+        - 1: States can trade directly AND transitively (through intermediate states)
+        - 2: States can trade directly ONLY (no transitive chains)
+        - 0 or missing: States cannot trade
+    """
     state1_upper = state1.upper()
     state2_upper = state2.upper()
     if state1_upper not in rectable_df.index or state2_upper not in rectable_df.columns:
         return False
     value = rectable_df.loc[state1_upper, state2_upper]
-    return pd.notna(value) and float(value) > 0
+    if pd.isna(value):
+        return False
+    val = float(value)
+    if transitive_only:
+        # Only value=1 allows transitive trading
+        return val == 1
+    else:
+        # Any positive value allows direct trading
+        return val > 0
+
+
+def can_generator_satisfy_policy(generator_state, policy_state, rectable_df):
+    """Check if generators in generator_state can satisfy the ESR policy in policy_state.
+
+    This checks the ASYMMETRIC trading relationship:
+        rectable.loc[policy_state, generator_state] > 0
+
+    The row represents the policy holder (whose constraint needs to be met).
+    The column represents the generator location (whose generation can satisfy the policy).
+
+    Args:
+        generator_state: State where the generator is located (case-insensitive)
+        policy_state: State whose ESR policy needs to be satisfied (case-insensitive)
+        rectable_df: DataFrame with trading rules (policy states as index, generator states as columns)
+
+    Returns:
+        True if generators in generator_state can satisfy policy_state's ESR constraint
+    """
+    policy_upper = policy_state.upper()
+    generator_upper = generator_state.upper()
+
+    if (
+        policy_upper not in rectable_df.index
+        or generator_upper not in rectable_df.columns
+    ):
+        return False
+
+    value = rectable_df.loc[policy_upper, generator_upper]
+    if pd.isna(value):
+        return False
+
+    return float(value) > 0
 
 
 def can_states_trade_transitively(states_set, rectable_df):
@@ -258,7 +313,9 @@ def build_state_trading_zones(all_states, rectable_df, state_to_interconnect=Non
 
     states_list = list(all_states)
 
-    # Build a graph of direct trading relationships between states
+    # Build a graph of trading relationships between states
+    # For states to be in the same zone, they must have BIDIRECTIONAL trading
+    # (both can satisfy each other's policies). Only value=1 allows transitive chains.
     trading_graph = {s: set() for s in states_list}
     for i, s1 in enumerate(states_list):
         for s2 in states_list[i + 1 :]:
@@ -270,7 +327,18 @@ def build_state_trading_zones(all_states, rectable_df, state_to_interconnect=Non
                 if ic1 and ic2 and ic1 != ic2:
                     continue
 
-            if can_states_trade(s1, s2, rectable_df):
+            # Check BOTH directions for bidirectional trading (zone membership)
+            # rectable is asymmetric: row=policy holder, column=generator location
+            # For zone membership, require both states can satisfy each other's policies
+            s1_can_satisfy_s2 = can_states_trade(
+                s2, s1, rectable_df, transitive_only=True
+            )  # s1 generators -> s2 policy
+            s2_can_satisfy_s1 = can_states_trade(
+                s1, s2, rectable_df, transitive_only=True
+            )  # s2 generators -> s1 policy
+
+            # Only add edge if trading is bidirectional with value=1
+            if s1_can_satisfy_s2 and s2_can_satisfy_s1:
                 trading_graph[s1].add(s2)
                 trading_graph[s2].add(s1)
 
@@ -508,10 +576,11 @@ def generate_emission_policies_csv(
         case_id: case identifier string
 
     Returns:
-        (df, esr_map, esr_type_map):
+        (df, esr_map, esr_type_map, esr_policy_states):
             - df: DataFrame with emission policies
             - esr_map: {ESR_1: [regions], ESR_2: [regions], ...}
             - esr_type_map: {ESR_1: "RPS", ESR_2: "CES", ...}
+            - esr_policy_states: {ESR_1: set(states), ...} - states whose policies are in each ESR
     """
     max_year_in_data_rps = rps_df["year"].max()
     max_year_in_data_ces = ces_df["year"].max()
@@ -520,22 +589,26 @@ def generate_emission_policies_csv(
     esr_constraint_num = 1
     esr_map = {}
     esr_type_map = {}
+    esr_policy_states = {}  # ESR_name -> set of states whose policies are in this ESR
     zone_esr_map = {}  # zone_idx -> (rps_col, ces_col)
 
     for zone_idx in range(len(state_zones)):
         zone_rps = None
         zone_ces = None
+        zone_states = state_zones[zone_idx]
         if include_rps:
             zone_rps = f"ESR_{esr_constraint_num}"
             esr_map[zone_rps] = (
                 []
             )  # Will be filled with regions that have non-zero values
             esr_type_map[zone_rps] = "RPS"
+            esr_policy_states[zone_rps] = set(zone_states)  # States in this zone
             esr_constraint_num += 1
         if include_ces:
             zone_ces = f"ESR_{esr_constraint_num}"
             esr_map[zone_ces] = []
             esr_type_map[zone_ces] = "CES"
+            esr_policy_states[zone_ces] = set(zone_states)  # States in this zone
             esr_constraint_num += 1
         zone_esr_map[zone_idx] = (zone_rps, zone_ces)
 
@@ -623,7 +696,7 @@ def generate_emission_policies_csv(
     columns = ["case_id", "year", "region"] + esr_cols_sorted
     df = df[columns]
 
-    return df, esr_map, esr_type_map
+    return df, esr_map, esr_type_map, esr_policy_states
 
 
 SETTINGS_FILENAMES = [
@@ -906,7 +979,6 @@ def update_selected_display():
     if state.is_manual_mode:
         update_unassigned_display()
         update_manual_regions_display()
-
 
 
 def toggle_ba_selection(ba_id, layer):
@@ -3107,27 +3179,30 @@ def on_add_manual_region(event):
     name_input = document.getElementById("newRegionName")
     if not name_input:
         return
-    
+
     region_name = name_input.value.strip()
     if not region_name:
         set_status("Please enter a region name", "error")
         return
-    
+
     # Check for duplicate names
     if region_name in state.manual_regions:
         set_status(f"Region '{region_name}' already exists", "error")
         return
-    
+
     # Add empty region
     state.manual_regions[region_name] = []
     state.selected_manual_region = region_name
-    
+
     # Clear input
     name_input.value = ""
-    
+
     # Update display
     update_manual_regions_display()
-    set_status(f"Region '{region_name}' created. Select BAs on the map and click 'Assign Selected BAs'.", "success")
+    set_status(
+        f"Region '{region_name}' created. Select BAs on the map and click 'Assign Selected BAs'.",
+        "success",
+    )
 
 
 def on_assign_bas(event):
@@ -3135,36 +3210,39 @@ def on_assign_bas(event):
     if not state.selected_manual_region:
         set_status("Please select a region first", "error")
         return
-    
+
     if not state.selected_bas:
         set_status("Please select BAs on the map first", "error")
         return
-    
+
     # Get BAs that are not already assigned
     assigned_bas = set()
     for bas in state.manual_regions.values():
         assigned_bas.update(bas)
-    
+
     new_bas = state.selected_bas - assigned_bas
     if not new_bas:
         set_status("All selected BAs are already assigned to regions", "error")
         return
-    
+
     # Assign BAs to selected region
     state.manual_regions[state.selected_manual_region].extend(new_bas)
-    
+
     # Clear selection
     state.selected_bas.clear()
     update_selected_display()
-    
+
     # Update displays
     update_manual_regions_display()
     update_unassigned_display()
-    
+
     # Update map colors to show assignments
     update_manual_region_colors()
-    
-    set_status(f"Assigned {len(new_bas)} BAs to region '{state.selected_manual_region}'", "success")
+
+    set_status(
+        f"Assigned {len(new_bas)} BAs to region '{state.selected_manual_region}'",
+        "success",
+    )
 
 
 def on_finalize_manual(event):
@@ -3172,42 +3250,47 @@ def on_finalize_manual(event):
     if not state.manual_regions:
         set_status("Please define at least one region", "error")
         return
-    
+
     # Check that all regions have BAs
     empty_regions = [name for name, bas in state.manual_regions.items() if not bas]
     if empty_regions:
         set_status(f"Regions {empty_regions} have no BAs assigned", "error")
         return
-    
+
     # Convert to region_aggregations format
-    state.region_aggregations = {name: list(bas) for name, bas in state.manual_regions.items()}
+    state.region_aggregations = {
+        name: list(bas) for name, bas in state.manual_regions.items()
+    }
     state.is_clustered = True
-    
+
     # Build ba_to_region mapping
     state.ba_to_region = {}
     for region_name, bas in state.region_aggregations.items():
         for ba in bas:
             state.ba_to_region[ba] = region_name
-    
+
     # Generate YAML (need model_regions list for generate_yaml function)
     model_regions = sorted(state.region_aggregations.keys())
     yaml_str = generate_yaml(model_regions, state.region_aggregations)
     yaml_out = document.getElementById("yamlOut")
     if yaml_out:
         yaml_out.value = yaml_str
-    
+
     # Update transmission lines if enabled
     update_transmission_lines()
-    
+
     # Update tooltips
     update_tooltips()
-    
+
     # Refresh plant cluster defaults
     update_default_cluster_budget()
-    
+
     num_regions = len(state.region_aggregations)
     total_bas = sum(len(bas) for bas in state.region_aggregations.values())
-    set_status(f"Manual regions finalized! {num_regions} regions created with {total_bas} BAs.", "success")
+    set_status(
+        f"Manual regions finalized! {num_regions} regions created with {total_bas} BAs.",
+        "success",
+    )
 
 
 def on_clear_manual_regions(event):
@@ -3218,7 +3301,7 @@ def on_clear_manual_regions(event):
     state.ba_to_region = {}
     state.is_clustered = False
     state.region_aggregations = None
-    
+
     # Reset map colors
     for ba_id, layer in state.ba_layers.items():
         outline_color = get_outline_color(ba_id)
@@ -3233,17 +3316,17 @@ def on_clear_manual_regions(event):
                 }
             )
         )
-    
+
     # Update displays
     update_manual_regions_display()
     update_unassigned_display()
     update_tooltips()
-    
+
     # Clear YAML
     yaml_out = document.getElementById("yamlOut")
     if yaml_out:
         yaml_out.value = ""
-    
+
     set_status("All manual regions cleared", "info")
 
 
@@ -3253,10 +3336,10 @@ def update_manual_regions_display():
     list_el = document.getElementById("manualRegionsList")
     assign_btn = document.getElementById("assignBAsBtn")
     finalize_btn = document.getElementById("finalizeManualBtn")
-    
+
     if count_el:
         count_el.textContent = str(len(state.manual_regions))
-    
+
     if list_el:
         if not state.manual_regions:
             list_el.innerHTML = "<em>No regions defined yet</em>"
@@ -3264,32 +3347,40 @@ def update_manual_regions_display():
             html_parts = []
             for region_name, bas in sorted(state.manual_regions.items()):
                 is_selected = region_name == state.selected_manual_region
-                selected_class = ' style="background: #e3f2fd; font-weight: 500;"' if is_selected else ""
+                selected_class = (
+                    ' style="background: #e3f2fd; font-weight: 500;"'
+                    if is_selected
+                    else ""
+                )
                 ba_count = len(bas)
                 ba_list = ", ".join(sorted(bas)[:5])
                 if len(bas) > 5:
                     ba_list += f", ... ({ba_count - 5} more)"
-                
+
                 # Add click handler to select region
                 html_parts.append(
                     f'<div class="candidate-item"{selected_class} '
-                    f'onclick="window.selectManualRegion(\'{region_name}\')" '
+                    f"onclick=\"window.selectManualRegion('{region_name}')\" "
                     f'style="cursor: pointer;">'
-                    f'<strong>{html.escape(region_name)}</strong> ({ba_count} BAs)<br>'
+                    f"<strong>{html.escape(region_name)}</strong> ({ba_count} BAs)<br>"
                     f'<small style="color: #666;">{html.escape(ba_list)}</small><br>'
-                    f'<button onclick="event.stopPropagation(); window.removeManualRegion(\'{region_name}\')" '
+                    f"<button onclick=\"event.stopPropagation(); window.removeManualRegion('{region_name}')\" "
                     f'style="margin-top: 4px; padding: 2px 6px; font-size: 11px;">Remove</button>'
-                    f'</div>'
+                    f"</div>"
                 )
             list_el.innerHTML = "".join(html_parts)
-    
+
     # Enable/disable assign button
     if assign_btn:
-        assign_btn.disabled = state.selected_manual_region is None or not state.selected_bas
-    
+        assign_btn.disabled = (
+            state.selected_manual_region is None or not state.selected_bas
+        )
+
     # Enable finalize button if we have regions with BAs
     if finalize_btn:
-        has_complete_regions = any(len(bas) > 0 for bas in state.manual_regions.values())
+        has_complete_regions = any(
+            len(bas) > 0 for bas in state.manual_regions.values()
+        )
         finalize_btn.disabled = not has_complete_regions
 
 
@@ -3297,18 +3388,18 @@ def update_unassigned_display():
     """Update the list of unassigned BAs."""
     count_el = document.getElementById("unassignedCount")
     list_el = document.getElementById("unassignedList")
-    
+
     # Get all assigned BAs
     assigned_bas = set()
     for bas in state.manual_regions.values():
         assigned_bas.update(bas)
-    
+
     # Unassigned are selected BAs minus assigned BAs
     unassigned_bas = state.selected_bas - assigned_bas
-    
+
     if count_el:
         count_el.textContent = str(len(unassigned_bas))
-    
+
     if list_el:
         if not unassigned_bas:
             list_el.innerHTML = "<em>No unassigned BAs</em>"
@@ -3328,7 +3419,7 @@ def update_manual_region_colors():
         color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
         for ba in bas:
             state.cluster_colors[ba] = color
-    
+
     # Update layer styles
     for ba_id, layer in state.ba_layers.items():
         if ba_id in state.cluster_colors:
@@ -3397,29 +3488,29 @@ def on_parse_yaml_regions(event):
     yaml_input = document.getElementById("yamlRegionInput")
     if not yaml_input:
         return
-    
+
     yaml_text = yaml_input.value.strip()
     if not yaml_text:
         set_status("Please paste YAML region definitions first", "error")
         return
-    
+
     try:
         # Parse YAML
         parsed = yaml.safe_load(yaml_text)
-        
+
         if not isinstance(parsed, dict):
             set_status("YAML must be a dictionary/mapping", "error")
             return
-        
+
         # Determine format and extract region_aggregations
         region_aggregations = None
-        
+
         # Format 1: Full definition with model_regions and region_aggregations
         if "region_aggregations" in parsed:
             region_aggregations = parsed["region_aggregations"]
             # Note: model_regions is extracted for format validation but not used in manual mode
             # since manual regions are always derived from region_aggregations keys
-            
+
             if not isinstance(region_aggregations, dict):
                 set_status("region_aggregations must be a dictionary", "error")
                 return
@@ -3427,77 +3518,86 @@ def on_parse_yaml_regions(event):
         else:
             # All keys should map to lists of BAs
             region_aggregations = parsed
-        
+
         # Validate region_aggregations structure
         if not region_aggregations:
             set_status("No region definitions found in YAML", "error")
             return
-        
+
         for region_name, bas in region_aggregations.items():
             if not isinstance(bas, list):
                 set_status(f"Region '{region_name}' must map to a list of BAs", "error")
                 return
             if not all(isinstance(ba, str) for ba in bas):
-                set_status(f"All BAs in region '{region_name}' must be strings", "error")
+                set_status(
+                    f"All BAs in region '{region_name}' must be strings", "error"
+                )
                 return
-        
+
         # Validate that all BAs exist in our data
         invalid_bas = []
         for region_name, bas in region_aggregations.items():
             for ba in bas:
                 if ba not in state.all_bas:
                     invalid_bas.append(ba)
-        
+
         if invalid_bas:
             unique_invalid = sorted(set(invalid_bas))
             set_status(
                 f"Invalid BA codes in YAML: {', '.join(unique_invalid[:10])}"
-                + (f" and {len(unique_invalid) - 10} more" if len(unique_invalid) > 10 else ""),
-                "error"
+                + (
+                    f" and {len(unique_invalid) - 10} more"
+                    if len(unique_invalid) > 10
+                    else ""
+                ),
+                "error",
             )
             return
-        
+
         # Check for duplicate BAs across regions
         all_bas = []
         for bas in region_aggregations.values():
             all_bas.extend(bas)
-        
+
         if len(all_bas) != len(set(all_bas)):
             duplicates = [ba for ba in set(all_bas) if all_bas.count(ba) > 1]
-            set_status(f"Duplicate BAs found in multiple regions: {', '.join(duplicates[:5])}", "error")
+            set_status(
+                f"Duplicate BAs found in multiple regions: {', '.join(duplicates[:5])}",
+                "error",
+            )
             return
-        
+
         # Clear existing manual regions
         state.manual_regions = {}
         state.selected_manual_region = None
-        
+
         # Load regions from YAML
         for region_name, bas in region_aggregations.items():
             state.manual_regions[region_name] = list(bas)
-        
+
         # Select all BAs that are in the YAML
         state.selected_bas.clear()
         for bas in region_aggregations.values():
             state.selected_bas.update(bas)
-        
+
         # Update displays
         update_selected_display()
         update_manual_regions_display()
         update_unassigned_display()
         update_manual_region_colors()
-        
+
         # Clear YAML input
         yaml_input.value = ""
-        
+
         num_regions = len(state.manual_regions)
         total_bas = sum(len(bas) for bas in state.manual_regions.values())
         region_word = "region" if num_regions == 1 else "regions"
         ba_word = "BA" if total_bas == 1 else "BAs"
         set_status(
             f"Successfully loaded {num_regions} {region_word} with {total_bas} {ba_word} from YAML",
-            "success"
+            "success",
         )
-        
+
     except yaml.YAMLError as e:
         set_status(f"Invalid YAML format: {str(e)}", "error")
     except Exception as e:
@@ -3508,7 +3608,6 @@ def on_parse_yaml_regions(event):
 window.selectManualRegion = create_proxy(select_manual_region)
 window.removeManualRegion = create_proxy(remove_manual_region)
 window.on_region_mode_change = create_proxy(on_region_mode_change)
-
 
 
 # ============================================================================
@@ -5224,11 +5323,18 @@ def generate_resource_tags_settings():
     }
 
     # Generate regional_tag_values for ESR constraints
-    # Maps region -> ESR_name -> {tech: 1} for qualified technologies
-    if state.esr_map and state.esr_type_map:
+    # A generator in region R can satisfy ESR constraint E if:
+    #   - Any state in R can export to the policy states of E
+    #   - This uses asymmetric rectable: rectable.loc[policy_state, generator_state] > 0
+    if (
+        state.esr_map
+        and state.esr_type_map
+        and state.esr_policy_states
+        and state.region_aggregations
+    ):
         regional_tag_values = {}
 
-        for esr_name, regions in state.esr_map.items():
+        for esr_name in state.esr_map.keys():
             esr_type = state.esr_type_map.get(esr_name)
             if not esr_type:
                 continue
@@ -5239,14 +5345,40 @@ def generate_resource_tags_settings():
             else:  # CES
                 qualified_techs = getattr(state, "esr_ces_techs", set()) or set()
 
+            # Get the policy states for this ESR constraint
+            policy_states = state.esr_policy_states.get(esr_name, set())
+            if not policy_states:
+                continue
+
             # Build tech map for this ESR
             tech_map = {tech: 1 for tech in sorted(qualified_techs)}
 
-            # Apply to each region in this ESR zone
-            for region in regions:
-                if region not in regional_tag_values:
-                    regional_tag_values[region] = {}
-                regional_tag_values[region][esr_name] = tech_map
+            # Check each region to see if its generators can satisfy this ESR's policies
+            for region_name, region_bas in state.region_aggregations.items():
+                # Get states in this region
+                region_states = get_states_in_region(region_bas, state.hierarchy_df)
+
+                # Check if any state in this region can export to any policy state
+                # Uses asymmetric check: rectable.loc[policy_state, generator_state]
+                can_satisfy = False
+                if state.rectable_df is not None:
+                    for gen_state in region_states:
+                        for policy_state in policy_states:
+                            if can_generator_satisfy_policy(
+                                gen_state, policy_state, state.rectable_df
+                            ):
+                                can_satisfy = True
+                                break
+                        if can_satisfy:
+                            break
+                else:
+                    # If no rectable, assume same-zone generators can satisfy (fallback)
+                    can_satisfy = bool(region_states & policy_states)
+
+                if can_satisfy:
+                    if region_name not in regional_tag_values:
+                        regional_tag_values[region_name] = {}
+                    regional_tag_values[region_name][esr_name] = tech_map
 
         if regional_tag_values:
             # Sort regions for consistent output
@@ -5560,20 +5692,23 @@ def on_run_esr_analysis(event):
 
         # Generate emission policies CSV using original region aggregations
         # (no region name splitting - regions can span multiple ESR zones)
-        state.emission_policies_df, state.esr_map, state.esr_type_map = (
-            generate_emission_policies_csv(
-                state.region_aggregations,
-                model_years,
-                state.esr_zones,
-                state_to_zone,
-                state.hierarchy_df,
-                state.pop_fraction_df,
-                state.rps_df,
-                state.ces_df,
-                include_rps=include_rps,
-                include_ces=include_ces,
-                case_id="all",
-            )
+        (
+            state.emission_policies_df,
+            state.esr_map,
+            state.esr_type_map,
+            state.esr_policy_states,
+        ) = generate_emission_policies_csv(
+            state.region_aggregations,
+            model_years,
+            state.esr_zones,
+            state_to_zone,
+            state.hierarchy_df,
+            state.pop_fraction_df,
+            state.rps_df,
+            state.ces_df,
+            include_rps=include_rps,
+            include_ces=include_ces,
+            case_id="all",
         )
 
         # Render results
@@ -5628,7 +5763,7 @@ async def main():
         document.getElementById("clearSelectionBtn").addEventListener(
             "click", create_proxy(on_clear_selection)
         )
-        
+
         # Manual region mode buttons
         document.getElementById("addManualRegionBtn").addEventListener(
             "click", create_proxy(on_add_manual_region)
@@ -5651,7 +5786,7 @@ async def main():
         document.getElementById("clearSelectionBtn2").addEventListener(
             "click", create_proxy(on_clear_selection)
         )
-        
+
         document.getElementById("copyYamlBtn").addEventListener(
             "click", create_proxy(on_copy_yaml)
         )
