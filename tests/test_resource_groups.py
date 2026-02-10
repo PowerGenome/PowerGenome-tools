@@ -128,3 +128,36 @@ def test_build_resource_group_json_profile_override_without_site_map():
         "metadata": "lcoe_output.csv",
         "profiles": "custom_profiles.parquet",
     }
+
+
+def test_build_assigned_df_without_model_region():
+    """Test that region column is set to empty string when model_region is missing."""
+    resource_groups = _load_resource_groups_module()
+
+    assignments = pd.DataFrame(
+        {
+            "tech": ["solar"],
+            "CPA_ID": [1],
+            "metro_id": [101],
+            "cpa_mw": [50.5],
+            "cf": [0.25],
+            "path": [[101, 102]],
+            "lcoe": [40.0],
+            "interconnect_capex_mw": [1000.0],
+            "total_interconnect_km": [12.5],
+            # Note: no model_region column
+        }
+    )
+    metro_region_map = pd.DataFrame(
+        {"metro_id": [101], "base_region": ["REG1"]}
+    )
+
+    assigned_df = resource_groups.build_assigned_df(
+        assignments=assignments,
+        tech="solar",
+        metro_region_map=metro_region_map,
+        msa_name_map=None,
+    )
+
+    assert "region" in assigned_df.columns
+    assert assigned_df.loc[0, "region"] == ""
