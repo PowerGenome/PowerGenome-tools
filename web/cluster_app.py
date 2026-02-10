@@ -5627,28 +5627,31 @@ async def load_fast_interconnection_data():
     base = "./fast_interconnection/data"
     data = {}
 
-    data["candidates"] = await _fetch_parquet_df(f"{base}/cpa_metro_candidates.parquet")
-    data["saturation"] = await _fetch_parquet_df(f"{base}/metro_saturation.parquet")
-    data["metro_region_map"] = await _fetch_parquet_df(
-        f"{base}/metro_region_map.parquet"
-    )
-    data["substation_metro_region"] = await _fetch_parquet_df(
-        f"{base}/substation_metro_region.parquet"
-    )
-    data["cpa_solar_attrs"] = await _fetch_parquet_df(
-        f"{base}/CPA_Solar_OctUpdate.parquet"
-    )
-    data["cpa_onshorewind_attrs"] = await _fetch_parquet_df(
-        f"{base}/CPA_OnshoreWind_OctUpdate.parquet"
-    )
-    data["msa_name_map"] = await _fetch_csv_df(f"{base}/msa_id_name_map.csv")
+    # Define all files to load with their keys
+    files_to_load = [
+        ("candidates", f"{base}/cpa_metro_candidates.parquet", _fetch_parquet_df),
+        ("saturation", f"{base}/metro_saturation.parquet", _fetch_parquet_df),
+        ("metro_region_map", f"{base}/metro_region_map.parquet", _fetch_parquet_df),
+        ("substation_metro_region", f"{base}/substation_metro_region.parquet", _fetch_parquet_df),
+        ("cpa_solar_attrs", f"{base}/CPA_Solar_OctUpdate.parquet", _fetch_parquet_df),
+        ("cpa_onshorewind_attrs", f"{base}/CPA_OnshoreWind_OctUpdate.parquet", _fetch_parquet_df),
+        ("msa_name_map", f"{base}/msa_id_name_map.csv", _fetch_csv_df),
+        ("cross_region", f"{base}/cross_region_connections.parquet", _fetch_parquet_df),
+    ]
 
-    try:
-        data["cross_region"] = await _fetch_parquet_df(
-            f"{base}/cross_region_connections.parquet"
-        )
-    except Exception:
-        data["cross_region"] = None
+    total_files = len(files_to_load)
+
+    # Load each file with progress indicator
+    for idx, (key, filepath, fetch_func) in enumerate(files_to_load, 1):
+        set_resource_group_status(f"Loading resource group data... {idx}/{total_files} files", "info")
+        try:
+            data[key] = await fetch_func(filepath)
+        except Exception:
+            if key == "cross_region":
+                # cross_region file is optional
+                data[key] = None
+            else:
+                raise
 
     state.fast_interconnection_data = data
 
