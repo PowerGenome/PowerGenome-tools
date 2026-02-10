@@ -345,7 +345,7 @@ async def test_fast_assign_cpas_respects_capacity_limits(
     sample_settings, sample_metro_region_map, sample_substation_metro_region
 ):
     """Test that assignment respects metro capacity limits.
-    
+
     Note: The algorithm allows assigning a CPA as long as remaining capacity > 0,
     even if the CPA size exceeds remaining capacity. This is all-or-nothing per CPA.
     """
@@ -390,10 +390,11 @@ async def test_fast_assign_cpas_respects_capacity_limits(
         show_progress=False,
     )
 
-    # Will assign CPAs 1 (300 MW) and 2 (400 MW) since both fit when checked
-    # CPA 1: 500 MW remaining > 0, assign 300 MW, leaving 200 MW
-    # CPA 2: 200 MW remaining > 0, assign 400 MW, leaving -200 MW (stored as 0)
-    # CPA 3: 0 MW remaining, skip
+    # The algorithm assigns CPAs as long as remaining capacity > 0.
+    # Assignment is all-or-nothing per CPA, so a CPA may exceed remaining capacity.
+    # CPA 1 (300 MW): 500 MW remaining > 0, assign, leaving 200 MW
+    # CPA 2 (400 MW): 200 MW remaining > 0, assign, leaving -200 MW (clamped to 0)
+    # CPA 3 (500 MW): 0 MW remaining, skip
     assert len(result) == 2
     total_assigned_mw = result["cpa_mw"].sum()
     assert total_assigned_mw == 700.0
