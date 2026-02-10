@@ -120,14 +120,6 @@ Metro coverage (count of metros used) stays constant across penalties. The penal
 
 ## Usage
 
-### Building Lookup Tables
-
-```bash
-python fast_interconnection/build_candidate_tables.py
-```
-
-This reads from the 24 training cases and creates the parquet files in `fast_interconnection/data/`.
-
 ### Running Fast Assignment
 
 ```python
@@ -145,21 +137,10 @@ assignments = fast_assign_cpas(
 )
 ```
 
-### Tuning Penalty Factor
-
-```bash
-python fast_interconnection/tune_penalty.py
-```
-
-Edit the script to adjust penalty factors and test cases.
-
 ## Files
 
-- `build_candidate_tables.py` - Extracts lookup tables from training cases
 - `fast_assign.py` - Main assignment algorithm with multiple strategies
-- `tune_penalty.py` - Hyperparameter tuning across test cases
-- `analyze_errors.py` - Error distribution analysis
-- `analyze_saturation.py` - Saturation pattern analysis
+- `resource_groups.py` - Resource grouping utilities
 - `data/` - Pre-computed lookup tables (parquet files)
 
 ## Performance
