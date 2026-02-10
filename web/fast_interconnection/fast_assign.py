@@ -534,7 +534,21 @@ async def fast_assign_cpas(
                     await asyncio.sleep(0)  # Yield to event loop
 
                     if assigned_this_batch == 0:
-
+                        # No assignments were made in this batch. This typically means
+                        # all metros are saturated for this tech or no valid candidates
+                        # remain under the current constraints. Log this so users can
+                        # distinguish normal completion from a misconfiguration.
+                        try:
+                            pbar.write(
+                                f"Stopping dynamic_lcoe assignment for tech '{tech}': "
+                                "no additional CPAs could be assigned in this batch."
+                            )
+                        except Exception:
+                            # Fallback if tqdm progress bar does not support write()
+                            print(
+                                f"[fast_assign] Stopping dynamic_lcoe assignment for tech '{tech}' "
+                                "because no additional CPAs could be assigned in this batch."
+                            )
                         break
             finally:
                 pbar.close()
