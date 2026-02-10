@@ -37,7 +37,6 @@ def build_assigned_df(
         {
             "cpa_id": tech_assigns["CPA_ID"].astype("int32"),
             "msa_id": tech_assigns["metro_id"].astype(str),
-            "region": tech_assigns.get("model_region", ""),
             "cpa_mw": tech_assigns["cpa_mw"].astype("float32"),
             "cf": tech_assigns["cf"].astype("float32"),
             "path": tech_assigns["path"].apply(
