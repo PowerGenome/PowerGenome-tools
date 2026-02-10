@@ -12,7 +12,7 @@ This script:
 import asyncio
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, Optional, Set
 
 import numpy as np
 import pandas as pd
