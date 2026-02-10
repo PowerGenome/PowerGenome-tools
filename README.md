@@ -34,6 +34,35 @@ Since the app uses PyScript and fetches local data files, it must be served via 
 ---
 </details>
 
+## Data Preparation
+
+The repository includes scripts to prepare input data for the web application. These scripts are located in the `bin/` directory.
+
+### Build ReEDS Annual Demand 2050
+
+Generate annual demand data for ReEDS Balancing Authorities in 2050:
+
+```bash
+python bin/build_reeds_annual_demand_2050.py \
+    --input /path/to/reeds_load_transformed.parquet \
+    --output data/reeds_annual_demand_2050.csv
+```
+
+This script:
+- Reads hourly demand data from a parquet file
+- Filters to year 2050 and aggregates by BA
+- Outputs a CSV with `ba_code` and `annual_demand_mwh` for 134 BAs
+
+**Input requirements:**
+- Parquet file with columns: `ba_code`, `year`, and `demand_mw` (or `load_mw`)
+- Must contain data for year 2050
+
+**Output:** CSV file with two columns used by the web application to display demand information.
+
+See the [Data Preparation documentation](https://gschivley.github.io/PowerGenome-tools/data_preparation/) for detailed usage and examples.
+
+---
+
 ## Regional Clustering
 
 The Regional Clustering tool aggregates individual Balancing Authorities (BAs) into larger "Model Regions" to reduce the computational complexity of transmission modeling.

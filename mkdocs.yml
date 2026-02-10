@@ -28,6 +28,7 @@ nav:
   - Web Application: web_app.md
   - ESR Policies: esr_policies.md
   - Algorithms: algorithms.md
+  - Data Preparation: data_preparation.md
   - Development: development.md
 
 plugins:
