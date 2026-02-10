@@ -5638,9 +5638,9 @@ async def load_fast_interconnection_data():
         ("msa_name_map", f"{base}/msa_id_name_map.csv", _fetch_csv_df),
         ("cross_region", f"{base}/cross_region_connections.parquet", _fetch_parquet_df),
     ]
-    
+
     total_files = len(files_to_load)
-    
+
     # Load each file with progress indicator
     for idx, (key, filepath, fetch_func) in enumerate(files_to_load, 1):
         set_resource_group_status(f"Loading resource group data... {idx}/{total_files} files", "info")
