@@ -1824,6 +1824,143 @@ def split_bas_by_trading_zones(bas, hierarchy_df, rectable_df):
     return ba_groups
 
 
+def build_state_to_interconnect_map(hierarchy_df):
+    """Build a mapping from state to interconnect."""
+    if hierarchy_df is None or "interconnect" not in hierarchy_df.columns:
+        return {}
+
+    state_ic_counts = {}
+    for _, row in hierarchy_df.iterrows():
+        st = str(row.get("st", "")).lower()
+        ic = str(row.get("interconnect", "")).strip()
+        if not st or not ic:
+            continue
+        key = (st, ic)
+        state_ic_counts[key] = state_ic_counts.get(key, 0) + 1
+
+    state_to_ic = {}
+    state_best_count = {}
+    for (st, ic), count in state_ic_counts.items():
+        if st not in state_to_ic or count > state_best_count.get(st, 0):
+            state_to_ic[st] = ic
+            state_best_count[st] = count
+
+    return state_to_ic
+
+
+def can_states_trade_transitive(state1, state2, rectable_df):
+    """Check if two states can trade transitively (value=1)."""
+    state1_upper = state1.upper()
+    state2_upper = state2.upper()
+    if state1_upper not in rectable_df.index or state2_upper not in rectable_df.columns:
+        return False
+    value = rectable_df.loc[state1_upper, state2_upper]
+    if pd.isna(value):
+        return False
+    return float(value) == 1
+
+
+def build_state_trading_zones(all_states, rectable_df, state_to_interconnect=None):
+    """Build trading zones based on state-level trading rules."""
+    if rectable_df is None or len(all_states) <= 1:
+        return [set(all_states)]
+
+    states_list = list(all_states)
+    trading_graph = {s: set() for s in states_list}
+    for i, s1 in enumerate(states_list):
+        for s2 in states_list[i + 1 :]:
+            if state_to_interconnect is not None:
+                ic1 = state_to_interconnect.get(s1)
+                ic2 = state_to_interconnect.get(s2)
+                if ic1 and ic2 and ic1 != ic2:
+                    continue
+
+            s1_can_satisfy_s2 = can_states_trade_transitive(s2, s1, rectable_df)
+            s2_can_satisfy_s1 = can_states_trade_transitive(s1, s2, rectable_df)
+
+            if s1_can_satisfy_s2 and s2_can_satisfy_s1:
+                trading_graph[s1].add(s2)
+                trading_graph[s2].add(s1)
+
+    visited = set()
+    zones = []
+
+    def dfs(state, zone):
+        visited.add(state)
+        zone.add(state)
+        for neighbor in trading_graph[state]:
+            if neighbor not in visited:
+                dfs(neighbor, zone)
+
+    for state in states_list:
+        if state not in visited:
+            zone = set()
+            dfs(state, zone)
+            zones.append(zone)
+
+    return zones
+
+
+def build_esr_zone_lookup(hierarchy_df, rectable_df):
+    """Build a lookup of state -> ESR zone label."""
+    if hierarchy_df is None or "st" not in hierarchy_df.columns:
+        return {}
+
+    states = {
+        str(state).strip().lower()
+        for state in hierarchy_df["st"].dropna().astype(str)
+        if str(state).strip()
+    }
+    if not states:
+        return {}
+
+    state_to_interconnect = build_state_to_interconnect_map(hierarchy_df)
+    state_zones = build_state_trading_zones(
+        states, rectable_df, state_to_interconnect
+    )
+    sorted_zones = sorted(
+        [sorted(zone) for zone in state_zones if zone],
+        key=lambda zone: zone[0],
+    )
+
+    zone_lookup = {}
+    for idx, zone_states in enumerate(sorted_zones, start=1):
+        zone_label = f"ESR Zone {idx}"
+        for state in zone_states:
+            zone_lookup[state] = zone_label
+
+    return zone_lookup
+
+
+class TestESRTradingZoneLookup:
+    """Test ESR trading zone lookup for interconnect-aware zones."""
+
+    def test_build_esr_zone_lookup_interconnect_split(self):
+        hierarchy_df = pd.DataFrame(
+            {
+                "ba": ["ca1", "nv1", "tx1", "fl1"],
+                "st": ["CA", "NV", "TX", "FL"],
+                "interconnect": ["Western", "Western", "ERCOT", "Eastern"],
+            }
+        )
+        rectable_df = pd.DataFrame(
+            {
+                "CA": [1.0, 1.0, 0.0, 0.0],
+                "NV": [1.0, 1.0, 0.0, 0.0],
+                "TX": [0.0, 0.0, 1.0, 1.0],
+                "FL": [0.0, 0.0, 1.0, 1.0],
+            },
+            index=["CA", "NV", "TX", "FL"],
+        )
+
+        zone_lookup = build_esr_zone_lookup(hierarchy_df, rectable_df)
+
+        assert zone_lookup["ca"] == "ESR Zone 1"
+        assert zone_lookup["nv"] == "ESR Zone 1"
+        assert zone_lookup["fl"] == "ESR Zone 2"
+        assert zone_lookup["tx"] == "ESR Zone 3"
+
+
 class TestESRFunctions:
     """Test ESR generation functions."""
 

@@ -392,6 +392,37 @@ def build_state_to_interconnect_map(hierarchy_df):
     return state_to_ic
 
 
+def build_esr_zone_lookup(hierarchy_df, rectable_df):
+    """Build a lookup of state -> ESR zone label."""
+    if hierarchy_df is None or "st" not in hierarchy_df.columns:
+        return {}
+
+    states = {
+        str(state).strip().lower()
+        for state in hierarchy_df["st"].dropna().astype(str)
+        if str(state).strip()
+    }
+    if not states:
+        return {}
+
+    state_to_interconnect = build_state_to_interconnect_map(hierarchy_df)
+    state_zones = build_state_trading_zones(
+        states, rectable_df, state_to_interconnect
+    )
+    sorted_zones = sorted(
+        [sorted(zone) for zone in state_zones if zone],
+        key=lambda zone: zone[0],
+    )
+
+    zone_lookup = {}
+    for idx, zone_states in enumerate(sorted_zones, start=1):
+        zone_label = f"ESR Zone {idx}"
+        for state in zone_states:
+            zone_lookup[state] = zone_label
+
+    return zone_lookup
+
+
 def build_esr_zones(region_aggregations, hierarchy_df, rectable_df):
     """Build ESR trading zones based on state-level trading rules.
 
@@ -844,6 +875,30 @@ GROUP_OUTLINE_COLORS = [
     "#fb9a99",
 ]
 
+# ESR trading zone colors for visualization
+ESR_ZONE_COLORS = [
+    "#4e79a7",
+    "#f28e2b",
+    "#e15759",
+    "#76b7b2",
+    "#59a14f",
+    "#edc949",
+    "#af7aa1",
+    "#ff9da7",
+    "#9c755f",
+    "#bab0ac",
+    "#86bcb6",
+    "#d37295",
+    "#6a6da9",
+    "#ffbe7d",
+    "#9d7660",
+    "#b07aa1",
+    "#8cd17d",
+    "#b6992d",
+    "#499894",
+    "#d4a6c8",
+]
+
 # Styling defaults
 STYLE_UNSELECTED = {
     "fillColor": "#cccccc",
@@ -1241,12 +1296,40 @@ def lighten_color(hex_color, factor=0.7):
     return rgb_to_hex((r, g, b))
 
 
+def ensure_esr_zone_column():
+    """Ensure the ESR trading zone column exists on the hierarchy DataFrame."""
+    if state.hierarchy_df is None:
+        return
+    if state.rectable_df is None:
+        state.hierarchy_df["esr_zone"] = "Unknown"
+        return
+
+    zone_lookup = build_esr_zone_lookup(state.hierarchy_df, state.rectable_df)
+    if not zone_lookup:
+        state.hierarchy_df["esr_zone"] = "Unknown"
+        return
+
+    esr_zones = (
+        state.hierarchy_df["st"]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .map(zone_lookup)
+    )
+    state.hierarchy_df["esr_zone"] = esr_zones.fillna("Unknown")
+
+
 def update_group_colors():
     """Update group colors based on current grouping column and apply to map."""
     grouping_col = document.getElementById("groupingColumn").value
 
     if state.hierarchy_df is None:
         return
+
+    palette = GROUP_OUTLINE_COLORS
+    if grouping_col == "esr_zone":
+        ensure_esr_zone_column()
+        palette = ESR_ZONE_COLORS
 
     # Skip if same grouping column (unless first time)
     if state.current_grouping == grouping_col and state.group_colors:
@@ -1259,7 +1342,7 @@ def update_group_colors():
     state.group_colors = {}
     state.group_fill_colors = {}
     for i, group in enumerate(unique_groups):
-        outline_color = GROUP_OUTLINE_COLORS[i % len(GROUP_OUTLINE_COLORS)]
+        outline_color = palette[i % len(palette)]
         state.group_colors[group] = outline_color
         # Create a light fill color (70% toward white)
         state.group_fill_colors[group] = lighten_color(outline_color, 0.75)
