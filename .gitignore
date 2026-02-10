@@ -16,3 +16,4 @@ wheels/
 *.DS_Store
 # MkDocs build output
 site/
+.coverage
