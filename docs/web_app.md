@@ -14,7 +14,8 @@ The guided workflow ensures you configure all necessary settings in the correct 
 4. **New Resources** - Select new-build technologies and define custom resources
 5. **Fuels** - Choose fuel price scenarios
 6. **ESR Policies** - Configure Energy Share Requirements for state-level policies (optional)
-7. **Export** - Generate and download complete settings YAML files
+7. **Resource Groups** - Define region-level inputs and LCOE adjustments for resource group outputs
+8. **Export** - Generate and download complete settings YAML files
 
 Each step builds on the previous ones, with the Regions step being the foundation that determines how plants are aggregated and how model boundaries are defined.
 
@@ -487,7 +488,23 @@ The ESR step generates `emission_policies.csv` containing:
 * **Policy requirements**: Fraction of demand that must be met by qualifying resources
 * **Technology tags**: Updated in `resource_tags.yml` to mark qualifying technologies
 
-## Step 7: Export
+## Step 7: Resource Groups
+
+The Resource Groups step lets you define resource group inputs for each model region and generate the supporting LCOE tables.
+
+### Inputs
+
+* **Region name**: Label used in the output filenames (for example, `solar_lcoe_<name>.parquet`)
+
+### Generated Output
+
+* **Solar LCOE parquet**: Regional LCOE table for solar resources
+* **Onshore wind LCOE parquet**: Regional LCOE table for onshore wind resources
+* **Resource group JSON**: Resource group metadata (profiles + site maps)
+
+Downloads from this tab are provided as a single ZIP archive.
+
+## Step 8: Export
 
 The Export step generates complete PowerGenome settings files based on all previous configuration steps.
 

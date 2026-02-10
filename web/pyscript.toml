@@ -1,3 +1,10 @@
 name = "PowerGenome Region Clustering"
 
+interpreter = "https://cdn.jsdelivr.net/pyodide/v0.29.0/full/pyodide.mjs"
+
 packages = ["pandas", "networkx", "numpy", "pyyaml"]
+
+[files]
+"./fast_interconnection/__init__.py" = "./fast_interconnection/__init__.py"
+"./fast_interconnection/fast_assign.py" = "./fast_interconnection/fast_assign.py"
+"./fast_interconnection/resource_groups.py" = "./fast_interconnection/resource_groups.py"

@@ -13,8 +13,8 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
 
     <!-- PyScript -->
-    <link rel="stylesheet" href="https://pyscript.net/releases/2024.11.1/core.css" />
-    <script type="module" src="https://pyscript.net/releases/2024.11.1/core.js"></script>
+    <link rel="stylesheet" href="https://pyscript.net/releases/2025.11.1/core.css" />
+    <script type="module" src="https://pyscript.net/releases/2025.11.1/core.js"></script>
 
     <style>
         * {
@@ -666,7 +666,8 @@
             <div class="nav-step" onclick="goToStep(4)">4. New Resources</div>
             <div class="nav-step" onclick="goToStep(5)">5. Fuels</div>
             <div class="nav-step" onclick="goToStep(6)">6. ESR Policies</div>
-            <div class="nav-step" onclick="goToStep(7)">7. Export</div>
+            <div class="nav-step" onclick="goToStep(7)">7. Resource Groups</div>
+            <div class="nav-step" onclick="goToStep(8)">8. Export</div>
         </div>
         <div style="font-size: 12px;">
             <a href="https://gschivley.github.io/PowerGenome-tools/" target="_blank"
@@ -1410,13 +1411,55 @@ wacc_real: 0.05"></textarea>
 
                 <div class="step-footer">
                     <button class="btn btn-secondary" onclick="goToStep(5)">&larr; Back</button>
-                    <button class="btn btn-primary" onclick="goToStep(7)">Next: Export &rarr;</button>
+                    <button class="btn btn-primary" onclick="goToStep(7)">Next: Resource Groups &rarr;</button>
                 </div>
             </div>
         </div>
 
-        <!-- Step 7: Export -->
+        <!-- Step 7: Resource Groups -->
         <div id="step-7" class="step-pane">
+            <div class="centered-step">
+                <div class="step-header">
+                    <h2>Resource Group Files</h2>
+                </div>
+
+                <div id="resourceGroupStatus" class="status info" style="display: none;">
+                    Configure inputs to generate resource group files.
+                </div>
+
+                <div class="section">
+                    <label>Region Name (used in file names)</label>
+                    <input type="text" id="resourceGroupName" value="resource_groups" />
+                </div>
+
+                <div class="section">
+                    <label>Dynamic LCOE Penalty</label>
+                    <input type="number" id="resourceGroupPenalty" value="10" step="0.1" />
+                    <div style="font-size: 11px; color: #666; margin-top: 4px;">
+                        Default 10.0 recommended for dynamic LCOE assignment.
+                    </div>
+                    <button class="btn btn-primary" id="generateResourceGroupsBtn" type="button"
+                        style="margin-top: 8px;">Generate Resource Group Files</button>
+                </div>
+
+                <div class="section">
+                    <label>Output Files</label>
+                    <div id="resourceGroupFiles" class="ba-list">
+                        <em>No resource group files generated yet.</em>
+                    </div>
+                    <button class="btn btn-secondary" id="downloadResourceGroupsBtn" type="button"
+                        style="margin-top: 8px;">Download ZIP</button>
+                </div>
+
+                <div class="step-footer">
+                    <button class="btn btn-secondary" onclick="goToStep(6)">&larr; Back</button>
+                    <button class="btn btn-primary" onclick="goToStep(8)">Next: Export &rarr;</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 8: Export -->
+        <div id="step-8" class="step-pane">
             <div class="centered-step">
                 <div class="step-header">
                     <h2>Export Settings</h2>
@@ -1435,7 +1478,7 @@ wacc_real: 0.05"></textarea>
                 </div>
 
                 <div class="step-footer">
-                    <button class="btn btn-secondary" onclick="goToStep(6)">&larr; Back</button>
+                    <button class="btn btn-secondary" onclick="goToStep(7)">&larr; Back</button>
                     <div></div>
                 </div>
             </div>
