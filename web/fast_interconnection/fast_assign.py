@@ -9,7 +9,6 @@ This script:
 5. Outputs results in the same format as the original algorithm
 """
 
-import ast
 import asyncio
 import re
 from pathlib import Path
