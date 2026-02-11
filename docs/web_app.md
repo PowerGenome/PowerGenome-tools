@@ -15,7 +15,8 @@ The guided workflow ensures you configure all necessary settings in the correct 
 5. **Fuels** - Choose fuel price scenarios
 6. **ESR Policies** - Configure Energy Share Requirements for state-level policies (optional)
 7. **Resource Groups** - Define region-level inputs and LCOE adjustments for resource group outputs
-8. **Export** - Generate and download complete settings YAML files
+8. **Renewables Clustering** - Build renewables_clusters settings using demand shares and resource group LCOE tables
+9. **Export** - Generate and download complete settings YAML files
 
 Each step builds on the previous ones, with the Regions step being the foundation that determines how plants are aggregated and how model boundaries are defined.
 
@@ -504,7 +505,34 @@ The Resource Groups step lets you define resource group inputs for each model re
 
 Downloads from this tab are provided as a single ZIP archive.
 
-## Step 8: Export
+## Step 8: Renewables Clustering
+
+The Renewables Clustering step builds `renewables_clusters` settings for wind and solar using regional demand shares and the resource group LCOE tables generated in Step 7.
+
+### Inputs
+
+* **Annual demand CSV**: The app loads `web/data/reeds_annual_demand_2050.csv` at startup. It must contain `region`, `weather_year`, and `annual_demand_mwh` columns. The `region` values are BA IDs (lowercase). The app averages demand across weather years for each BA, then sums BA demand within each model region.
+* **Wind share (%)** and **Solar share (%)**: Percent of each region's annual demand used to select wind and solar resources. Shares apply to every model region.
+* **Target total resource counts**: Optional total counts for wind and solar clusters across all regions. Leave blank for Auto; the app will suggest counts based on selected capacity.
+
+### How Renewables Clusters Are Computed
+
+1. **Prerequisites**: Requires region aggregations from Step 1 and resource group LCOE parquet files from Step 7 (onshore wind + solar).
+2. **Regional demand target**: For each region, compute target energy as $\text{region demand} \times \text{share}$.
+3. **Low-cost resource selection**: Within each region, sort candidates by LCOE and select enough capacity to meet the target energy (using $\text{annual MWh} = \text{capacity} \times \text{CF} \times 8760$). The highest selected LCOE becomes the region's filter threshold.
+4. **Capacity totals**: For each region, include all resources with LCOE below the threshold and sum their capacity to build a regional capacity total and LCOE range.
+5. **Bins and clusters**: The app allocates bins across regions to hit the target total resource count. When targets are omitted, bins are sized using defaults (wind: 10,000 MW per bin; solar: 50,000 MW per bin) with 5 clusters per bin. Suggested total counts are based on regional capacity chunks (wind: 2,000 MW; solar: 10,000 MW).
+6. **Renewables output**: Each region gets a `renewables_clusters` entry for each technology, with `filter`, `bin`, and `cluster` settings tuned to the selected capacity.
+
+!!! tip
+  If any BA demand is missing from the CSV, the app flags this and computes renewables clusters with the remaining demand.
+
+### Output
+
+* **Preview**: The step renders a YAML preview of `renewables_clusters`.
+* **Export**: The `renewables_clusters` list is written into `resources.yml` during Step 9. If the step is skipped, the app exports default renewables clusters.
+
+## Step 9: Export
 
 The Export step generates complete PowerGenome settings files based on all previous configuration steps.
 

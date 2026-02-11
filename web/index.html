@@ -667,7 +667,8 @@
             <div class="nav-step" onclick="goToStep(5)">5. Fuels</div>
             <div class="nav-step" onclick="goToStep(6)">6. ESR Policies</div>
             <div class="nav-step" onclick="goToStep(7)">7. Resource Groups</div>
-            <div class="nav-step" onclick="goToStep(8)">8. Export</div>
+            <div class="nav-step" onclick="goToStep(8)">8. Renewables</div>
+            <div class="nav-step" onclick="goToStep(9)">9. Export</div>
         </div>
         <div style="font-size: 12px;">
             <a href="https://gschivley.github.io/PowerGenome-tools/" target="_blank"
@@ -745,7 +746,7 @@
 
                     <div class="section" id="esrSection">
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                            <input type="checkbox" id="esrCompatibleClustering" style="width: auto; margin: 0;">
+                            <input type="checkbox" id="esrCompatibleClustering" checked style="width: auto; margin: 0;">
                             ESR-compatible clustering
                         </label>
                         <div style="font-size: 11px; color: #666; margin-top: 4px;">
@@ -766,7 +767,7 @@
                         </div>
                         <div id="fixedTargetRow">
                             <label style="font-size: 12px;">Target</label>
-                            <input id="targetRegions" type="number" value="10" min="1" max="134" />
+                            <input id="targetRegions" type="number" value="50" min="1" max="134" />
                         </div>
                         <div id="rangeTargetRow" style="display: none;">
                             <div style="display: flex; gap: 8px; align-items: center;">
@@ -1433,13 +1434,9 @@ wacc_real: 0.05"></textarea>
                 </div>
 
                 <div class="section">
-                    <label>Dynamic LCOE Penalty</label>
-                    <input type="number" id="resourceGroupPenalty" value="10" step="0.1" />
-                    <div style="font-size: 11px; color: #666; margin-top: 4px;">
-                        Default 10.0 recommended for dynamic LCOE assignment.
-                    </div>
-                    <button class="btn btn-primary" id="generateResourceGroupsBtn" type="button"
-                        style="margin-top: 8px;">Generate Resource Group Files</button>
+                    <button class="btn btn-primary" id="generateResourceGroupsBtn" type="button">
+                        Generate Resource Group Files
+                    </button>
                 </div>
 
                 <div class="section">
@@ -1453,13 +1450,75 @@ wacc_real: 0.05"></textarea>
 
                 <div class="step-footer">
                     <button class="btn btn-secondary" onclick="goToStep(6)">&larr; Back</button>
-                    <button class="btn btn-primary" onclick="goToStep(8)">Next: Export &rarr;</button>
+                    <button class="btn btn-primary" onclick="goToStep(8)">Next: Renewables &rarr;</button>
                 </div>
             </div>
         </div>
 
-        <!-- Step 8: Export -->
+        <!-- Step 8: Renewables Clustering -->
         <div id="step-8" class="step-pane">
+            <div class="centered-step">
+                <div class="step-header">
+                    <h2>Renewables Clustering</h2>
+                </div>
+
+                <div id="renewablesStatus" class="status info" style="display: none;">
+                    Configure demand shares and targets to build renewables clusters.
+                </div>
+
+                <div class="section">
+                    <label>Annual demand shares (applied to every model region)</label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div>
+                            <label>Wind share (%)</label>
+                            <input type="number" id="renewablesWindShare" min="0" max="100" value="30" />
+                        </div>
+                        <div>
+                            <label>Solar share (%)</label>
+                            <input type="number" id="renewablesSolarShare" min="0" max="100" value="20" />
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <label>Target total resource counts</label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div>
+                            <label>Wind target count</label>
+                            <input type="number" id="renewablesWindTargetCount" min="1" placeholder="Auto" />
+                        </div>
+                        <div>
+                            <label>Solar target count</label>
+                            <input type="number" id="renewablesSolarTargetCount" min="1" placeholder="Auto" />
+                        </div>
+                    </div>
+                    <div id="renewablesSuggestedCounts" class="hint" style="margin-top: 6px;">
+                        Suggested: wind 0, solar 0
+                    </div>
+                </div>
+
+                <div class="section">
+                    <button class="btn btn-primary" id="computeRenewablesClustersBtn" type="button">
+                        Compute Renewables Clusters
+                    </button>
+                </div>
+
+                <div class="section">
+                    <label>Preview</label>
+                    <textarea id="renewablesClustersPreview" readonly
+                        style="width: 100%; height: 200px; font-family: monospace; font-size: 11px; border: 1px solid #ddd; border-radius: 4px; padding: 8px;"
+                        placeholder="Compute renewables clusters to preview YAML..."></textarea>
+                </div>
+
+                <div class="step-footer">
+                    <button class="btn btn-secondary" onclick="goToStep(7)">&larr; Back</button>
+                    <button class="btn btn-primary" onclick="goToStep(9)">Next: Export &rarr;</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 9: Export -->
+        <div id="step-9" class="step-pane">
             <div class="centered-step">
                 <div class="step-header">
                     <h2>Export Settings</h2>
@@ -1478,7 +1537,7 @@ wacc_real: 0.05"></textarea>
                 </div>
 
                 <div class="step-footer">
-                    <button class="btn btn-secondary" onclick="goToStep(7)">&larr; Back</button>
+                    <button class="btn btn-secondary" onclick="goToStep(8)">&larr; Back</button>
                     <div></div>
                 </div>
             </div>
