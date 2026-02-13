@@ -2881,6 +2881,7 @@ def allocate_bins_by_capacity(region_caps, region_ranges, target_bins_total):
 
 def compute_region_bin_cluster_config(
     region_caps,
+    region_lcoe_data,
     region_ranges,
     target_total_resources,
     default_mw_per_bin,
@@ -2888,59 +2889,110 @@ def compute_region_bin_cluster_config(
 ):
     regions = [r for r, cap in region_caps.items() if cap > 0]
     if not regions:
-        return {}, 0
+        return {}, 0, 0, 0
+
+    bins = {
+        r: max(1, int(math.ceil(region_caps[r] / default_mw_per_bin))) for r in regions
+    }
+    minimum_total_resources = int(sum(bins.values()))
 
     if not target_total_resources or target_total_resources <= 0:
-        bins = {
-            r: max(1, int(math.ceil(region_caps[r] / default_mw_per_bin)))
-            for r in regions
-        }
         n_clusters = {r: default_n_clusters for r in regions}
         total = sum(bins[r] * n_clusters[r] for r in regions)
-        return {
+        return (
+            {
+                r: {
+                    "bins": bins[r],
+                    "q": max(1, int(round(region_caps[r] / default_mw_per_bin))),
+                    "mw_per_bin": max(1, int(round(region_caps[r] / bins[r]))),
+                    "n_clusters": n_clusters[r],
+                }
+                for r in regions
+            },
+            total,
+            total,
+            minimum_total_resources,
+        )
+
+    effective_target = max(int(target_total_resources), minimum_total_resources)
+    n_clusters = optimize_cluster_allocation_logic(
+        region_lcoe_data, bins, effective_target
+    )
+
+    for region in regions:
+        if region not in n_clusters:
+            n_clusters[region] = 1
+
+    total = int(sum(bins[r] * n_clusters[r] for r in regions))
+
+    return (
+        {
             r: {
                 "bins": bins[r],
+                "q": max(1, int(round(region_caps[r] / default_mw_per_bin))),
                 "mw_per_bin": max(1, int(round(region_caps[r] / bins[r]))),
                 "n_clusters": n_clusters[r],
             }
             for r in regions
-        }, total
+        },
+        total,
+        effective_target,
+        minimum_total_resources,
+    )
 
-    target_bins_total = max(1, int(round(target_total_resources / default_n_clusters)))
-    bins = allocate_bins_by_capacity(region_caps, region_ranges, target_bins_total)
-    n_clusters = {r: default_n_clusters for r in regions}
-    total = sum(bins[r] * n_clusters[r] for r in regions)
 
-    if total > target_total_resources:
-        ordered = sorted(regions, key=lambda r: region_ranges.get(r, 0.0))
-        for region in ordered:
-            while (
-                n_clusters[region] > 1
-                and total - bins[region] >= target_total_resources
-            ):
-                n_clusters[region] -= 1
-                total -= bins[region]
+def optimize_cluster_allocation_logic(region_lcoe_data, bins, target_total_resources):
+    regions = list(bins.keys())
+    if not regions:
+        return {}
 
-    if total < target_total_resources:
-        ordered = sorted(regions, key=lambda r: region_ranges.get(r, 0.0))
-        max_iterations = 1000  # Safety limit to prevent infinite loops
-        iterations = 0
-        while total < target_total_resources and iterations < max_iterations:
-            iterations += 1
-            for region in ordered:
-                bins[region] += 1
-                total += n_clusters[region]
-                if total >= target_total_resources:
-                    break
+    n_clusters = {r: 1 for r in regions}
+    current_total = sum(bins[r] for r in regions)
 
-    return {
-        r: {
-            "bins": bins[r],
-            "mw_per_bin": max(1, int(round(region_caps[r] / bins[r]))),
-            "n_clusters": n_clusters[r],
-        }
-        for r in regions
-    }, total
+    if current_total >= target_total_resources:
+        return n_clusters
+
+    region_metrics = {}
+    for r, data in region_lcoe_data.items():
+        lcoe = data["lcoe"]
+        cap = data["capacity"]
+        total_cap = np.sum(cap)
+        if total_cap == 0:
+            region_metrics[r] = 0
+            continue
+
+        avg_lcoe = np.average(lcoe, weights=cap)
+        variance = np.average((lcoe - avg_lcoe) ** 2, weights=cap)
+        std_dev = np.sqrt(variance)
+        region_metrics[r] = total_cap * std_dev
+
+    while current_total < target_total_resources:
+        best_region = None
+        best_gain_per_cost = -1.0
+
+        for r in regions:
+            cost = bins[r]
+            if current_total + cost > target_total_resources:
+                continue
+
+            n = n_clusters[r]
+            metric = region_metrics.get(r, 0)
+            K = n * bins[r]
+            K_next = (n + 1) * bins[r]
+            gain = metric * (1.0 / K - 1.0 / K_next)
+            efficiency = gain / cost
+
+            if efficiency > best_gain_per_cost:
+                best_gain_per_cost = efficiency
+                best_region = r
+
+        if best_region is None:
+            break
+
+        n_clusters[best_region] += 1
+        current_total += bins[best_region]
+
+    return n_clusters
 
 
 def suggest_total_resources(region_caps, chunk_mw):
@@ -2949,6 +3001,29 @@ def suggest_total_resources(region_caps, chunk_mw):
         if cap > 0:
             total += int(math.ceil(cap / chunk_mw))
     return total
+
+
+def compute_suggested_budget(region_data, region_targets, avg_resource_mw):
+    suggested = 0
+    for region_name, target_mwh in region_targets.items():
+        data = region_data.get(region_name)
+        if not data or target_mwh <= 0:
+            continue
+
+        cum_mwh = data["cum_mwh"]
+        if cum_mwh.size == 0:
+            continue
+
+        cutoff_idx = int(np.searchsorted(cum_mwh, target_mwh, side="left"))
+        if cutoff_idx >= cum_mwh.size:
+            cutoff_idx = cum_mwh.size - 1
+
+        cap_vals = data["capacity_mw"]
+        selected_capacity = float(cap_vals[: cutoff_idx + 1].sum())
+        if selected_capacity > 0:
+            suggested += int(math.ceil(selected_capacity / avg_resource_mw))
+
+    return suggested
 
 
 def compute_region_targets(region_data_keys, demand_map, share):
@@ -3059,43 +3134,101 @@ class TestRenewablesClusteringLogic:
     def test_compute_region_bin_cluster_config_default_target(self):
         region_caps = {"A": 100.0, "B": 250.0}
         region_ranges = {"A": 0.1, "B": 0.2}
+        region_lcoe_data = {
+            "A": {"lcoe": np.array([10.0]), "capacity": np.array([100.0])},
+            "B": {"lcoe": np.array([20.0, 25.0]), "capacity": np.array([150.0, 100.0])},
+        }
 
-        cfg, total = compute_region_bin_cluster_config(
-            region_caps, region_ranges, None, 100.0, 2
+        cfg, total, effective_target, minimum_budget = (
+            compute_region_bin_cluster_config(
+                region_caps, region_lcoe_data, region_ranges, None, 100.0, 2
+            )
         )
 
         assert total == 8
+        assert effective_target == 8
+        assert minimum_budget == 4
         assert cfg["A"]["bins"] == 1
         assert cfg["B"]["bins"] == 3
+        assert cfg["A"]["q"] == 1
+        assert cfg["B"]["q"] == 2
         assert cfg["A"]["mw_per_bin"] == 100
         assert cfg["B"]["mw_per_bin"] == 83
         assert cfg["A"]["n_clusters"] == 2
 
-    def test_compute_region_bin_cluster_config_with_target(self):
+    def test_compute_region_bin_cluster_config_applies_budget_floor(self):
         region_caps = {"A": 100.0, "B": 300.0}
         region_ranges = {"A": 0.2, "B": 0.1}
+        region_lcoe_data = {
+            "A": {"lcoe": np.array([10.0, 12.0]), "capacity": np.array([50.0, 50.0])},
+            "B": {"lcoe": np.array([9.0, 11.0]), "capacity": np.array([150.0, 150.0])},
+        }
 
-        cfg, total = compute_region_bin_cluster_config(
-            region_caps, region_ranges, 5, 100.0, 2
+        cfg, total, effective_target, minimum_budget = (
+            compute_region_bin_cluster_config(
+                region_caps, region_lcoe_data, region_ranges, 2, 100.0, 2
+            )
         )
 
-        assert total == 6
-        assert cfg["A"]["bins"] == 1
-        assert cfg["B"]["bins"] == 2
-        assert cfg["B"]["mw_per_bin"] == 150
-        assert cfg["A"]["n_clusters"] == 2
-
-    def test_compute_region_bin_cluster_config_reduces_clusters(self):
-        region_caps = {"A": 200.0, "B": 200.0}
-        region_ranges = {"A": 0.1, "B": 0.2}
-
-        cfg, total = compute_region_bin_cluster_config(
-            region_caps, region_ranges, 4, 100.0, 3
-        )
-
+        assert minimum_budget == 4
+        assert effective_target == 4
         assert total == 4
+        assert cfg["A"]["bins"] == 1
+        assert cfg["B"]["bins"] == 3
+        assert cfg["A"]["q"] == 1
+        assert cfg["B"]["q"] == 3
+        assert cfg["A"]["mw_per_bin"] == 100
+        assert cfg["B"]["mw_per_bin"] == 100
         assert cfg["A"]["n_clusters"] == 1
-        assert cfg["B"]["n_clusters"] == 3
+        assert cfg["B"]["n_clusters"] == 1
+
+    def test_compute_region_bin_cluster_config_allocates_extra_to_higher_spread(self):
+        region_caps = {"A": 100.0, "B": 100.0}
+        region_ranges = {"A": 0.1, "B": 0.2}
+        region_lcoe_data = {
+            "A": {"lcoe": np.array([10.0, 10.4]), "capacity": np.array([50.0, 50.0])},
+            "B": {"lcoe": np.array([0.0, 20.0]), "capacity": np.array([50.0, 50.0])},
+        }
+
+        cfg, total, effective_target, minimum_budget = (
+            compute_region_bin_cluster_config(
+                region_caps, region_lcoe_data, region_ranges, 3, 100.0, 2
+            )
+        )
+
+        assert minimum_budget == 2
+        assert effective_target == 3
+        assert total == 3
+        assert cfg["A"]["q"] == 1
+        assert cfg["A"]["mw_per_bin"] == 100
+        assert cfg["B"]["q"] == 1
+        assert cfg["B"]["mw_per_bin"] == 100
+        assert cfg["A"]["n_clusters"] == 1
+        assert cfg["B"]["n_clusters"] == 2
+
+    def test_compute_region_bin_cluster_config_cost_constraint_when_extra_budget_small(
+        self,
+    ):
+        region_caps = {"A": 200.0, "B": 100.0}
+        region_ranges = {"A": 0.3, "B": 0.1}
+        region_lcoe_data = {
+            "A": {"lcoe": np.array([0.0, 20.0]), "capacity": np.array([100.0, 100.0])},
+            "B": {"lcoe": np.array([9.5, 10.5]), "capacity": np.array([50.0, 50.0])},
+        }
+
+        cfg, total, effective_target, minimum_budget = (
+            compute_region_bin_cluster_config(
+                region_caps, region_lcoe_data, region_ranges, 4, 100.0, 2
+            )
+        )
+
+        assert minimum_budget == 3
+        assert effective_target == 4
+        assert total == 4
+        assert cfg["A"]["bins"] == 2
+        assert cfg["B"]["bins"] == 1
+        assert cfg["A"]["n_clusters"] == 1
+        assert cfg["B"]["n_clusters"] == 2
 
     def test_suggest_total_resources(self):
         region_caps = {"A": 0.0, "B": 1999.0, "C": 2000.0}
@@ -3103,6 +3236,25 @@ class TestRenewablesClusteringLogic:
         suggested = suggest_total_resources(region_caps, 2000.0)
 
         assert suggested == 2
+
+    def test_compute_suggested_budget_uses_selected_capacity_chunks(self):
+        region_data = {
+            "R1": {
+                "cum_mwh": np.array([100.0, 200.0]),
+                "capacity_mw": np.array([1200.0, 900.0]),
+            },
+            "R2": {
+                "cum_mwh": np.array([50.0, 100.0, 150.0]),
+                "capacity_mw": np.array([1800.0, 1700.0, 1700.0]),
+            },
+        }
+        region_targets = {"R1": 150.0, "R2": 60.0}
+
+        wind_suggested = compute_suggested_budget(region_data, region_targets, 2000.0)
+        solar_suggested = compute_suggested_budget(region_data, region_targets, 5000.0)
+
+        assert wind_suggested == 4
+        assert solar_suggested == 2
 
     def test_region_targets_skip_missing_and_zero(self):
         region_data_keys = {"A", "B", "C"}
