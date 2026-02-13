@@ -5727,6 +5727,333 @@ def on_run_esr_analysis(event):
 
 
 # ============================================================================
+# Renewable Supply Curve Plotting
+# ============================================================================
+
+
+def generate_synthetic_renewable_data(technology, region, num_sites=50):
+    """
+    Generate synthetic renewable resource data for visualization purposes.
+    
+    Parameters
+    ----------
+    technology : str
+        Technology type ('landbasedwind' or 'utilitypv')
+    region : str
+        Region name
+    num_sites : int
+        Number of synthetic sites to generate
+        
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns: cpa_id, region, technology, capacity_mw, lcoe, cf
+    """
+    import random
+    
+    # Set different characteristics for wind vs solar
+    if technology == "landbasedwind":
+        # Wind: wider LCOE range, lower capacity factors
+        lcoe_mean = 45
+        lcoe_std = 15
+        lcoe_min = 25
+        lcoe_max = 80
+        cf_mean = 0.40
+        cf_std = 0.08
+        cap_min = 50
+        cap_max = 500
+    else:  # utilitypv
+        # Solar: tighter LCOE range, higher capacity factors
+        lcoe_mean = 30
+        lcoe_std = 8
+        lcoe_min = 20
+        lcoe_max = 50
+        cf_mean = 0.25
+        cf_std = 0.04
+        cap_min = 100
+        cap_max = 800
+    
+    data = []
+    for i in range(num_sites):
+        # Generate LCOE from truncated normal distribution
+        lcoe = max(lcoe_min, min(lcoe_max, random.gauss(lcoe_mean, lcoe_std)))
+        
+        # Capacity factor inversely correlated with LCOE (better sites cost less)
+        cf = max(0.1, min(0.6, cf_mean + (lcoe_mean - lcoe) / (lcoe_std * 10) * cf_std))
+        
+        # Capacity varies randomly
+        capacity = random.uniform(cap_min, cap_max)
+        
+        data.append({
+            "cpa_id": f"{region}_{technology}_{i+1}",
+            "region": region,
+            "technology": technology,
+            "capacity_mw": capacity,
+            "lcoe": lcoe,
+            "cf": cf
+        })
+    
+    return pd.DataFrame(data)
+
+
+def apply_renewables_clustering(data, config):
+    """
+    Apply clustering logic from renewables_clusters configuration to synthetic data.
+    
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Renewable resource data
+    config : dict
+        Single renewables_clusters configuration dict
+        
+    Returns
+    -------
+    pd.DataFrame
+        Data with 'cluster' column added
+    """
+    df = data.copy()
+    
+    # Apply filters
+    if "filter" in config:
+        for filt in config["filter"]:
+            feature = filt.get("feature")
+            if feature in df.columns:
+                if "max" in filt:
+                    df = df[df[feature] <= filt["max"]]
+                if "min" in filt:
+                    df = df[df[feature] >= filt["min"]]
+    
+    if df.empty:
+        return df
+    
+    # Determine number of clusters
+    if "cluster" in config:
+        # Use specified clustering
+        cluster_spec = config["cluster"][0] if isinstance(config["cluster"], list) else config["cluster"]
+        n_clusters = cluster_spec.get("n_clusters", 1)
+    elif "bin" in config:
+        # Estimate clusters from binning
+        bin_spec = config["bin"][0] if isinstance(config["bin"], list) else config["bin"]
+        mw_per_bin = bin_spec.get("mw_per_bin", 50000)
+        total_mw = df["capacity_mw"].sum()
+        n_clusters = max(1, int(total_mw / mw_per_bin))
+    else:
+        n_clusters = 1
+    
+    # Simple clustering by LCOE quantiles
+    if n_clusters == 1:
+        df["cluster"] = 1
+    else:
+        df = df.sort_values("lcoe")
+        df["cluster"] = pd.qcut(df["lcoe"], q=min(n_clusters, len(df)), labels=False, duplicates="drop") + 1
+    
+    return df
+
+
+def plot_supply_curves_for_region(ax_site, ax_cluster, data, region, technology):
+    """
+    Create supply curve plots for a single region and technology.
+    
+    Parameters
+    ----------
+    ax_site : matplotlib.axes.Axes
+        Axes for site-level supply curve
+    ax_cluster : matplotlib.axes.Axes
+        Axes for cluster-level supply curve
+    data : pd.DataFrame
+        Renewable resource data with cluster assignments
+    region : str
+        Region name
+    technology : str
+        Technology type
+    """
+    if data.empty:
+        ax_site.text(0.5, 0.5, "No data after filtering", 
+                     ha="center", va="center", transform=ax_site.transAxes)
+        ax_cluster.text(0.5, 0.5, "No data after filtering",
+                        ha="center", va="center", transform=ax_cluster.transAxes)
+        return
+    
+    # Sort by LCOE
+    data = data.sort_values("lcoe").reset_index(drop=True)
+    data["capacity_gw"] = data["capacity_mw"] / 1000
+    data["cum_capacity"] = data["capacity_gw"].cumsum()
+    data["left"] = data["cum_capacity"] - data["capacity_gw"]
+    
+    # Get unique clusters and assign colors
+    unique_clusters = sorted(data["cluster"].unique())
+    colors_list = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+                   "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+    color_dict = {cluster: colors_list[i % len(colors_list)] 
+                  for i, cluster in enumerate(unique_clusters)}
+    colors = data["cluster"].map(color_dict)
+    
+    # Site-level supply curve
+    ax_site.bar(data["left"], data["lcoe"], width=data["capacity_gw"],
+                align="edge", color=colors, edgecolor="none")
+    ax_site.set_xlabel("Cumulative Capacity (GW)")
+    ax_site.set_ylabel("LCOE ($/MWh)")
+    ax_site.set_title(f"{region} - {technology}\nSite-level")
+    ax_site.spines["top"].set_visible(False)
+    ax_site.spines["right"].set_visible(False)
+    ax_site.grid(axis="y", alpha=0.3)
+    
+    # Cluster-level supply curve
+    cluster_stats = data.groupby("cluster").apply(
+        lambda df: pd.Series({
+            "weighted_lcoe": (df["lcoe"] * df["capacity_gw"]).sum() / df["capacity_gw"].sum(),
+            "total_capacity": df["capacity_gw"].sum()
+        })
+    ).reset_index()
+    cluster_stats = cluster_stats.sort_values("weighted_lcoe").reset_index(drop=True)
+    cluster_stats["cum_capacity"] = cluster_stats["total_capacity"].cumsum()
+    cluster_stats["start"] = cluster_stats["cum_capacity"] - cluster_stats["total_capacity"]
+    
+    cluster_colors = [color_dict.get(cluster, "black") 
+                      for cluster in cluster_stats["cluster"]]
+    
+    ax_cluster.bar(cluster_stats["start"], cluster_stats["weighted_lcoe"],
+                   width=cluster_stats["total_capacity"], align="edge",
+                   color=cluster_colors, edgecolor="none")
+    ax_cluster.set_xlabel("Cumulative Capacity (GW)")
+    ax_cluster.set_ylabel("Weighted Avg LCOE ($/MWh)")
+    ax_cluster.set_title(f"{region} - {technology}\nCluster-level ({len(unique_clusters)} clusters)")
+    ax_cluster.spines["top"].set_visible(False)
+    ax_cluster.spines["right"].set_visible(False)
+    ax_cluster.grid(axis="y", alpha=0.3)
+
+
+def generate_supply_curve_plots():
+    """
+    Generate supply curve plots for wind and solar resources based on
+    renewables_clusters configuration.
+    
+    Returns
+    -------
+    str
+        Base64-encoded PNG image data URL
+    """
+    import matplotlib
+    matplotlib.use("Agg")  # Use non-interactive backend
+    import matplotlib.pyplot as plt
+    import io
+    import base64
+    
+    # Get renewables_clusters config
+    if not state.settings_yamls or "resources.yml" not in state.settings_yamls:
+        return None
+    
+    # Parse resources.yml to get renewables_clusters
+    try:
+        resources_dict = yaml.safe_load(state.settings_yamls["resources.yml"])
+        renewables_clusters = resources_dict.get("renewables_clusters", DEFAULT_RENEWABLES_CLUSTERS)
+    except Exception:
+        renewables_clusters = DEFAULT_RENEWABLES_CLUSTERS
+    
+    # Get regions
+    if not state.region_aggregations:
+        return None
+    
+    regions = list(state.region_aggregations.keys())[:3]  # Limit to 3 regions for visualization
+    
+    # Group configs by technology
+    tech_configs = {}
+    for config in renewables_clusters:
+        tech = config.get("technology", "unknown")
+        if tech not in tech_configs:
+            tech_configs[tech] = []
+        tech_configs[tech].append(config)
+    
+    # Focus on wind and solar
+    technologies = []
+    if "landbasedwind" in tech_configs:
+        technologies.append("landbasedwind")
+    if "utilitypv" in tech_configs:
+        technologies.append("utilitypv")
+    
+    if not technologies:
+        return None
+    
+    # Create figure with small multiples: rows=regions, cols=techs*2 (site+cluster)
+    n_rows = len(regions)
+    n_cols = len(technologies) * 2  # 2 plots per technology (site + cluster)
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(4*n_cols, 3*n_rows), dpi=100)
+    if n_rows == 1 and n_cols == 1:
+        axes = np.array([[axes]])
+    elif n_rows == 1:
+        axes = axes.reshape(1, -1)
+    elif n_cols == 1:
+        axes = axes.reshape(-1, 1)
+    
+    for i, region in enumerate(regions):
+        for j, tech in enumerate(technologies):
+            # Generate synthetic data
+            data = generate_synthetic_renewable_data(tech, region, num_sites=50)
+            
+            # Apply clustering configuration
+            config = tech_configs[tech][0]  # Use first config for this tech
+            data_clustered = apply_renewables_clustering(data, config)
+            
+            # Plot
+            col_site = j * 2
+            col_cluster = j * 2 + 1
+            plot_supply_curves_for_region(
+                axes[i, col_site], axes[i, col_cluster],
+                data_clustered, region, tech
+            )
+    
+    plt.tight_layout()
+    
+    # Convert to base64 image
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", bbox_inches="tight")
+    buf.seek(0)
+    img_base64 = base64.b64encode(buf.read()).decode("utf-8")
+    plt.close(fig)
+    
+    return f"data:image/png;base64,{img_base64}"
+
+
+def on_generate_supply_curves(event):
+    """Handle Generate Supply Curves button click."""
+    try:
+        img_el = document.getElementById("supplyCurveImg")
+        status_el = document.getElementById("supplyCurveStatus")
+        
+        if not img_el or not status_el:
+            return
+        
+        status_el.textContent = "Generating supply curve plots..."
+        status_el.className = "status info"
+        status_el.style.display = "block"
+        
+        # Generate plots
+        img_data = generate_supply_curve_plots()
+        
+        if img_data:
+            img_el.src = img_data
+            img_el.style.display = "block"
+            status_el.textContent = "Supply curve plots generated successfully!"
+            status_el.className = "status success"
+        else:
+            img_el.style.display = "none"
+            status_el.textContent = "Could not generate plots. Generate settings first and ensure regions are defined."
+            status_el.className = "status error"
+            
+    except Exception as exc:
+        img_el = document.getElementById("supplyCurveImg")
+        status_el = document.getElementById("supplyCurveStatus")
+        if img_el:
+            img_el.style.display = "none"
+        if status_el:
+            status_el.textContent = f"Error generating plots: {exc}"
+            status_el.className = "status error"
+            status_el.style.display = "block"
+
+
+# ============================================================================
 # Initialization
 # ============================================================================
 
@@ -5857,6 +6184,9 @@ async def main():
         )
         document.getElementById("downloadSettingsFileBtn").addEventListener(
             "click", create_proxy(on_download_settings_file)
+        )
+        document.getElementById("generateSupplyCurvesBtn").addEventListener(
+            "click", create_proxy(on_generate_supply_curves)
         )
 
         # ESR step

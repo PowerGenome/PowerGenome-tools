@@ -1434,6 +1434,17 @@ wacc_real: 0.05"></textarea>
                         placeholder="Generate settings to preview YAML..."></textarea>
                 </div>
 
+                <div class="section">
+                    <label>Renewable Supply Curves</label>
+                    <div style="font-size: 11px; color: #666; margin-bottom: 8px;">
+                        Visualize wind and solar supply curves for your model regions based on the renewables_clusters configuration.
+                        Shows both site-level and cluster-level supply curves with example data.
+                    </div>
+                    <button class="btn btn-secondary" id="generateSupplyCurvesBtn" type="button">Generate Supply Curve Plots</button>
+                    <div id="supplyCurveStatus" class="status" style="display:none; margin-top: 8px;"></div>
+                    <img id="supplyCurveImg" style="display:none; margin-top: 8px; width: 100%; border: 1px solid #ddd; border-radius: 4px;" />
+                </div>
+
                 <div class="step-footer">
                     <button class="btn btn-secondary" onclick="goToStep(6)">&larr; Back</button>
                     <div></div>
