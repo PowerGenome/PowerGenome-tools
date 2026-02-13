@@ -3095,7 +3095,7 @@ def _extract_cluster_n_clusters(cluster_item):
     return 1
 
 
-def _weighted_kmeans_1d(values, weights, k, max_iter=30):
+def _agglomerative_1d_labels(values, weights, k):
     values = np.asarray(values, dtype=float)
     weights = np.asarray(weights, dtype=float)
     valid = np.isfinite(values) & np.isfinite(weights)
@@ -3110,35 +3110,63 @@ def _weighted_kmeans_1d(values, weights, k, max_iter=30):
     if k == 1:
         return np.zeros(values.size, dtype=int)
 
-    order = np.argsort(values)
+    order = np.argsort(values, kind="mergesort")
     sorted_vals = values[order]
     sorted_weights = weights[order]
-    cum_w = np.cumsum(sorted_weights)
-    total_w = float(cum_w[-1])
 
-    centers = []
-    for i in range(1, k + 1):
-        target = total_w * (i / (k + 1))
-        idx = int(np.searchsorted(cum_w, target, side="left"))
-        idx = min(max(idx, 0), sorted_vals.size - 1)
-        centers.append(sorted_vals[idx])
-    centers = np.asarray(centers, dtype=float)
+    clusters = [
+        {
+            "positions": [idx],
+            "weight": float(sorted_weights[idx]),
+            "mean": float(sorted_vals[idx]),
+        }
+        for idx in range(sorted_vals.size)
+    ]
 
-    labels = np.zeros(values.size, dtype=int)
-    for _ in range(max_iter):
-        distances = np.abs(values[:, None] - centers[None, :])
-        new_labels = np.argmin(distances, axis=1)
-        if np.array_equal(new_labels, labels):
-            break
-        labels = new_labels
-        for idx in range(k):
-            mask = labels == idx
-            if not np.any(mask):
-                continue
-            w = weights[mask]
-            v = values[mask]
-            centers[idx] = float(np.sum(v * w) / np.sum(w))
+    def merge_cost(left_cluster, right_cluster):
+        left_w = left_cluster["weight"]
+        right_w = right_cluster["weight"]
+        denom = left_w + right_w
+        if denom <= 0:
+            return 0.0
+        mean_diff = left_cluster["mean"] - right_cluster["mean"]
+        return (left_w * right_w / denom) * (mean_diff**2)
 
+    while len(clusters) > k:
+        best_idx = 0
+        best_cost = None
+        for idx in range(len(clusters) - 1):
+            cost = merge_cost(clusters[idx], clusters[idx + 1])
+            if best_cost is None or cost < best_cost:
+                best_cost = cost
+                best_idx = idx
+
+        left_cluster = clusters[best_idx]
+        right_cluster = clusters[best_idx + 1]
+        merged_weight = left_cluster["weight"] + right_cluster["weight"]
+        if merged_weight <= 0:
+            merged_mean = 0.5 * (left_cluster["mean"] + right_cluster["mean"])
+        else:
+            merged_mean = (
+                left_cluster["mean"] * left_cluster["weight"]
+                + right_cluster["mean"] * right_cluster["weight"]
+            ) / merged_weight
+
+        merged_cluster = {
+            "positions": left_cluster["positions"] + right_cluster["positions"],
+            "weight": merged_weight,
+            "mean": float(merged_mean),
+        }
+        clusters[best_idx] = merged_cluster
+        del clusters[best_idx + 1]
+
+    labels_sorted = np.zeros(sorted_vals.size, dtype=int)
+    for label, cluster_data in enumerate(clusters):
+        for pos in cluster_data["positions"]:
+            labels_sorted[pos] = label
+
+    labels = np.zeros(sorted_vals.size, dtype=int)
+    labels[order] = labels_sorted
     return labels
 
 
@@ -3208,9 +3236,13 @@ def _build_aggregated_supply_curve_bars(region_df, cluster_item):
     if cluster_feature not in work_df.columns:
         cluster_feature = "lcoe"
 
-    work_df["capacity_mw"] = pd.to_numeric(work_df["capacity_mw"], errors="coerce").fillna(0.0)
+    work_df["capacity_mw"] = pd.to_numeric(
+        work_df["capacity_mw"], errors="coerce"
+    ).fillna(0.0)
     work_df["lcoe"] = pd.to_numeric(work_df["lcoe"], errors="coerce").fillna(0.0)
-    work_df[cluster_feature] = pd.to_numeric(work_df[cluster_feature], errors="coerce").fillna(0.0)
+    work_df[cluster_feature] = pd.to_numeric(
+        work_df[cluster_feature], errors="coerce"
+    ).fillna(0.0)
     work_df = work_df[work_df["capacity_mw"] > 0.0].copy()
     if work_df.empty:
         return []
@@ -3224,7 +3256,7 @@ def _build_aggregated_supply_curve_bars(region_df, cluster_item):
 
         values = bin_df[cluster_feature].to_numpy(dtype=float)
         weights = bin_df["capacity_mw"].to_numpy(dtype=float)
-        labels = _weighted_kmeans_1d(values, weights, effective_k)
+        labels = _agglomerative_1d_labels(values, weights, effective_k)
         if labels.size == 0:
             labels = np.zeros(len(bin_df), dtype=int)
 
@@ -3557,7 +3589,23 @@ class TestRenewablesClusteringLogic:
         aggregated = _build_aggregated_supply_curve_bars(region_df, cluster_item)
 
         assert aggregated
-        assert all("Bin " in bar["label"] and "Cluster " in bar["label"] for bar in aggregated)
+        assert all(
+            "Bin " in bar["label"] and "Cluster " in bar["label"] for bar in aggregated
+        )
+
+    def test_agglomerative_1d_labels_separates_clear_value_groups(self):
+        values = np.array([100.0, 1.0, 101.0, 2.0], dtype=float)
+        weights = np.array([5.0, 1.0, 5.0, 1.0], dtype=float)
+
+        labels = _agglomerative_1d_labels(values, weights, 2)
+
+        assert len(set(labels.tolist())) == 2
+        assert labels[0] == labels[2]
+        assert labels[1] == labels[3]
+        assert labels[0] != labels[1]
+        assert float(
+            weights[labels == labels[0]].sum() + weights[labels == labels[1]].sum()
+        ) == pytest.approx(float(weights.sum()))
 
     def test_supply_curve_aggregation_empty_input_returns_empty(self):
         empty_df = pd.DataFrame(columns=["capacity_mw", "lcoe"])

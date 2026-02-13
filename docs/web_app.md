@@ -523,7 +523,7 @@ The Renewables Clustering step builds `renewables_clusters` settings for wind an
 3. **Low-cost resource selection**: Within each region, sort candidates by LCOE and select enough capacity to meet the target energy (using $\text{annual MWh} = \text{capacity} \times \text{CF} \times 8760$). The highest selected LCOE becomes the region's filter threshold.
 4. **Capacity totals**: For each region, include all resources with LCOE below the threshold and sum their capacity to build a regional capacity total and LCOE range.
 5. **Suggested budgets**: For each technology, the app sums selected regional capacity and converts it to a suggested total budget using average resource size assumptions (default wind: 2,000 MW/resource, solar: 5,000 MW/resource). Suggested budgets update when demand shares or average resource sizes change.
-6. **Budget floor and allocation**: During compute, each technology budget is checked against the minimum feasible budget (at least one cluster per required bin). If a user-entered budget is below this minimum, it is automatically raised. Any extra budget above the minimum is allocated to reduce weighted LCOE standard deviation.
+6. **Budget floor and allocation**: During compute, each technology budget is checked against the minimum feasible budget (at least one cluster per required bin). If a user-entered budget is below this minimum, it is automatically raised. Any extra budget above the minimum is allocated using agglomerative-based residual LCOE standard deviation scoring (weighted quantile bins plus agglomerative within-bin clustering).
 7. **Renewables output**: Each region gets a `renewables_clusters` entry for each technology, with `filter`, `bin`, and `cluster` settings tuned to the selected capacity and budget. Bin entries now include integer `q` values (a quantile-count proxy) computed as regional MW divided by configured `mw_per_bin`, rounded to the nearest integer.
 
 !!! tip
@@ -535,6 +535,7 @@ The Renewables Clustering step builds `renewables_clusters` settings for wind an
 * **Supply curve plots**: After `renewables_clusters` is computed, the app renders per-region supply curve charts below the YAML preview and navigation controls.
   For each model region, one row shows four charts: wind aggregated CPAs, wind individual CPAs, solar aggregated CPAs, and solar individual CPAs.
   All charts use cumulative capacity (MW) on the x-axis and LCOE on the y-axis.
+  Aggregated bars represent final groups formed by weighted quantile binning followed by agglomerative clustering within each bin, using that region/technology's `renewables_clusters` settings.
 * **Export**: The `renewables_clusters` list is written into `resources.yml` during Step 9. Bin entries include integer `q` values derived from regional MW / `mw_per_bin` (rounded to nearest integer). During the transition, output still includes `mw_per_bin` for compatibility.
 
 ### Interpreting Aggregated vs Individual Curves

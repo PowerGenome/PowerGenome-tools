@@ -1,5 +1,5 @@
-import os
 import importlib.util
+import os
 
 import numpy as np
 
@@ -10,7 +10,9 @@ _renewables_utils_path = os.path.join(
     "web",
     "renewables_utils.py",
 )
-_spec = importlib.util.spec_from_file_location("renewables_utils", _renewables_utils_path)
+_spec = importlib.util.spec_from_file_location(
+    "renewables_utils", _renewables_utils_path
+)
 _renewables_utils = importlib.util.module_from_spec(_spec)
 assert _spec.loader is not None  # For type checkers; loader is required
 _spec.loader.exec_module(_renewables_utils)
@@ -19,6 +21,40 @@ optimize_bin_allocation = _renewables_utils.optimize_bin_allocation
 optimize_cluster_allocation = _renewables_utils.optimize_cluster_allocation
 value_bin = _renewables_utils.value_bin
 weighted_quantile = _renewables_utils.weighted_quantile
+_agglomerative_1d_labels = _renewables_utils._agglomerative_1d_labels
+_residual_std_after_bin_and_agg = _renewables_utils._residual_std_after_bin_and_agg
+
+
+def test_agglomerative_1d_labels_returns_exactly_k_for_separated_values():
+    values = np.array([0.0, 0.1, 10.0, 10.1, 20.0, 20.1])
+    weights = np.ones_like(values)
+
+    labels = _agglomerative_1d_labels(values, weights, k=3)
+
+    assert len(np.unique(labels)) == 3
+    assert labels[0] == labels[1]
+    assert labels[2] == labels[3]
+    assert labels[4] == labels[5]
+    assert len({labels[0], labels[2], labels[4]}) == 3
+
+
+def test_residual_std_after_bin_and_agg_is_non_increasing_with_more_clusters():
+    lcoe = np.array([0.0, 1.0, 2.0, 10.0, 11.0, 12.0])
+    capacity = np.ones_like(lcoe)
+
+    stds = [
+        _residual_std_after_bin_and_agg(
+            lcoe=lcoe,
+            capacity=capacity,
+            n_bins=2,
+            n_clusters=n,
+        )
+        for n in [1, 2, 3, 4]
+    ]
+
+    assert all(next_std <= cur_std + 1e-12 for cur_std, next_std in zip(stds, stds[1:]))
+
+
 def test_optimize_bin_allocation_prioritizes_higher_spread_region():
     data = {
         "HighSpread": {

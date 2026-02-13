@@ -93,6 +93,127 @@ def agg_cluster_other(df, n_clusters, cluster_col="bin"):
     return np.zeros(len(df), dtype=int)
 
 
+def _agglomerative_1d_labels(values, weights, k):
+    """Simple 1D agglomerative clustering labels (adjacent Ward-style merges)."""
+    values = np.asarray(values, dtype=float)
+    weights = np.asarray(weights, dtype=float)
+
+    valid = np.isfinite(values) & np.isfinite(weights)
+    values = values[valid]
+    weights = weights[valid]
+
+    if values.size == 0:
+        return np.array([], dtype=int)
+
+    weights = np.maximum(weights, 1e-9)
+    k = max(1, min(int(k), values.size))
+    if k == 1:
+        return np.zeros(values.size, dtype=int)
+
+    order = np.argsort(values, kind="mergesort")
+    sorted_vals = values[order]
+    sorted_weights = weights[order]
+
+    clusters = [
+        {
+            "positions": [idx],
+            "weight": float(sorted_weights[idx]),
+            "mean": float(sorted_vals[idx]),
+        }
+        for idx in range(sorted_vals.size)
+    ]
+
+    def merge_cost(left_cluster, right_cluster):
+        left_w = left_cluster["weight"]
+        right_w = right_cluster["weight"]
+        denom = left_w + right_w
+        if denom <= 0:
+            return 0.0
+        diff = left_cluster["mean"] - right_cluster["mean"]
+        return (left_w * right_w / denom) * (diff**2)
+
+    while len(clusters) > k:
+        best_idx = 0
+        best_cost = None
+        for idx in range(len(clusters) - 1):
+            cost = merge_cost(clusters[idx], clusters[idx + 1])
+            if best_cost is None or cost < best_cost:
+                best_cost = cost
+                best_idx = idx
+
+        left_cluster = clusters[best_idx]
+        right_cluster = clusters[best_idx + 1]
+        merged_weight = left_cluster["weight"] + right_cluster["weight"]
+        if merged_weight <= 0:
+            merged_mean = 0.5 * (left_cluster["mean"] + right_cluster["mean"])
+        else:
+            merged_mean = (
+                left_cluster["mean"] * left_cluster["weight"]
+                + right_cluster["mean"] * right_cluster["weight"]
+            ) / merged_weight
+
+        merged_cluster = {
+            "positions": left_cluster["positions"] + right_cluster["positions"],
+            "weight": merged_weight,
+            "mean": float(merged_mean),
+        }
+        clusters[best_idx] = merged_cluster
+        del clusters[best_idx + 1]
+
+    labels_sorted = np.zeros(sorted_vals.size, dtype=int)
+    for label, cluster_data in enumerate(clusters):
+        for pos in cluster_data["positions"]:
+            labels_sorted[pos] = label
+
+    labels = np.zeros(sorted_vals.size, dtype=int)
+    labels[order] = labels_sorted
+    return labels
+
+
+def _residual_std_after_bin_and_agg(lcoe, capacity, n_bins, n_clusters):
+    """Weighted residual LCOE std after weighted-quantile bins + within-bin agglomerative clustering."""
+    lcoe = np.asarray(lcoe, dtype=float)
+    capacity = np.asarray(capacity, dtype=float)
+
+    valid = np.isfinite(lcoe) & np.isfinite(capacity)
+    lcoe = lcoe[valid]
+    capacity = np.maximum(capacity[valid], 0.0)
+
+    total_cap = float(np.sum(capacity))
+    if lcoe.size == 0 or total_cap <= 0:
+        return 0.0
+
+    n_bins = max(1, int(n_bins))
+    n_clusters = max(1, int(n_clusters))
+
+    bin_labels = value_bin(lcoe, capacity, n_bins)
+    residual_ss = 0.0
+
+    for b in range(1, n_bins + 1):
+        mask = bin_labels == b
+        if not np.any(mask):
+            continue
+
+        vals_bin = lcoe[mask]
+        cap_bin = capacity[mask]
+        k_eff = max(1, min(n_clusters, vals_bin.size))
+        labels = _agglomerative_1d_labels(vals_bin, cap_bin, k_eff)
+        if labels.size == 0:
+            continue
+
+        for cluster_idx in np.unique(labels):
+            c_mask = labels == cluster_idx
+            c_vals = vals_bin[c_mask]
+            c_caps = cap_bin[c_mask]
+            c_total = float(np.sum(c_caps))
+            if c_total <= 0:
+                continue
+            c_mean = float(np.average(c_vals, weights=c_caps))
+            residual_ss += float(np.sum(c_caps * (c_vals - c_mean) ** 2))
+
+    return float(np.sqrt(residual_ss / total_cap))
+
+
 def optimize_bin_allocation(region_lcoe_data, target_bins_total):
     """
     Allocate a total budget of bins across regions to minimize overall LCOE variance.
@@ -226,22 +347,32 @@ def optimize_cluster_allocation(region_lcoe_data, bins, target_total_resources):
     if current_total >= target_total_resources:
         return n_clusters
 
-    # Precompute metrics
-    region_metrics = {}
+    std_cache = {}
+
+    def get_std(region_name, n_clust):
+        key = (region_name, int(n_clust))
+        if key in std_cache:
+            return std_cache[key]
+        data = region_lcoe_data.get(region_name)
+        if data is None:
+            std_cache[key] = 0.0
+            return 0.0
+        lcoe = data.get("lcoe", np.array([]))
+        cap = data.get("capacity", np.array([]))
+        std_val = _residual_std_after_bin_and_agg(
+            lcoe=lcoe,
+            capacity=cap,
+            n_bins=bins.get(region_name, 1),
+            n_clusters=n_clust,
+        )
+        std_cache[key] = std_val
+        return std_val
+
+    region_total_cap = {}
     for r, data in region_lcoe_data.items():
-        lcoe = data["lcoe"]
-        cap = data["capacity"]
-        total_cap = np.sum(cap)
-        if total_cap == 0:
-            region_metrics[r] = 0
-            continue
-
-        avg_lcoe = np.average(lcoe, weights=cap)
-        variance = np.average((lcoe - avg_lcoe) ** 2, weights=cap)
-        std_dev = np.sqrt(variance)
-
-        # Metric: Total spread to attack
-        region_metrics[r] = total_cap * std_dev
+        cap = np.asarray(data.get("capacity", np.array([])), dtype=float)
+        cap = np.maximum(cap[np.isfinite(cap)], 0.0)
+        region_total_cap[r] = float(np.sum(cap))
 
     # Greedy loop
     # We add 1 to n_clusters[r].
@@ -262,18 +393,13 @@ def optimize_cluster_allocation(region_lcoe_data, bins, target_total_resources):
                 continue
 
             n = n_clusters[r]
-            metric = region_metrics[r]
+            total_cap = region_total_cap.get(r, 0.0)
+            if total_cap <= 0:
+                continue
 
-            # Gain calculation
-            # Factor out 1/C from spread metric? No, metrics[r] is purely capacity*stddev.
-            # Spread reduction is proportional to 1/TotalResources.
-            # Current Resources K = n * bins[r]. Next K' = (n+1) * bins[r].
-            # Gain = Metric * (1/K - 1/K')
-
-            K = n * bins[r]
-            K_next = (n + 1) * bins[r]
-
-            gain = metric * (1.0 / K - 1.0 / K_next)
+            std_now = get_std(r, n)
+            std_next = get_std(r, n + 1)
+            gain = total_cap * max(0.0, std_now - std_next)
 
             # Efficiency: Gain per resource cost
             efficiency = gain / cost
