@@ -203,6 +203,66 @@
             border-bottom: 1px solid #eee;
         }
 
+        .renewables-plot-results {
+            margin-top: 16px;
+        }
+
+        .renewables-supply-curves {
+            max-height: none;
+            overflow: visible;
+            background: transparent;
+            border: none;
+            border-radius: 0;
+            padding: 0;
+        }
+
+        .renewables-plot-region {
+            border: 1px solid #eee;
+            border-radius: 4px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
+
+        .renewables-plot-region h4 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+
+        .renewables-plot-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(170px, 1fr));
+            gap: 10px;
+        }
+
+        .renewables-plot-card {
+            border: 1px solid #eee;
+            border-radius: 4px;
+            padding: 8px;
+            background: #fafafa;
+        }
+
+        .renewables-plot-card h5 {
+            margin: 0 0 6px 0;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .renewables-plot-meta {
+            font-size: 11px;
+            color: #666;
+            margin-top: 4px;
+        }
+
+        .renewables-plot-empty {
+            font-size: 12px;
+            color: #666;
+            min-height: 120px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+
         label {
             display: block;
             margin-bottom: 4px;
@@ -1534,6 +1594,13 @@ wacc_real: 0.05"></textarea>
                 <div class="step-footer">
                     <button class="btn btn-secondary" onclick="goToStep(7)">&larr; Back</button>
                     <button class="btn btn-primary" onclick="goToStep(9)">Next: Export &rarr;</button>
+                </div>
+
+                <div class="section renewables-plot-results">
+                    <label>Supply Curves</label>
+                    <div id="renewablesSupplyCurves" class="renewables-supply-curves">
+                        <em>Compute renewables clusters to generate supply-curve plots.</em>
+                    </div>
                 </div>
             </div>
         </div>
