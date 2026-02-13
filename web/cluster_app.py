@@ -20,12 +20,7 @@ from io import BytesIO, StringIO
 
 from js import L, Uint8Array, document, fetch, globalThis, window
 from pyodide.ffi import create_proxy, to_js
-from renewables_utils import (
-    agg_cluster_other,
-    optimize_bin_allocation,
-    optimize_cluster_allocation,
-    value_bin,
-)
+from renewables_utils import optimize_cluster_allocation
 
 # Suppress pandas pyarrow deprecation warning
 warnings.filterwarnings("ignore", message=".*pyarrow.*", category=DeprecationWarning)
