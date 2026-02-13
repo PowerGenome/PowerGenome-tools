@@ -2903,7 +2903,7 @@ def compute_region_bin_cluster_config(
             {
                 r: {
                     "bins": bins[r],
-                    "q": max(1, int(round(region_caps[r] / default_mw_per_bin))),
+                    "q": bins[r],
                     "mw_per_bin": max(1, int(round(region_caps[r] / bins[r]))),
                     "n_clusters": n_clusters[r],
                 }
@@ -2929,7 +2929,7 @@ def compute_region_bin_cluster_config(
         {
             r: {
                 "bins": bins[r],
-                "q": max(1, int(round(region_caps[r] / default_mw_per_bin))),
+                "q": bins[r],
                 "mw_per_bin": max(1, int(round(region_caps[r] / bins[r]))),
                 "n_clusters": n_clusters[r],
             }
@@ -3151,7 +3151,7 @@ class TestRenewablesClusteringLogic:
         assert cfg["A"]["bins"] == 1
         assert cfg["B"]["bins"] == 3
         assert cfg["A"]["q"] == 1
-        assert cfg["B"]["q"] == 2
+        assert cfg["B"]["q"] == 3
         assert cfg["A"]["mw_per_bin"] == 100
         assert cfg["B"]["mw_per_bin"] == 83
         assert cfg["A"]["n_clusters"] == 2
