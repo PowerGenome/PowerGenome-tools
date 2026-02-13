@@ -522,6 +522,108 @@ The app intentionally **does not generate** these files (configure separately):
     `model_definition.yml` and several downstream defaults require region aggregations from Step 1.
     If you haven't clustered regions yet, the Export step will prompt you to complete Step 1 first.
 
+### Supply Curve Visualization
+
+The Export step includes a supply curve plotting feature that generates illustrative visualizations of renewable energy supply curves for wind and solar resources. This tool helps you understand how renewable resources are characterized in PowerGenome models.
+
+#### What Supply Curves Show
+
+Supply curves display the relationship between **Levelized Cost of Energy (LCOE)** and **available capacity** for renewable resources:
+
+* **X-axis**: Cumulative capacity (MW) available at or below a given cost
+* **Y-axis**: LCOE ($/MWh) - the cost per unit of energy over the project lifetime
+* **Interpretation**: Each point represents an additional resource bin; curves rise from left to right as cheaper resources are exhausted and more expensive sites are added
+
+Supply curves help identify:
+
+* The cost range of available renewable resources in each region
+* How much capacity is available at competitive price points
+* Regional differences in renewable resource quality and economics
+
+#### Site-Level vs Cluster-Level Curves
+
+PowerGenome supports two approaches to representing renewable resources:
+
+**Site-level supply curves:**
+
+* Show individual resource sites before any aggregation
+* More granular with many resource bins
+* Higher computational cost in capacity expansion models
+* Useful for detailed resource adequacy studies
+
+**Cluster-level supply curves:**
+
+* Aggregate similar sites within each region to reduce model complexity
+* Fewer, larger resource bins
+* Lower computational cost while preserving resource diversity
+* Recommended for most capacity expansion studies
+
+The visualization displays both approaches side-by-side in a small multiples layout, showing how clustering simplifies the resource representation while maintaining the overall cost-capacity relationship.
+
+#### Generating Supply Curve Plots
+
+1. Navigate to Step 7: Export
+2. Ensure you have configured renewables clustering in a previous step (the plots use your `renewables_clusters` configuration)
+3. Click **Generate Supply Curve Plots**
+4. The plot appears inline below the button, showing supply curves for up to 3 regions
+
+The plots use a small multiples layout with:
+
+* One row per region (up to 3 regions shown)
+* Two columns: site-level curves (left) and cluster-level curves (right)
+* Separate lines for onshore wind, offshore wind, and utility-scale solar
+* Color-coded by technology type for easy comparison
+
+#### Relationship to Renewables Configuration
+
+The supply curves reflect your model's renewable resource configuration:
+
+* **Model regions**: Plots are generated for each region defined in Step 1
+* **Renewables clusters**: The cluster-level plots use the number of clusters you configured (affects how many bins appear in the right-hand plots)
+* **Technologies included**: Wind (onshore and offshore) and utility-scale solar
+* **Cost assumptions**: Based on ATB cost cases and regional resource quality
+
+#### Understanding the Plots
+
+**Interpreting curve shapes:**
+
+* **Steep curves**: Limited resource availability; costs rise quickly as capacity increases
+* **Flat curves**: Abundant resources; large amounts of capacity available at similar costs
+* **Multiple steps**: Distinct resource quality classes (e.g., wind capacity factor bins)
+
+**Comparing regions:**
+
+* Regions with lower-cost curves have better resource quality (higher capacity factors)
+* The horizontal extent shows total technical potential
+* Regional differences reflect geography, climate, and land availability
+
+**Site vs Cluster comparison:**
+
+* Cluster curves are smoother with fewer steps
+* Total capacity should match between site and cluster views
+* Cost ranges should be similar, though clustering averages within bins
+
+#### Limitations and Important Notes
+
+!!! warning "Synthetic Example Data"
+    The supply curve plots use **synthetic/example data** for demonstration purposes. These are illustrative visualizations showing what supply curves look like, not actual resource data for your model regions.
+
+**Key limitations:**
+
+* **Example data only**: Curves are generated using synthetic parameters based on typical renewable resource characteristics, not real resource data for your specific regions
+* **Limited regions**: Only the first 3 model regions are displayed to keep plots readable
+* **Demonstration purpose**: Use these plots to understand supply curve concepts and validate that your renewables configuration produces reasonable results
+* **Not for analysis**: Do not use these plots for resource planning decisions or cost estimates
+
+**For production analysis:**
+
+* Use PowerGenome's full renewable resource processing with actual NREL ATB data
+* Run the complete PowerGenome pipeline with your configured settings
+* Generate supply curves from actual wind/solar resource assessments
+* Validate results against NREL Cambium or ReEDS outputs
+
+The visualization tool is designed to help you understand how renewable resources are represented in PowerGenome models and verify that your configuration choices (number of clusters, regions, technologies) produce sensible results.
+
 ---
 
 ## Additional Features
