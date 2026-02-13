@@ -513,7 +513,8 @@ The Renewables Clustering step builds `renewables_clusters` settings for wind an
 
 * **Annual demand CSV**: The app loads `web/data/reeds_annual_demand_2050.csv` at startup. It must contain `region`, `weather_year`, and `annual_demand_mwh` columns. The `region` values are BA IDs (lowercase). The app averages demand across weather years for each BA, then sums BA demand within each model region.
 * **Wind share (%)** and **Solar share (%)**: Percent of each region's annual demand used to select wind and solar resources. Shares apply to every model region.
-* **Target total resource counts**: Optional total counts for wind and solar clusters across all regions. Leave blank for Auto; the app will suggest counts based on selected capacity.
+* **Average resource size (MW/resource)**: Used to convert selected wind/solar capacity into suggested budget counts. Defaults are 2,000 MW/resource for wind and 5,000 MW/resource for solar. These values are editable, and suggested budgets refresh from the updated inputs.
+* **Wind/Solar budget counts**: Users can edit wind and solar budget totals directly. Leaving a budget blank uses the suggested value.
 
 ### How Renewables Clusters Are Computed
 
@@ -521,8 +522,9 @@ The Renewables Clustering step builds `renewables_clusters` settings for wind an
 2. **Regional demand target**: For each region, compute target energy as $\text{region demand} \times \text{share}$.
 3. **Low-cost resource selection**: Within each region, sort candidates by LCOE and select enough capacity to meet the target energy (using $\text{annual MWh} = \text{capacity} \times \text{CF} \times 8760$). The highest selected LCOE becomes the region's filter threshold.
 4. **Capacity totals**: For each region, include all resources with LCOE below the threshold and sum their capacity to build a regional capacity total and LCOE range.
-5. **Bins and clusters**: The app allocates bins across regions to hit the target total resource count. When targets are omitted, bins are sized using defaults (wind: 10,000 MW per bin; solar: 50,000 MW per bin) with 5 clusters per bin. Suggested total counts are based on regional capacity chunks (wind: 2,000 MW; solar: 10,000 MW).
-6. **Renewables output**: Each region gets a `renewables_clusters` entry for each technology, with `filter`, `bin`, and `cluster` settings tuned to the selected capacity.
+5. **Suggested budgets**: For each technology, the app sums selected regional capacity and converts it to a suggested total budget using average resource size assumptions (default wind: 2,000 MW/resource, solar: 5,000 MW/resource). Suggested budgets update when demand shares or average resource sizes change.
+6. **Budget floor and allocation**: During compute, each technology budget is checked against the minimum feasible budget (at least one cluster per required bin). If a user-entered budget is below this minimum, it is automatically raised. Any extra budget above the minimum is allocated to reduce weighted LCOE standard deviation.
+7. **Renewables output**: Each region gets a `renewables_clusters` entry for each technology, with `filter`, `bin`, and `cluster` settings tuned to the selected capacity and budget. Bin entries now include integer `q` values (a quantile-count proxy) computed as regional MW divided by configured `mw_per_bin`, rounded to the nearest integer.
 
 !!! tip
   If any BA demand is missing from the CSV, the app flags this and computes renewables clusters with the remaining demand.
@@ -530,7 +532,7 @@ The Renewables Clustering step builds `renewables_clusters` settings for wind an
 ### Output
 
 * **Preview**: The step renders a YAML preview of `renewables_clusters`.
-* **Export**: The `renewables_clusters` list is written into `resources.yml` during Step 9. If the step is skipped, the app exports default renewables clusters.
+* **Export**: The `renewables_clusters` list is written into `resources.yml` during Step 9. Bin entries include integer `q` values derived from regional MW / `mw_per_bin` (rounded to nearest integer). During the transition, output still includes `mw_per_bin` for compatibility.
 
 ## Step 9: Export
 
