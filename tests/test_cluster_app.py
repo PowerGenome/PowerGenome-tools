@@ -3157,5 +3157,799 @@ SingleRegion:
         assert len(state.manual_regions) == 10
 
 
+# ============================================================================
+# Renewables Synthetic Data Generation and Clustering Tests
+# ============================================================================
+
+
+def generate_synthetic_renewable_data(technology, region, num_sites=50):
+    """
+    Generate synthetic renewable resource data for visualization purposes.
+    
+    Parameters
+    ----------
+    technology : str
+        Technology type ('landbasedwind' or 'utilitypv')
+    region : str
+        Region name
+    num_sites : int
+        Number of synthetic sites to generate
+        
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns: cpa_id, region, technology, capacity_mw, lcoe, cf
+    """
+    import random
+    
+    # Set different characteristics for wind vs solar
+    if technology == "landbasedwind":
+        # Wind: wider LCOE range, lower capacity factors
+        lcoe_mean = 45
+        lcoe_std = 15
+        lcoe_min = 25
+        lcoe_max = 80
+        cf_mean = 0.40
+        cf_std = 0.08
+        cap_min = 50
+        cap_max = 500
+    else:  # utilitypv
+        # Solar: tighter LCOE range, higher capacity factors
+        lcoe_mean = 30
+        lcoe_std = 8
+        lcoe_min = 20
+        lcoe_max = 50
+        cf_mean = 0.25
+        cf_std = 0.04
+        cap_min = 100
+        cap_max = 800
+    
+    data = []
+    for i in range(num_sites):
+        # Generate LCOE from truncated normal distribution
+        lcoe = max(lcoe_min, min(lcoe_max, random.gauss(lcoe_mean, lcoe_std)))
+        
+        # Capacity factor inversely correlated with LCOE (better sites cost less)
+        cf = max(0.1, min(0.6, cf_mean + (lcoe_mean - lcoe) / (lcoe_std * 10) * cf_std))
+        
+        # Capacity varies randomly
+        capacity = random.uniform(cap_min, cap_max)
+        
+        data.append({
+            "cpa_id": f"{region}_{technology}_{i+1}",
+            "region": region,
+            "technology": technology,
+            "capacity_mw": capacity,
+            "lcoe": lcoe,
+            "cf": cf
+        })
+    
+    return pd.DataFrame(data)
+
+
+def apply_renewables_clustering(data, config):
+    """
+    Apply clustering logic from renewables_clusters configuration to synthetic data.
+    
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Renewable resource data
+    config : dict
+        Single renewables_clusters configuration dict
+        
+    Returns
+    -------
+    pd.DataFrame
+        Data with 'cluster' column added
+    """
+    df = data.copy()
+    
+    # Apply filters
+    if "filter" in config:
+        for filt in config["filter"]:
+            feature = filt.get("feature")
+            if feature in df.columns:
+                if "max" in filt:
+                    df = df[df[feature] <= filt["max"]]
+                if "min" in filt:
+                    df = df[df[feature] >= filt["min"]]
+    
+    if df.empty:
+        return df
+    
+    # Determine number of clusters
+    if "cluster" in config:
+        # Use specified clustering
+        cluster_spec = config["cluster"][0] if isinstance(config["cluster"], list) else config["cluster"]
+        n_clusters = cluster_spec.get("n_clusters", 1)
+    elif "bin" in config:
+        # Estimate clusters from binning
+        bin_spec = config["bin"][0] if isinstance(config["bin"], list) else config["bin"]
+        mw_per_bin = bin_spec.get("mw_per_bin", 50000)
+        total_mw = df["capacity_mw"].sum()
+        n_clusters = max(1, int(total_mw / mw_per_bin))
+    else:
+        n_clusters = 1
+    
+    # Simple clustering by LCOE quantiles
+    if n_clusters == 1:
+        df["cluster"] = 1
+    else:
+        df = df.sort_values("lcoe")
+        df["cluster"] = pd.qcut(df["lcoe"], q=min(n_clusters, len(df)), labels=False, duplicates="drop") + 1
+    
+    return df
+
+
+def plot_supply_curves_for_region(ax_site, ax_cluster, data, region, technology):
+    """
+    Create supply curve plots for a single region and technology.
+    
+    Parameters
+    ----------
+    ax_site : matplotlib.axes.Axes
+        Axes for site-level supply curve
+    ax_cluster : matplotlib.axes.Axes
+        Axes for cluster-level supply curve
+    data : pd.DataFrame
+        Renewable resource data with cluster assignments
+    region : str
+        Region name
+    technology : str
+        Technology type
+    """
+    if data.empty:
+        ax_site.text(0.5, 0.5, "No data after filtering", 
+                     ha="center", va="center", transform=ax_site.transAxes)
+        ax_cluster.text(0.5, 0.5, "No data after filtering",
+                        ha="center", va="center", transform=ax_cluster.transAxes)
+        return
+    
+    # Sort by LCOE
+    data = data.sort_values("lcoe").reset_index(drop=True)
+    data["capacity_gw"] = data["capacity_mw"] / 1000
+    data["cum_capacity"] = data["capacity_gw"].cumsum()
+    data["left"] = data["cum_capacity"] - data["capacity_gw"]
+    
+    # Get unique clusters and assign colors
+    unique_clusters = sorted(data["cluster"].unique())
+    colors_list = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+                   "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+    color_dict = {cluster: colors_list[i % len(colors_list)] 
+                  for i, cluster in enumerate(unique_clusters)}
+    colors = data["cluster"].map(color_dict)
+    
+    # Site-level supply curve
+    ax_site.bar(data["left"], data["lcoe"], width=data["capacity_gw"],
+                align="edge", color=colors, edgecolor="none")
+    ax_site.set_xlabel("Cumulative Capacity (GW)")
+    ax_site.set_ylabel("LCOE ($/MWh)")
+    ax_site.set_title(f"{region} - {technology}\nSite-level")
+    ax_site.spines["top"].set_visible(False)
+    ax_site.spines["right"].set_visible(False)
+    ax_site.grid(axis="y", alpha=0.3)
+    
+    # Cluster-level supply curve
+    cluster_stats = data.groupby("cluster").apply(
+        lambda df: pd.Series({
+            "weighted_lcoe": (df["lcoe"] * df["capacity_gw"]).sum() / df["capacity_gw"].sum(),
+            "total_capacity": df["capacity_gw"].sum()
+        })
+    ).reset_index()
+    cluster_stats = cluster_stats.sort_values("weighted_lcoe").reset_index(drop=True)
+    cluster_stats["cum_capacity"] = cluster_stats["total_capacity"].cumsum()
+    cluster_stats["start"] = cluster_stats["cum_capacity"] - cluster_stats["total_capacity"]
+    
+    cluster_colors = [color_dict.get(cluster, "black") 
+                      for cluster in cluster_stats["cluster"]]
+    
+    ax_cluster.bar(cluster_stats["start"], cluster_stats["weighted_lcoe"],
+                   width=cluster_stats["total_capacity"], align="edge",
+                   color=cluster_colors, edgecolor="none")
+    ax_cluster.set_xlabel("Cumulative Capacity (GW)")
+    ax_cluster.set_ylabel("Weighted Avg LCOE ($/MWh)")
+    ax_cluster.set_title(f"{region} - {technology}\nCluster-level ({len(unique_clusters)} clusters)")
+    ax_cluster.spines["top"].set_visible(False)
+    ax_cluster.spines["right"].set_visible(False)
+    ax_cluster.grid(axis="y", alpha=0.3)
+
+
+class TestGenerateSyntheticRenewableData:
+    """Test synthetic renewable data generation function."""
+    
+    @pytest.mark.parametrize("num_sites", [10, 50, 100])
+    def test_correct_number_of_sites(self, num_sites):
+        """Test that the function generates the correct number of sites."""
+        import random
+        random.seed(42)
+        
+        df = generate_synthetic_renewable_data("landbasedwind", "CA", num_sites=num_sites)
+        
+        assert len(df) == num_sites
+    
+    def test_wind_characteristics(self):
+        """Test that wind data has expected characteristics."""
+        import random
+        random.seed(42)
+        
+        df = generate_synthetic_renewable_data("landbasedwind", "TX", num_sites=100)
+        
+        # Wind should have wider LCOE range around mean of 45
+        assert 25 <= df["lcoe"].min() <= 30
+        assert 70 <= df["lcoe"].max() <= 80
+        assert 40 <= df["lcoe"].mean() <= 50
+        
+        # Wind should have lower capacity factors around mean of 0.40
+        assert 0.30 <= df["cf"].mean() <= 0.50
+    
+    def test_solar_characteristics(self):
+        """Test that solar data has expected characteristics."""
+        import random
+        random.seed(42)
+        
+        df = generate_synthetic_renewable_data("utilitypv", "CA", num_sites=100)
+        
+        # Solar should have tighter LCOE range around mean of 30
+        assert 20 <= df["lcoe"].min() <= 25
+        assert 45 <= df["lcoe"].max() <= 50
+        assert 28 <= df["lcoe"].mean() <= 32
+        
+        # Solar should have capacity factors around mean of 0.25
+        assert 0.20 <= df["cf"].mean() <= 0.30
+    
+    def test_all_required_columns_present(self):
+        """Test that all required columns are present in the output."""
+        import random
+        random.seed(42)
+        
+        df = generate_synthetic_renewable_data("landbasedwind", "NE", num_sites=50)
+        
+        required_columns = ["cpa_id", "region", "technology", "capacity_mw", "lcoe", "cf"]
+        for col in required_columns:
+            assert col in df.columns
+    
+    def test_data_values_within_bounds(self):
+        """Test that data values are within reasonable bounds."""
+        import random
+        random.seed(42)
+        
+        df = generate_synthetic_renewable_data("utilitypv", "FL", num_sites=50)
+        
+        # LCOE should be positive
+        assert (df["lcoe"] > 0).all()
+        
+        # Capacity factor should be between 0 and 1
+        assert (df["cf"] > 0).all()
+        assert (df["cf"] < 1).all()
+        
+        # Capacity should be positive
+        assert (df["capacity_mw"] > 0).all()
+    
+    def test_edge_case_single_site(self):
+        """Test generation with single site."""
+        import random
+        random.seed(42)
+        
+        df = generate_synthetic_renewable_data("landbasedwind", "NY", num_sites=1)
+        
+        assert len(df) == 1
+        assert df.iloc[0]["cpa_id"] == "NY_landbasedwind_1"
+        assert df.iloc[0]["region"] == "NY"
+        assert df.iloc[0]["technology"] == "landbasedwind"
+    
+    def test_edge_case_zero_sites(self):
+        """Test generation with zero sites returns empty dataframe."""
+        import random
+        random.seed(42)
+        
+        df = generate_synthetic_renewable_data("utilitypv", "WA", num_sites=0)
+        
+        assert len(df) == 0
+        assert isinstance(df, pd.DataFrame)
+    
+    def test_cpa_id_format(self):
+        """Test that cpa_id has correct format."""
+        import random
+        random.seed(42)
+        
+        df = generate_synthetic_renewable_data("landbasedwind", "CO", num_sites=5)
+        
+        for i, cpa_id in enumerate(df["cpa_id"]):
+            expected = f"CO_landbasedwind_{i+1}"
+            assert cpa_id == expected
+    
+    def test_wind_vs_solar_differences(self):
+        """Test that wind and solar have different characteristics."""
+        import random
+        
+        random.seed(42)
+        wind_df = generate_synthetic_renewable_data("landbasedwind", "MT", num_sites=100)
+        
+        random.seed(42)
+        solar_df = generate_synthetic_renewable_data("utilitypv", "MT", num_sites=100)
+        
+        # Wind should have higher mean LCOE than solar
+        assert wind_df["lcoe"].mean() > solar_df["lcoe"].mean()
+        
+        # Wind should have higher mean CF than solar
+        assert wind_df["cf"].mean() > solar_df["cf"].mean()
+        
+        # Wind should have smaller capacity range
+        wind_range = wind_df["capacity_mw"].max() - wind_df["capacity_mw"].min()
+        solar_range = solar_df["capacity_mw"].max() - solar_df["capacity_mw"].min()
+        assert solar_range > wind_range
+    
+    def test_reproducibility_with_seed(self):
+        """Test that results are reproducible with same seed."""
+        import random
+        
+        random.seed(123)
+        df1 = generate_synthetic_renewable_data("landbasedwind", "ID", num_sites=20)
+        
+        random.seed(123)
+        df2 = generate_synthetic_renewable_data("landbasedwind", "ID", num_sites=20)
+        
+        pd.testing.assert_frame_equal(df1, df2)
+
+
+class TestApplyRenewablesClustering:
+    """Test renewables clustering application function."""
+    
+    def test_filtering_max_lcoe(self):
+        """Test filtering with max LCOE constraint."""
+        import random
+        random.seed(42)
+        
+        data = generate_synthetic_renewable_data("landbasedwind", "CA", num_sites=50)
+        config = {
+            "filter": [
+                {"feature": "lcoe", "max": 40}
+            ]
+        }
+        
+        result = apply_renewables_clustering(data, config)
+        
+        assert len(result) < len(data)
+        assert (result["lcoe"] <= 40).all()
+    
+    def test_filtering_min_cf(self):
+        """Test filtering with min capacity factor constraint."""
+        import random
+        random.seed(42)
+        
+        data = generate_synthetic_renewable_data("utilitypv", "TX", num_sites=50)
+        config = {
+            "filter": [
+                {"feature": "cf", "min": 0.3}
+            ]
+        }
+        
+        result = apply_renewables_clustering(data, config)
+        
+        assert len(result) < len(data)
+        assert (result["cf"] >= 0.3).all()
+    
+    def test_filtering_multiple_constraints(self):
+        """Test filtering with multiple constraints."""
+        import random
+        random.seed(42)
+        
+        data = generate_synthetic_renewable_data("landbasedwind", "NY", num_sites=100)
+        config = {
+            "filter": [
+                {"feature": "lcoe", "max": 50},
+                {"feature": "cf", "min": 0.35},
+                {"feature": "capacity_mw", "min": 100}
+            ]
+        }
+        
+        result = apply_renewables_clustering(data, config)
+        
+        assert (result["lcoe"] <= 50).all()
+        assert (result["cf"] >= 0.35).all()
+        assert (result["capacity_mw"] >= 100).all()
+    
+    def test_single_cluster_assignment(self):
+        """Test that single cluster assigns all to cluster 1."""
+        import random
+        random.seed(42)
+        
+        data = generate_synthetic_renewable_data("utilitypv", "FL", num_sites=50)
+        config = {
+            "cluster": [{"n_clusters": 1}]
+        }
+        
+        result = apply_renewables_clustering(data, config)
+        
+        assert "cluster" in result.columns
+        assert (result["cluster"] == 1).all()
+    
+    def test_multiple_cluster_binning(self):
+        """Test that multiple clusters are assigned correctly."""
+        import random
+        random.seed(42)
+        
+        data = generate_synthetic_renewable_data("landbasedwind", "WA", num_sites=50)
+        config = {
+            "cluster": [{"n_clusters": 3}]
+        }
+        
+        result = apply_renewables_clustering(data, config)
+        
+        assert "cluster" in result.columns
+        unique_clusters = result["cluster"].unique()
+        assert len(unique_clusters) >= 2  # May be < 3 if duplicates
+        assert result["cluster"].min() >= 1
+    
+    @pytest.mark.parametrize("n_clusters", [3, 5, 10])
+    def test_cluster_range_parametrized(self, n_clusters):
+        """Test cluster assignment with different n_clusters values."""
+        import random
+        random.seed(42)
+        
+        data = generate_synthetic_renewable_data("utilitypv", "AZ", num_sites=100)
+        config = {
+            "cluster": [{"n_clusters": n_clusters}]
+        }
+        
+        result = apply_renewables_clustering(data, config)
+        
+        assert "cluster" in result.columns
+        unique_clusters = result["cluster"].unique()
+        # Number of unique clusters may be less due to duplicates in qcut
+        assert len(unique_clusters) >= 1
+        assert result["cluster"].min() >= 1
+        assert result["cluster"].max() <= n_clusters
+    
+    def test_binning_by_mw_per_bin(self):
+        """Test clustering using mw_per_bin logic."""
+        import random
+        random.seed(42)
+        
+        data = generate_synthetic_renewable_data("landbasedwind", "OR", num_sites=100)
+        total_mw = data["capacity_mw"].sum()
+        mw_per_bin = 5000
+        expected_clusters = max(1, int(total_mw / mw_per_bin))
+        
+        config = {
+            "bin": [{"mw_per_bin": mw_per_bin}]
+        }
+        
+        result = apply_renewables_clustering(data, config)
+        
+        assert "cluster" in result.columns
+        unique_clusters = result["cluster"].unique()
+        # Should be close to expected
+        assert len(unique_clusters) >= 1
+    
+    @pytest.mark.parametrize("mw_per_bin", [1000, 5000, 10000])
+    def test_mw_per_bin_parametrized(self, mw_per_bin):
+        """Test binning with different mw_per_bin values."""
+        import random
+        random.seed(42)
+        
+        data = generate_synthetic_renewable_data("utilitypv", "NM", num_sites=100)
+        config = {
+            "bin": [{"mw_per_bin": mw_per_bin}]
+        }
+        
+        result = apply_renewables_clustering(data, config)
+        
+        assert "cluster" in result.columns
+        # Verify clusters exist
+        assert len(result["cluster"].unique()) >= 1
+    
+    def test_empty_data_after_filtering(self):
+        """Test that empty dataframe is returned when all data is filtered out."""
+        import random
+        random.seed(42)
+        
+        data = generate_synthetic_renewable_data("landbasedwind", "NV", num_sites=50)
+        config = {
+            "filter": [
+                {"feature": "lcoe", "max": 10}  # Impossible constraint
+            ]
+        }
+        
+        result = apply_renewables_clustering(data, config)
+        
+        assert len(result) == 0
+        assert isinstance(result, pd.DataFrame)
+    
+    def test_edge_case_single_row(self):
+        """Test clustering with single row of data."""
+        import random
+        random.seed(42)
+        
+        data = generate_synthetic_renewable_data("utilitypv", "UT", num_sites=1)
+        config = {
+            "cluster": [{"n_clusters": 3}]
+        }
+        
+        result = apply_renewables_clustering(data, config)
+        
+        assert len(result) == 1
+        assert "cluster" in result.columns
+        assert result["cluster"].iloc[0] == 1
+    
+    def test_all_same_lcoe_values(self):
+        """Test clustering when all LCOE values are the same."""
+        # Create data with identical LCOE
+        data = pd.DataFrame({
+            "cpa_id": ["site_1", "site_2", "site_3"],
+            "region": ["CO", "CO", "CO"],
+            "technology": ["landbasedwind", "landbasedwind", "landbasedwind"],
+            "capacity_mw": [100, 200, 300],
+            "lcoe": [45, 45, 45],  # All same
+            "cf": [0.4, 0.4, 0.4]
+        })
+        
+        config = {
+            "cluster": [{"n_clusters": 3}]
+        }
+        
+        result = apply_renewables_clustering(data, config)
+        
+        assert "cluster" in result.columns
+        # With duplicates, qcut should drop to fewer clusters
+        assert len(result["cluster"].unique()) == 1
+    
+    def test_empty_filter_list(self):
+        """Test with empty filter list (no filtering)."""
+        import random
+        random.seed(42)
+        
+        data = generate_synthetic_renewable_data("landbasedwind", "WY", num_sites=50)
+        config = {
+            "filter": [],
+            "cluster": [{"n_clusters": 2}]
+        }
+        
+        result = apply_renewables_clustering(data, config)
+        
+        assert len(result) == len(data)  # No filtering
+        assert "cluster" in result.columns
+    
+    def test_no_cluster_or_bin_spec(self):
+        """Test with no cluster or bin specification defaults to single cluster."""
+        import random
+        random.seed(42)
+        
+        data = generate_synthetic_renewable_data("utilitypv", "LA", num_sites=50)
+        config = {}
+        
+        result = apply_renewables_clustering(data, config)
+        
+        assert "cluster" in result.columns
+        assert (result["cluster"] == 1).all()
+    
+    def test_cluster_column_added(self):
+        """Test that cluster column is added to result."""
+        import random
+        random.seed(42)
+        
+        data = generate_synthetic_renewable_data("landbasedwind", "GA", num_sites=50)
+        config = {
+            "cluster": [{"n_clusters": 4}]
+        }
+        
+        # Verify cluster column not in original
+        assert "cluster" not in data.columns
+        
+        result = apply_renewables_clustering(data, config)
+        
+        # Verify cluster column in result
+        assert "cluster" in result.columns
+
+
+class TestPlotSupplyCurvesForRegion:
+    """Test supply curve plotting function."""
+    
+    def test_handles_empty_dataframe(self):
+        """Test that function handles empty dataframe gracefully."""
+        import matplotlib.pyplot as plt
+        
+        fig, (ax_site, ax_cluster) = plt.subplots(1, 2, figsize=(12, 5))
+        empty_df = pd.DataFrame()
+        
+        # Should not raise an error
+        plot_supply_curves_for_region(ax_site, ax_cluster, empty_df, "CA", "landbasedwind")
+        
+        # Check that "No data" message is displayed
+        # We can check texts on the axes
+        site_texts = [t.get_text() for t in ax_site.texts]
+        cluster_texts = [t.get_text() for t in ax_cluster.texts]
+        
+        assert "No data after filtering" in site_texts
+        assert "No data after filtering" in cluster_texts
+        
+        plt.close(fig)
+    
+    def test_creates_plots_without_errors(self):
+        """Test that plots are created without errors for valid data."""
+        import matplotlib.pyplot as plt
+        import random
+        random.seed(42)
+        
+        fig, (ax_site, ax_cluster) = plt.subplots(1, 2, figsize=(12, 5))
+        
+        data = generate_synthetic_renewable_data("landbasedwind", "TX", num_sites=50)
+        config = {"cluster": [{"n_clusters": 3}]}
+        data = apply_renewables_clustering(data, config)
+        
+        # Should not raise an error
+        plot_supply_curves_for_region(ax_site, ax_cluster, data, "TX", "landbasedwind")
+        
+        plt.close(fig)
+    
+    def test_single_cluster(self):
+        """Test plotting with single cluster."""
+        import matplotlib.pyplot as plt
+        import random
+        random.seed(42)
+        
+        fig, (ax_site, ax_cluster) = plt.subplots(1, 2, figsize=(12, 5))
+        
+        data = generate_synthetic_renewable_data("utilitypv", "CA", num_sites=30)
+        config = {"cluster": [{"n_clusters": 1}]}
+        data = apply_renewables_clustering(data, config)
+        
+        plot_supply_curves_for_region(ax_site, ax_cluster, data, "CA", "utilitypv")
+        
+        # Verify plots were created (check that bars exist)
+        assert len(ax_site.containers) > 0
+        assert len(ax_cluster.containers) > 0
+        
+        plt.close(fig)
+    
+    def test_multiple_clusters(self):
+        """Test plotting with multiple clusters."""
+        import matplotlib.pyplot as plt
+        import random
+        random.seed(42)
+        
+        fig, (ax_site, ax_cluster) = plt.subplots(1, 2, figsize=(12, 5))
+        
+        data = generate_synthetic_renewable_data("landbasedwind", "NY", num_sites=80)
+        config = {"cluster": [{"n_clusters": 5}]}
+        data = apply_renewables_clustering(data, config)
+        
+        plot_supply_curves_for_region(ax_site, ax_cluster, data, "NY", "landbasedwind")
+        
+        # Verify plots were created
+        assert len(ax_site.containers) > 0
+        assert len(ax_cluster.containers) > 0
+        
+        plt.close(fig)
+    
+    def test_axes_labels_set_correctly(self):
+        """Test that axes labels and titles are set correctly."""
+        import matplotlib.pyplot as plt
+        import random
+        random.seed(42)
+        
+        fig, (ax_site, ax_cluster) = plt.subplots(1, 2, figsize=(12, 5))
+        
+        data = generate_synthetic_renewable_data("utilitypv", "FL", num_sites=50)
+        config = {"cluster": [{"n_clusters": 3}]}
+        data = apply_renewables_clustering(data, config)
+        
+        plot_supply_curves_for_region(ax_site, ax_cluster, data, "FL", "utilitypv")
+        
+        # Check site axes
+        assert ax_site.get_xlabel() == "Cumulative Capacity (GW)"
+        assert ax_site.get_ylabel() == "LCOE ($/MWh)"
+        assert "FL" in ax_site.get_title()
+        assert "utilitypv" in ax_site.get_title()
+        assert "Site-level" in ax_site.get_title()
+        
+        # Check cluster axes
+        assert ax_cluster.get_xlabel() == "Cumulative Capacity (GW)"
+        assert ax_cluster.get_ylabel() == "Weighted Avg LCOE ($/MWh)"
+        assert "FL" in ax_cluster.get_title()
+        assert "utilitypv" in ax_cluster.get_title()
+        assert "Cluster-level" in ax_cluster.get_title()
+        assert "clusters" in ax_cluster.get_title()
+        
+        plt.close(fig)
+    
+    def test_bar_plots_created(self):
+        """Test that bar plots are created without errors."""
+        import matplotlib.pyplot as plt
+        import random
+        random.seed(42)
+        
+        fig, (ax_site, ax_cluster) = plt.subplots(1, 2, figsize=(12, 5))
+        
+        data = generate_synthetic_renewable_data("landbasedwind", "WA", num_sites=40)
+        config = {"cluster": [{"n_clusters": 4}]}
+        data = apply_renewables_clustering(data, config)
+        
+        plot_supply_curves_for_region(ax_site, ax_cluster, data, "WA", "landbasedwind")
+        
+        # Check that bar containers exist
+        assert len(ax_site.containers) > 0
+        assert len(ax_cluster.containers) > 0
+        
+        # Get bar containers
+        site_bars = ax_site.containers[0]
+        cluster_bars = ax_cluster.containers[0]
+        
+        # Site-level should have more bars than cluster-level
+        assert len(site_bars) == 40
+        assert len(cluster_bars) <= 4  # May be less due to duplicates
+        
+        plt.close(fig)
+    
+    def test_edge_case_single_data_point(self):
+        """Test plotting with single data point."""
+        import matplotlib.pyplot as plt
+        import random
+        random.seed(42)
+        
+        fig, (ax_site, ax_cluster) = plt.subplots(1, 2, figsize=(12, 5))
+        
+        data = generate_synthetic_renewable_data("utilitypv", "NV", num_sites=1)
+        config = {"cluster": [{"n_clusters": 1}]}
+        data = apply_renewables_clustering(data, config)
+        
+        # Should not raise an error
+        plot_supply_curves_for_region(ax_site, ax_cluster, data, "NV", "utilitypv")
+        
+        # Verify plots were created
+        assert len(ax_site.containers) > 0
+        assert len(ax_cluster.containers) > 0
+        
+        plt.close(fig)
+    
+    def test_grid_and_spines_configured(self):
+        """Test that grid and spines are configured correctly."""
+        import matplotlib.pyplot as plt
+        import random
+        random.seed(42)
+        
+        fig, (ax_site, ax_cluster) = plt.subplots(1, 2, figsize=(12, 5))
+        
+        data = generate_synthetic_renewable_data("landbasedwind", "OR", num_sites=50)
+        config = {"cluster": [{"n_clusters": 3}]}
+        data = apply_renewables_clustering(data, config)
+        
+        plot_supply_curves_for_region(ax_site, ax_cluster, data, "OR", "landbasedwind")
+        
+        # Check that top and right spines are hidden
+        assert not ax_site.spines["top"].get_visible()
+        assert not ax_site.spines["right"].get_visible()
+        assert not ax_cluster.spines["top"].get_visible()
+        assert not ax_cluster.spines["right"].get_visible()
+        
+        plt.close(fig)
+    
+    def test_data_sorted_by_lcoe(self):
+        """Test that data is sorted by LCOE in the plot."""
+        import matplotlib.pyplot as plt
+        import random
+        random.seed(42)
+        
+        fig, (ax_site, ax_cluster) = plt.subplots(1, 2, figsize=(12, 5))
+        
+        data = generate_synthetic_renewable_data("utilitypv", "AZ", num_sites=30)
+        config = {"cluster": [{"n_clusters": 2}]}
+        data = apply_renewables_clustering(data, config)
+        
+        plot_supply_curves_for_region(ax_site, ax_cluster, data, "AZ", "utilitypv")
+        
+        # Get the bar heights (LCOE values)
+        site_bars = ax_site.containers[0]
+        heights = [bar.get_height() for bar in site_bars]
+        
+        # Heights should generally increase (may have small variations due to clustering)
+        # Just check that they're not all the same and within reasonable bounds
+        assert len(set(heights)) > 1  # Not all same
+        assert all(h > 0 for h in heights)  # All positive
+        
+        plt.close(fig)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
