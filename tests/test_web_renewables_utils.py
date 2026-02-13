@@ -1,19 +1,24 @@
 import os
-import sys
+import importlib.util
 
 import numpy as np
 
-# Add web directory to path to allow importing renewables_utils
-sys.path.append(os.path.join(os.path.dirname(__file__), "../web"))
-
-from renewables_utils import (
-    optimize_bin_allocation,
-    optimize_cluster_allocation,
-    value_bin,
-    weighted_quantile,
+# Load renewables_utils from the web directory without modifying sys.path
+_renewables_utils_path = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "web",
+    "renewables_utils.py",
 )
+_spec = importlib.util.spec_from_file_location("renewables_utils", _renewables_utils_path)
+_renewables_utils = importlib.util.module_from_spec(_spec)
+assert _spec.loader is not None  # For type checkers; loader is required
+_spec.loader.exec_module(_renewables_utils)
 
-
+optimize_bin_allocation = _renewables_utils.optimize_bin_allocation
+optimize_cluster_allocation = _renewables_utils.optimize_cluster_allocation
+value_bin = _renewables_utils.value_bin
+weighted_quantile = _renewables_utils.weighted_quantile
 def test_optimize_bin_allocation_prioritizes_higher_spread_region():
     data = {
         "HighSpread": {
