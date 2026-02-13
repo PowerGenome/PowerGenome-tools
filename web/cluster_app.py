@@ -14,9 +14,10 @@ import json
 import math
 import re
 import warnings
-from io import StringIO
+import zipfile
+from io import BytesIO, StringIO
 
-from js import L, document, fetch, window
+from js import L, Uint8Array, document, fetch, globalThis, window
 from pyodide.ffi import create_proxy, to_js
 
 # Suppress pandas pyarrow deprecation warning
@@ -28,6 +29,12 @@ import numpy as np
 # Will be imported after PyScript loads packages
 import pandas as pd
 import yaml
+from fast_interconnection.fast_assign import fast_assign_cpas
+from fast_interconnection.resource_groups import (
+    DEFAULT_PROFILE_PATHS,
+    build_assigned_df,
+    build_resource_group_json,
+)
 
 # ============================================================================
 # Global State
@@ -84,6 +91,10 @@ class AppState:
         self.plant_cluster_settings = (
             None  # parsed YAML dict from plant clustering output
         )
+
+        # Resource groups (Fast interconnection)
+        self.fast_interconnection_data = None  # cached parquet/csv dataframes
+        self.resource_group_files = {}  # filename -> bytes or str
 
         # Fuel scenario options (Settings tab)
         self.fuel_prices_df = None  # fuel price scenarios from PowerGenome-data
@@ -5498,6 +5509,330 @@ def on_settings_file_change(event):
     update_settings_preview()
 
 
+def set_resource_group_status(message, status_type="info"):
+    el = document.getElementById("resourceGroupStatus")
+    if el:
+        el.textContent = message
+        el.className = f"status {status_type}"
+        el.style.display = "block"
+
+
+async def _fetch_parquet_df(url):
+    response = await fetch(url)
+    if not response.ok:
+        raise Exception(f"Failed to load parquet: {url} ({response.status})")
+    buffer = await response.arrayBuffer()
+    data = bytes(Uint8Array.new(buffer).to_py())
+    try:
+        return pd.read_parquet(BytesIO(data))
+    except Exception:
+        import os
+        import uuid
+
+        import duckdb
+
+        tmp_dir = "/tmp"
+        try:
+            os.makedirs(tmp_dir, exist_ok=True)
+        except Exception:
+            pass
+        tmp_path = f"{tmp_dir}/pg_parquet_{uuid.uuid4().hex}.parquet"
+        with open(tmp_path, "wb") as f:
+            f.write(data)
+        try:
+            return duckdb.read_parquet(tmp_path).df()
+        finally:
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+
+async def _fetch_csv_df(url, **kwargs):
+    response = await fetch(url)
+    if not response.ok:
+        raise Exception(f"Failed to load CSV: {url} ({response.status})")
+    text = await response.text()
+    if text.startswith("<!"):
+        raise Exception(f"Got HTML instead of CSV from {url}")
+    return pd.read_csv(StringIO(text), **kwargs)
+
+
+async def _load_pyodide_package(name: str) -> bool:
+    try:
+        import pyodide_js
+
+        await pyodide_js.loadPackage(name)
+        return True
+    except ImportError:
+        pass
+
+    try:
+        pyodide_js = getattr(globalThis, "pyodide", None)
+        if pyodide_js and hasattr(pyodide_js, "loadPackage"):
+            await pyodide_js.loadPackage(name)
+            return True
+    except Exception:
+        pass
+
+    try:
+        pyscript_rt = getattr(globalThis, "pyscript", None)
+        if pyscript_rt is not None:
+            runtime = getattr(pyscript_rt, "runtime", None)
+            if runtime is not None:
+                pyodide_rt = getattr(runtime, "pyodide", None)
+                if pyodide_rt and hasattr(pyodide_rt, "loadPackage"):
+                    await pyodide_rt.loadPackage(name)
+                    return True
+    except Exception:
+        pass
+
+    return False
+
+
+async def load_fast_interconnection_data():
+    if state.fast_interconnection_data is not None:
+        return
+
+    set_resource_group_status("Loading resource group data...", "info")
+    parquet_ready = False
+    load_errors = []
+    for pkg in ["pyarrow", "fastparquet", "duckdb"]:
+        try:
+            __import__(pkg)
+            parquet_ready = True
+            break
+        except Exception as exc:
+            load_errors.append(f"{pkg} import: {exc}")
+
+    if not parquet_ready:
+        for pkg in ["pyarrow", "fastparquet", "duckdb"]:
+            try:
+                loaded = await _load_pyodide_package(pkg)
+                if loaded:
+                    __import__(pkg)
+                    parquet_ready = True
+                    break
+                load_errors.append(f"{pkg} load: pyodide loader unavailable")
+            except Exception as exc:
+                load_errors.append(f"{pkg} load: {exc}")
+
+    if not parquet_ready:
+        details = "; ".join(load_errors) if load_errors else "unknown error"
+        set_resource_group_status(
+            f"Resource group error: parquet engine not available ({details}).",
+            "error",
+        )
+        raise Exception(f"Parquet engine not available ({details})")
+    base = "./fast_interconnection/data"
+    data = {}
+
+    # Define all files to load with their keys
+    files_to_load = [
+        ("candidates", f"{base}/cpa_metro_candidates.parquet", _fetch_parquet_df),
+        ("saturation", f"{base}/metro_saturation.parquet", _fetch_parquet_df),
+        ("metro_region_map", f"{base}/metro_region_map.parquet", _fetch_parquet_df),
+        ("substation_metro_region", f"{base}/substation_metro_region.parquet", _fetch_parquet_df),
+        ("cpa_solar_attrs", f"{base}/CPA_Solar_OctUpdate.parquet", _fetch_parquet_df),
+        ("cpa_onshorewind_attrs", f"{base}/CPA_OnshoreWind_OctUpdate.parquet", _fetch_parquet_df),
+        ("msa_name_map", f"{base}/msa_id_name_map.csv", _fetch_csv_df),
+        ("cross_region", f"{base}/cross_region_connections.parquet", _fetch_parquet_df),
+    ]
+
+    total_files = len(files_to_load)
+
+    # Load each file with progress indicator
+    for idx, (key, filepath, fetch_func) in enumerate(files_to_load, 1):
+        set_resource_group_status(f"Loading resource group data... {idx}/{total_files} files", "info")
+        try:
+            data[key] = await fetch_func(filepath)
+        except Exception:
+            if key == "cross_region":
+                # cross_region file is optional
+                data[key] = None
+            else:
+                raise
+
+    state.fast_interconnection_data = data
+
+
+def _get_resource_group_name():
+    el = document.getElementById("resourceGroupName")
+    name = el.value.strip() if el and el.value else ""
+    return name or "resource_groups"
+
+
+def _update_resource_group_list():
+    list_el = document.getElementById("resourceGroupFiles")
+    if not list_el:
+        return
+    if not state.resource_group_files:
+        list_el.innerHTML = "<em>No resource group files generated yet.</em>"
+        return
+
+    items = []
+    for filename, payload in sorted(state.resource_group_files.items()):
+        size = (
+            len(payload)
+            if isinstance(payload, (bytes, bytearray))
+            else len(str(payload))
+        )
+        items.append(
+            f"<div class='candidate-item'><strong>{html.escape(filename)}</strong> ({size:,} bytes)</div>"
+        )
+    list_el.innerHTML = "".join(items)
+
+
+async def _generate_resource_groups():
+    try:
+        if not state.region_aggregations:
+            set_resource_group_status("Run region clustering first (Step 1).", "error")
+            return
+
+        await load_fast_interconnection_data()
+
+        penalty_el = document.getElementById("resourceGroupPenalty")
+        try:
+            penalty = float(penalty_el.value) if penalty_el else 10.0
+        except ValueError:
+            penalty = 10.0
+
+        set_resource_group_status("Running fast interconnection assignment...", "info")
+
+        def progress_callback(current, total):
+            if total > 0:
+                percent = int(current / total * 100)
+                set_resource_group_status(f"Assigning resources... {percent}%", "info")
+
+        settings = {
+            "region_aggregations": state.region_aggregations,
+            "model_regions": sorted(state.region_aggregations.keys()),
+            "region_name": _get_resource_group_name(),
+            "resource_group_profile_paths": DEFAULT_PROFILE_PATHS,
+        }
+
+        data = state.fast_interconnection_data
+        assignments = await fast_assign_cpas(
+            candidates=data["candidates"],
+            saturation=data["saturation"],
+            settings=settings,
+            metro_region_map=data["metro_region_map"],
+            substation_metro_region=data["substation_metro_region"],
+            allowed_cross_region=data.get("cross_region"),
+            strategy="dynamic_lcoe",
+            lcoe_penalty_factor=penalty,
+            show_progress=True,
+            progress_callback=progress_callback,
+        )
+
+        if "metro_model_region" in assignments.columns:
+            assignments = assignments.rename(
+                columns={"metro_model_region": "model_region"}
+            )
+
+        # Filter assignments to only include valid model regions
+        if "model_region" in assignments.columns:
+            assignments = assignments[
+                assignments["model_region"].isin(settings["model_regions"])
+            ]
+
+        msa_name_map = None
+        if data.get("msa_name_map") is not None:
+            msa_name_map = data["msa_name_map"].set_index("CBSAFP")["NAME"]
+
+        remove_columns = {
+            "cpa_model_region",
+            "is_in_region",
+            "is_allowed_cross",
+            "base_lcoe",
+            "effective_lcoe",
+            "hub_base_region",
+            "hub_substation",
+            "offshore_interconnect_km",
+            "CPA_ID",
+        }
+
+        output_files = {}
+        for resource, cpa_attrs in [
+            ("solar", data["cpa_solar_attrs"]),
+            ("onshorewind", data["cpa_onshorewind_attrs"]),
+        ]:
+            assigned_df = build_assigned_df(
+                assignments, resource, data["metro_region_map"], msa_name_map
+            )
+            if assigned_df.empty:
+                continue
+
+            cpa_results = assigned_df.merge(
+                cpa_attrs, left_on="cpa_id", right_on="CPA_ID", how="left"
+            )
+
+            for col in ["anyQual", "m_popden", "exFacil", "plFacil"]:
+                if col not in cpa_results.columns:
+                    cpa_results[col] = np.nan
+
+            drop_cols = [c for c in remove_columns if c in cpa_results.columns]
+            if drop_cols:
+                cpa_results = cpa_results.drop(columns=drop_cols)
+
+            lcoe_filename = f"{resource}_lcoe_{settings['region_name']}.parquet"
+            buffer = BytesIO()
+            cpa_results.to_parquet(buffer, index=False)
+            output_files[lcoe_filename] = buffer.getvalue()
+
+            rg_dict = build_resource_group_json(
+                resource, lcoe_filename, settings.get("resource_group_profile_paths")
+            )
+            if rg_dict is not None:
+                output_files[f"{resource}_group.json"] = json.dumps(rg_dict, indent=4)
+
+        state.resource_group_files = output_files
+        _update_resource_group_list()
+
+        if output_files:
+            set_resource_group_status(
+                f"Generated {len(output_files)} resource group files.", "success"
+            )
+        else:
+            set_resource_group_status("No resource group files generated.", "error")
+    except Exception as exc:
+        state.resource_group_files = {}
+        _update_resource_group_list()
+        set_resource_group_status(f"Resource group error: {exc}", "error")
+
+
+def on_generate_resource_groups(event):
+    asyncio.create_task(_generate_resource_groups())
+
+
+def _download_binary_file(filename, payload_bytes, mime_type):
+    blob = window.Blob.new([Uint8Array.new(payload_bytes)], to_js({"type": mime_type}))
+    url = window.URL.createObjectURL(blob)
+    a = document.createElement("a")
+    a.href = url
+    a.download = filename
+    a.click()
+    window.URL.revokeObjectURL(url)
+
+
+def on_download_resource_groups(event):
+    if not state.resource_group_files:
+        set_resource_group_status("Generate resource groups first.", "error")
+        return
+
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for filename, payload in state.resource_group_files.items():
+            if isinstance(payload, (bytes, bytearray)):
+                zipf.writestr(filename, payload)
+            else:
+                zipf.writestr(filename, str(payload))
+
+    zip_name = f"resource_groups_{_get_resource_group_name()}.zip"
+    _download_binary_file(zip_name, buffer.getvalue(), "application/zip")
+    set_resource_group_status(f"Downloaded {zip_name}", "success")
+
+
 def on_copy_plant_yaml(event):
     """Copy plant YAML to clipboard."""
     yaml_el = document.getElementById("plantYamlOut")
@@ -5859,6 +6194,14 @@ async def main():
             "click", create_proxy(on_download_settings_file)
         )
 
+        # Resource groups
+        document.getElementById("generateResourceGroupsBtn").addEventListener(
+            "click", create_proxy(on_generate_resource_groups)
+        )
+        document.getElementById("downloadResourceGroupsBtn").addEventListener(
+            "click", create_proxy(on_download_resource_groups)
+        )
+
         # ESR step
         document.getElementById("runESRBtn").addEventListener(
             "click", create_proxy(on_run_esr_analysis)
@@ -5921,6 +6264,7 @@ async def main():
         render_modified_resources_list()
         populate_settings_file_select()
         update_settings_preview()
+        _update_resource_group_list()
 
         # Set up deferred ESR data loading
         async def load_esr_data_deferred():
