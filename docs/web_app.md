@@ -518,7 +518,7 @@ The Renewables Clustering step builds `renewables_clusters` settings for wind an
 
 ### How Renewables Clusters Are Computed
 
-1. **Prerequisites**: Requires region aggregations from Step 1 and resource group LCOE parquet files from Step 7 (onshore wind + solar).
+1. **Prerequisites**: Requires region aggregations from Step 1 and the in-memory resource group assignments/LCOE tables from Step 7 (onshore wind + solar) in the current browser session. Step 7 must be completed in this session; downloaded parquet/ZIP outputs alone are not sufficient after a page refresh.
 2. **Regional demand target**: For each region, compute target energy as $\text{region demand} \times \text{share}$.
 3. **Low-cost resource selection**: Within each region, sort candidates by LCOE and select enough capacity to meet the target energy (using $\text{annual MWh} = \text{capacity} \times \text{CF} \times 8760$). The highest selected LCOE becomes the region's filter threshold.
 4. **Capacity totals**: For each region, include all resources with LCOE below the threshold and sum their capacity to build a regional capacity total and LCOE range.
