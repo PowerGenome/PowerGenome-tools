@@ -532,7 +532,16 @@ The Renewables Clustering step builds `renewables_clusters` settings for wind an
 ### Output
 
 * **Preview**: The step renders a YAML preview of `renewables_clusters`.
+* **Supply curve plots**: After `renewables_clusters` is computed, the app renders per-region supply curve charts below the YAML preview and navigation controls.
+  For each model region, one row shows four charts: wind aggregated CPAs, wind individual CPAs, solar aggregated CPAs, and solar individual CPAs.
+  All charts use cumulative capacity (MW) on the x-axis and LCOE on the y-axis.
 * **Export**: The `renewables_clusters` list is written into `resources.yml` during Step 9. Bin entries include integer `q` values derived from regional MW / `mw_per_bin` (rounded to nearest integer). During the transition, output still includes `mw_per_bin` for compatibility.
+
+### Interpreting Aggregated vs Individual Curves
+
+* **Individual CPA curves** show raw site-level cost progression as capacity is added in LCOE order.
+* **Aggregated CPA curves** show grouped resources that align with the `renewables_clusters` binning concept, making it easier to compare the clustered representation against the underlying site-level shape.
+* Plots refresh whenever renewables clusters are recomputed (for example, after changing demand shares, average resource sizes, or budgets and running compute again).
 
 ## Step 9: Export
 

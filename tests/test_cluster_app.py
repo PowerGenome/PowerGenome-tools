@@ -3042,6 +3042,219 @@ def compute_region_targets_by_demand_and_lcoe(region_demand, region_data, share)
     }
 
 
+# Duplicated from cluster_app.py renewables supply-curve helpers
+def _safe_float(value, default=0.0):
+    try:
+        parsed = float(value)
+        if math.isfinite(parsed):
+            return parsed
+    except Exception:
+        pass
+    return default
+
+
+def _extract_cluster_lcoe_max(cluster_item):
+    if not isinstance(cluster_item, dict):
+        return None
+    filters = cluster_item.get("filter")
+    if not isinstance(filters, list):
+        return None
+    for filt in filters:
+        if isinstance(filt, dict) and filt.get("feature") == "lcoe":
+            return _safe_float(filt.get("max"), None)
+    return None
+
+
+def _extract_cluster_q(cluster_item):
+    if not isinstance(cluster_item, dict):
+        return 1
+    bins = cluster_item.get("bin")
+    if isinstance(bins, list) and bins:
+        q = _safe_float(bins[0].get("q"), 1)
+        return max(1, int(round(q)))
+    return 1
+
+
+def _extract_cluster_feature(cluster_item):
+    if not isinstance(cluster_item, dict):
+        return "lcoe"
+    cluster_cfg = cluster_item.get("cluster")
+    if isinstance(cluster_cfg, list) and cluster_cfg:
+        feature = str(cluster_cfg[0].get("feature", "lcoe") or "lcoe")
+        return feature
+    return "lcoe"
+
+
+def _extract_cluster_n_clusters(cluster_item):
+    if not isinstance(cluster_item, dict):
+        return 1
+    cluster_cfg = cluster_item.get("cluster")
+    if isinstance(cluster_cfg, list) and cluster_cfg:
+        n_clusters = _safe_float(cluster_cfg[0].get("n_clusters"), 1)
+        return max(1, int(round(n_clusters)))
+    return 1
+
+
+def _weighted_kmeans_1d(values, weights, k, max_iter=30):
+    values = np.asarray(values, dtype=float)
+    weights = np.asarray(weights, dtype=float)
+    valid = np.isfinite(values) & np.isfinite(weights)
+    values = values[valid]
+    weights = weights[valid]
+
+    if values.size == 0:
+        return np.array([], dtype=int)
+
+    weights = np.maximum(weights, 1e-9)
+    k = max(1, min(int(k), values.size))
+    if k == 1:
+        return np.zeros(values.size, dtype=int)
+
+    order = np.argsort(values)
+    sorted_vals = values[order]
+    sorted_weights = weights[order]
+    cum_w = np.cumsum(sorted_weights)
+    total_w = float(cum_w[-1])
+
+    centers = []
+    for i in range(1, k + 1):
+        target = total_w * (i / (k + 1))
+        idx = int(np.searchsorted(cum_w, target, side="left"))
+        idx = min(max(idx, 0), sorted_vals.size - 1)
+        centers.append(sorted_vals[idx])
+    centers = np.asarray(centers, dtype=float)
+
+    labels = np.zeros(values.size, dtype=int)
+    for _ in range(max_iter):
+        distances = np.abs(values[:, None] - centers[None, :])
+        new_labels = np.argmin(distances, axis=1)
+        if np.array_equal(new_labels, labels):
+            break
+        labels = new_labels
+        for idx in range(k):
+            mask = labels == idx
+            if not np.any(mask):
+                continue
+            w = weights[mask]
+            v = values[mask]
+            centers[idx] = float(np.sum(v * w) / np.sum(w))
+
+    return labels
+
+
+def _assign_weighted_bins(df, bin_feature, q):
+    if df is None or df.empty:
+        return np.array([], dtype=int)
+
+    q = max(1, int(q))
+    if q == 1:
+        return np.zeros(len(df), dtype=int)
+
+    temp = df.copy().reset_index(drop=True)
+    if bin_feature not in temp.columns:
+        bin_feature = "lcoe"
+
+    temp["_bin_feature"] = pd.to_numeric(temp[bin_feature], errors="coerce")
+    temp["_weights"] = pd.to_numeric(temp["capacity_mw"], errors="coerce").fillna(0.0)
+    temp["_weights"] = temp["_weights"].clip(lower=0.0)
+    temp["_weights"] = temp["_weights"].where(temp["_weights"] > 0.0, 1e-9)
+
+    temp_sorted = temp.sort_values("_bin_feature", kind="mergesort").reset_index()
+    cumulative = temp_sorted["_weights"].cumsum().to_numpy()
+    total = float(cumulative[-1]) if cumulative.size else 0.0
+    if total <= 0:
+        return np.zeros(len(df), dtype=int)
+
+    bin_edges = np.linspace(0.0, total, q + 1)[1:-1]
+    bin_ids_sorted = np.searchsorted(bin_edges, cumulative, side="left")
+
+    bin_ids = np.zeros(len(df), dtype=int)
+    for pos, row in enumerate(temp_sorted.itertuples(index=False)):
+        original_idx = int(getattr(row, "index"))
+        bin_ids[original_idx] = int(bin_ids_sorted[pos])
+
+    return bin_ids
+
+
+def _build_individual_supply_curve_bars(region_df):
+    bars = []
+    if region_df is None or region_df.empty:
+        return bars
+    for idx, row in enumerate(region_df.itertuples(index=False), start=1):
+        cap = _safe_float(getattr(row, "capacity_mw", 0.0), 0.0)
+        lcoe = _safe_float(getattr(row, "lcoe", 0.0), 0.0)
+        if cap <= 0:
+            continue
+        bars.append({"label": f"CPA {idx}", "capacity_mw": cap, "lcoe": lcoe})
+    return bars
+
+
+def _build_aggregated_supply_curve_bars(region_df, cluster_item):
+    if region_df is None or region_df.empty:
+        return []
+
+    work_df = region_df.copy().reset_index(drop=True)
+    if "capacity_mw" not in work_df.columns or "lcoe" not in work_df.columns:
+        return []
+
+    bin_cfg = cluster_item.get("bin") if isinstance(cluster_item, dict) else None
+    bin_feature = "lcoe"
+    if isinstance(bin_cfg, list) and bin_cfg:
+        bin_feature = str(bin_cfg[0].get("feature", "lcoe") or "lcoe")
+    q = _extract_cluster_q(cluster_item)
+    cluster_feature = _extract_cluster_feature(cluster_item)
+    n_clusters = _extract_cluster_n_clusters(cluster_item)
+
+    if cluster_feature not in work_df.columns:
+        cluster_feature = "lcoe"
+
+    work_df["capacity_mw"] = pd.to_numeric(work_df["capacity_mw"], errors="coerce").fillna(0.0)
+    work_df["lcoe"] = pd.to_numeric(work_df["lcoe"], errors="coerce").fillna(0.0)
+    work_df[cluster_feature] = pd.to_numeric(work_df[cluster_feature], errors="coerce").fillna(0.0)
+    work_df = work_df[work_df["capacity_mw"] > 0.0].copy()
+    if work_df.empty:
+        return []
+
+    work_df["_bin_id"] = _assign_weighted_bins(work_df, bin_feature, q)
+
+    bars = []
+    for bin_id, bin_df in work_df.groupby("_bin_id", sort=True):
+        bin_df = bin_df.reset_index(drop=True)
+        effective_k = max(1, min(int(n_clusters), len(bin_df)))
+
+        values = bin_df[cluster_feature].to_numpy(dtype=float)
+        weights = bin_df["capacity_mw"].to_numpy(dtype=float)
+        labels = _weighted_kmeans_1d(values, weights, effective_k)
+        if labels.size == 0:
+            labels = np.zeros(len(bin_df), dtype=int)
+
+        for cluster_idx in sorted(set(labels.tolist())):
+            cluster_rows = bin_df[labels == cluster_idx]
+            capacity = float(cluster_rows["capacity_mw"].sum())
+            if capacity <= 0:
+                continue
+            lcoe = float(
+                (cluster_rows["lcoe"] * cluster_rows["capacity_mw"]).sum() / capacity
+            )
+            bars.append(
+                {
+                    "label": f"Bin {int(bin_id) + 1} • Cluster {int(cluster_idx) + 1}",
+                    "capacity_mw": capacity,
+                    "lcoe": lcoe,
+                    "count": int(len(cluster_rows)),
+                    "bin": int(bin_id) + 1,
+                }
+            )
+
+    bars.sort(
+        key=lambda item: (
+            _safe_float(item.get("lcoe"), 0.0),
+            _safe_float(item.get("capacity_mw"), 0.0),
+        )
+    )
+    return bars
+
+
 class TestRenewablesClusteringLogic:
     """Test renewables clustering helpers (pure logic)."""
 
@@ -3273,6 +3486,114 @@ class TestRenewablesClusteringLogic:
         )
 
         assert targets == {"A": 50.0}
+
+    def test_assign_weighted_bins_preserves_row_count_and_range(self):
+        region_df = pd.DataFrame(
+            {
+                "capacity_mw": [1.0, 2.0, 3.0, 4.0],
+                "lcoe": [10.0, 20.0, 30.0, 40.0],
+            }
+        )
+
+        q = 3
+        bin_ids = _assign_weighted_bins(region_df, "lcoe", q)
+
+        assert len(bin_ids) == len(region_df)
+        assert int(np.min(bin_ids)) >= 0
+        assert int(np.max(bin_ids)) <= q - 1
+
+    def test_supply_curve_aggregation_preserves_filtered_capacity(self):
+        region_df = pd.DataFrame(
+            {
+                "capacity_mw": [10.0, 0.0, -2.0, 20.0, 5.0],
+                "lcoe": [20.0, 30.0, 40.0, 10.0, 25.0],
+            }
+        )
+        cluster_item = {
+            "bin": [{"feature": "lcoe", "q": 2}],
+            "cluster": [{"feature": "lcoe", "n_clusters": 2}],
+        }
+
+        aggregated = _build_aggregated_supply_curve_bars(region_df, cluster_item)
+
+        expected_capacity = float(
+            region_df.loc[region_df["capacity_mw"] > 0.0, "capacity_mw"].sum()
+        )
+        assert sum(bar["capacity_mw"] for bar in aggregated) == pytest.approx(
+            expected_capacity
+        )
+
+    def test_supply_curve_aggregation_uses_bin_plus_cluster_pipeline(self):
+        region_df = pd.DataFrame(
+            {
+                "capacity_mw": [10.0, 10.0, 10.0, 10.0],
+                "lcoe": [10.0, 20.0, 80.0, 90.0],
+                "cf": [0.10, 0.11, 0.80, 0.81],
+            }
+        )
+        cluster_item = {
+            "bin": [{"feature": "lcoe", "q": 2}],
+            "cluster": [{"feature": "cf", "n_clusters": 2}],
+        }
+
+        aggregated = _build_aggregated_supply_curve_bars(region_df, cluster_item)
+
+        assert aggregated
+        assert {bar["bin"] for bar in aggregated} == {1, 2}
+        assert len(aggregated) <= 2 * 2
+
+    def test_supply_curve_aggregation_missing_cluster_feature_falls_back_to_lcoe(self):
+        region_df = pd.DataFrame(
+            {
+                "capacity_mw": [8.0, 12.0, 9.0],
+                "lcoe": [15.0, 18.0, 12.0],
+            }
+        )
+        cluster_item = {
+            "bin": [{"feature": "lcoe", "q": 2}],
+            "cluster": [{"feature": "missing_feature", "n_clusters": 2}],
+        }
+
+        aggregated = _build_aggregated_supply_curve_bars(region_df, cluster_item)
+
+        assert aggregated
+        assert all("Bin " in bar["label"] and "Cluster " in bar["label"] for bar in aggregated)
+
+    def test_supply_curve_aggregation_empty_input_returns_empty(self):
+        empty_df = pd.DataFrame(columns=["capacity_mw", "lcoe"])
+        assert _build_aggregated_supply_curve_bars(empty_df, {}) == []
+
+    def test_extract_cluster_lcoe_max_from_filter_list(self):
+        cluster_item = {
+            "filter": [
+                {"feature": "state", "max": "ignore"},
+                {"feature": "lcoe", "max": "37.5"},
+            ]
+        }
+
+        assert _extract_cluster_lcoe_max(cluster_item) == 37.5
+
+    def test_extract_cluster_lcoe_max_returns_none_when_missing(self):
+        cluster_item = {"filter": [{"feature": "capacity", "max": 200}]}
+
+        assert _extract_cluster_lcoe_max(cluster_item) is None
+
+    @pytest.mark.parametrize(
+        ("cluster_item", "expected_q"),
+        [
+            ({}, 1),
+            ({"bin": []}, 1),
+            ({"bin": [{"q": None}]}, 1),
+            ({"bin": [{"q": 0.2}]}, 1),
+            ({"bin": [{"q": 2.49}]}, 2),
+            ({"bin": [{"q": 2.5}]}, 2),
+            ({"bin": [{"q": 2.51}]}, 3),
+        ],
+    )
+    def test_extract_cluster_q_defaults_and_rounds_positive_values(
+        self, cluster_item, expected_q
+    ):
+        assert _extract_cluster_q(cluster_item) == expected_q
 
 
 # ============================================================================
