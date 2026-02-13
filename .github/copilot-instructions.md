@@ -79,6 +79,17 @@ Only the web app in `/web` matters; CLI and legacy docs are ignored.
 - The settings files for PowerGenome define the model regions that will be used in an analysis, how power plants are grouped within those regions, and other key parameters such as resource and fuel price scenarios.
 - The documentation for PowerGenome can be found at https://powergenome.github.io/PowerGenome/beta/.
 
+## Common Terms
+- **BA**: Balancing Authority, a region in the US power system that balances supply and demand.
+- **Model Region**: A user-defined grouping of BAs that will be treated as a single region in the PowerGenome model.
+- **Region Clustering**: The process of grouping BAs into model regions based on criteria such as transmission connectivity.
+- **ATB**: NREL's Annual Technology Baseline, which provides cost and performance data for various energy technologies.
+- **Fuel Price Scenario**: A set of assumptions about future fuel prices that can be used in the model.
+- **CPA**: Candidate Project Area, a geospatially specific wind or solar resource.
+- **Resource Group Files**: A set of files that are created by the web app. They include parquet "LCOE" files with CPAs that are assigned to model regions and given a cost to deliver power (interconnection cost), and JSON files that are used by PowerGenome to point to the parquet files.
+- **Renewables Clusters**: A YAML list of dictionaries that tells PowerGenome how to filter, group, bin, and cluster CPAs to create aggregated renewable resources in the model.
+- **Modified Resources**: User-defined resources that are based on existing technologies but have custom attributes and fuel types (e.g., a Hydrogen CT).
+
 ## Documentation
 - When updating or adding new features to the web app, please update the documentation in the `docs/` folder accordingly.
 - Follow the established documentation style and structure.
