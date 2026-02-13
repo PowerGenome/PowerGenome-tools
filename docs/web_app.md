@@ -571,8 +571,8 @@ The plots use a small multiples layout with:
 
 * One row per region (up to 3 regions shown)
 * Two columns: site-level curves (left) and cluster-level curves (right)
-* Separate lines for onshore wind, offshore wind, and utility-scale solar
-* Color-coded by technology type for easy comparison
+* Technologies shown: onshore wind (landbasedwind) and utility-scale solar (utilitypv)
+* Color-coded by cluster for easy comparison
 
 #### Relationship to Renewables Configuration
 

@@ -5934,6 +5934,8 @@ def generate_supply_curve_plots():
     str
         Base64-encoded PNG image data URL
     """
+    # Import matplotlib locally to avoid slowing down page load in PyScript
+    # and to set the non-interactive backend before importing pyplot
     import matplotlib
     matplotlib.use("Agg")  # Use non-interactive backend
     import matplotlib.pyplot as plt
