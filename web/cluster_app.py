@@ -20,6 +20,12 @@ from io import BytesIO, StringIO
 
 from js import L, Uint8Array, document, fetch, globalThis, window
 from pyodide.ffi import create_proxy, to_js
+from renewables_utils import (
+    agg_cluster_other,
+    optimize_bin_allocation,
+    optimize_cluster_allocation,
+    value_bin,
+)
 
 # Suppress pandas pyarrow deprecation warning
 warnings.filterwarnings("ignore", message=".*pyarrow.*", category=DeprecationWarning)
@@ -103,6 +109,9 @@ class AppState:
         self.reeds_annual_demand_avg = {}  # ba_id -> avg annual demand (MWh)
         self.renewables_clusters = None  # computed renewables_clusters settings
         self.renewables_clusters_info = None  # summary for UI
+        self.renewables_region_capacity_mw = (
+            {}
+        )  # tech -> region -> selected capacity MW
 
         # Fuel scenario options (Settings tab)
         self.fuel_prices_df = None  # fuel price scenarios from PowerGenome-data
@@ -742,14 +751,28 @@ DEFAULT_RENEWABLES_CLUSTERS = [
         "region": "all",
         "technology": "landbasedwind",
         "filter": [{"feature": "lcoe", "max": 70}],
-        "bin": [{"feature": "lcoe", "weights": "capacity_mw", "mw_per_bin": 10000}],
+        "bin": [
+            {
+                "feature": "lcoe",
+                "weights": "capacity_mw",
+                "q": 10,
+                "mw_per_bin": 10000,
+            }
+        ],
         "cluster": [{"feature": "cf", "n_clusters": 5, "method": "agg"}],
     },
     {
         "region": "all",
         "technology": "utilitypv",
         "filter": [{"feature": "lcoe", "max": 40}],
-        "bin": [{"feature": "lcoe", "weights": "capacity_mw", "mw_per_bin": 50000}],
+        "bin": [
+            {
+                "feature": "lcoe",
+                "weights": "capacity_mw",
+                "q": 10,
+                "mw_per_bin": 50000,
+            }
+        ],
         "cluster": [{"feature": "lcoe", "n_clusters": 5, "method": "agg"}],
     },
 ]
@@ -757,17 +780,17 @@ DEFAULT_RENEWABLES_CLUSTERS = [
 RENEWABLES_TECH_CONFIG = {
     "landbasedwind": {
         "resource_key": "onshorewind",
-        "chunk_mw": 2000,
         "mw_per_bin": 10000,
         "cluster_feature": "cf",
         "n_clusters": 5,
+        "avg_resource_mw": 2000,
     },
     "utilitypv": {
         "resource_key": "solar",
-        "chunk_mw": 10000,
         "mw_per_bin": 50000,
         "cluster_feature": "lcoe",
         "n_clusters": 5,
+        "avg_resource_mw": 5000,
     },
 }
 
@@ -5016,8 +5039,8 @@ def _load_resource_group_lcoe_df(resource_key):
         )
         return None
 
-    df = df.rename(columns={"model_region": "region"})
-    df["capacity_mw"] = df["cpa_mw"]
+    df = df.rename(columns={"model_region": "region", "cpa_mw": "capacity_mw"})
+    # df["capacity_mw"] = df["cpa_mw"]
     window.console.log(
         f"Renewables: loaded {resource_key} from assignments, rows={len(df):,}"
     )
@@ -5031,10 +5054,11 @@ def _prepare_lcoe_region_data(lcoe_df):
     for region_name, df in lcoe_df.groupby("region"):
         df_sorted = df.sort_values("lcoe").reset_index(drop=True)
         lcoe_vals = df_sorted["lcoe"].to_numpy(dtype=float)
-        cpa_mw = df_sorted["cpa_mw"].to_numpy(dtype=float)
+        # cpa_mw = df_sorted["cpa_mw"].to_numpy(dtype=float)
         cf = df_sorted["cf"].to_numpy(dtype=float)
         cap_mw = df_sorted["capacity_mw"].to_numpy(dtype=float)
-        annual_mwh = cpa_mw * cf * 8760
+        # annual_mwh = cpa_mw * cf * 8760
+        annual_mwh = cap_mw * cf * 8760
         cum_mwh = np.cumsum(annual_mwh)
         out[region_name] = {
             "lcoe": lcoe_vals,
@@ -5044,39 +5068,9 @@ def _prepare_lcoe_region_data(lcoe_df):
     return out
 
 
-def _allocate_bins_by_capacity(region_caps, region_ranges, target_bins_total):
-    regions = [r for r, cap in region_caps.items() if cap > 0]
-    if not regions:
-        return {}
-    total_cap = sum(region_caps[r] for r in regions)
-    bins = {}
-    for region in regions:
-        share = region_caps[region] / total_cap if total_cap > 0 else 0
-        bins[region] = max(1, int(round(share * target_bins_total)))
-
-    ordered = sorted(regions, key=lambda r: region_ranges.get(r, 0.0))
-    while sum(bins.values()) < target_bins_total:
-        for region in ordered:
-            bins[region] += 1
-            if sum(bins.values()) >= target_bins_total:
-                break
-
-    while sum(bins.values()) > target_bins_total:
-        reduced = False
-        for region in ordered:
-            if bins[region] > 1:
-                bins[region] -= 1
-                reduced = True
-                if sum(bins.values()) <= target_bins_total:
-                    break
-        if not reduced:
-            break  # All bins at minimum (1); cannot reduce further
-
-    return bins
-
-
 def _compute_region_bin_cluster_config(
     region_caps,
+    region_lcoe_data,
     region_ranges,
     target_total_resources,
     default_mw_per_bin,
@@ -5084,56 +5078,59 @@ def _compute_region_bin_cluster_config(
 ):
     regions = [r for r, cap in region_caps.items() if cap > 0]
     if not regions:
-        return {}, 0
+        return {}, 0, 0, 0
+
+    bins = {
+        r: max(1, int(math.ceil(region_caps[r] / default_mw_per_bin))) for r in regions
+    }
+    minimum_total_resources = int(sum(bins.values()))
 
     if not target_total_resources or target_total_resources <= 0:
-        bins = {
-            r: max(1, int(math.ceil(region_caps[r] / default_mw_per_bin)))
-            for r in regions
-        }
         n_clusters = {r: default_n_clusters for r in regions}
         total = sum(bins[r] * n_clusters[r] for r in regions)
-        return {
+        return (
+            {
+                r: {
+                    "bins": bins[r],
+                    "q": max(1, int(round(region_caps[r] / default_mw_per_bin))),
+                    "mw_per_bin": max(1, int(round(region_caps[r] / bins[r]))),
+                    "n_clusters": n_clusters[r],
+                }
+                for r in regions
+            },
+            total,
+            total,
+            minimum_total_resources,
+        )
+
+    effective_target = max(int(target_total_resources), minimum_total_resources)
+    n_clusters = optimize_cluster_allocation(region_lcoe_data, bins, effective_target)
+
+    # Fallback/Safety
+    for r in regions:
+        if r not in n_clusters:
+            n_clusters[r] = 1
+
+    total = int(sum(bins[r] * n_clusters[r] for r in regions))
+
+    window.console.log(
+        f"Renewables: optimized clusters total={total}, target={effective_target}, bins={sum(bins.values())}"
+    )
+
+    return (
+        {
             r: {
                 "bins": bins[r],
+                "q": max(1, int(round(region_caps[r] / default_mw_per_bin))),
                 "mw_per_bin": max(1, int(round(region_caps[r] / bins[r]))),
                 "n_clusters": n_clusters[r],
             }
             for r in regions
-        }, total
-
-    target_bins_total = max(1, int(round(target_total_resources / default_n_clusters)))
-    bins = _allocate_bins_by_capacity(region_caps, region_ranges, target_bins_total)
-    n_clusters = {r: default_n_clusters for r in regions}
-    total = sum(bins[r] * n_clusters[r] for r in regions)
-
-    if total > target_total_resources:
-        ordered = sorted(regions, key=lambda r: region_ranges.get(r, 0.0))
-        for region in ordered:
-            while (
-                n_clusters[region] > 1
-                and total - bins[region] >= target_total_resources
-            ):
-                n_clusters[region] -= 1
-                total -= bins[region]
-
-    if total < target_total_resources:
-        ordered = sorted(regions, key=lambda r: region_ranges.get(r, 0.0))
-        while total < target_total_resources:
-            for region in ordered:
-                bins[region] += 1
-                total += n_clusters[region]
-                if total >= target_total_resources:
-                    break
-
-    return {
-        r: {
-            "bins": bins[r],
-            "mw_per_bin": max(1, int(round(region_caps[r] / bins[r]))),
-            "n_clusters": n_clusters[r],
-        }
-        for r in regions
-    }, total
+        },
+        total,
+        effective_target,
+        minimum_total_resources,
+    )
 
 
 def set_renewables_status(message, status_type="info"):
@@ -5151,17 +5148,147 @@ def _render_renewables_preview():
     if not state.renewables_clusters:
         preview_el.value = ""
         return
-    preview_el.value = yaml.dump(
+    renewables_yaml = yaml.dump(
         {"renewables_clusters": state.renewables_clusters},
         default_flow_style=False,
         sort_keys=False,
     )
+    comment_block = _format_renewables_capacity_comments()
+    preview_el.value = (
+        f"{comment_block}\n{renewables_yaml}" if comment_block else renewables_yaml
+    )
+
+
+def _format_renewables_capacity_comments():
+    cap_map = (
+        state.renewables_region_capacity_mw
+        if isinstance(state.renewables_region_capacity_mw, dict)
+        else {}
+    )
+    if not cap_map:
+        return ""
+
+    lines = ["# Selected renewables capacity by region (MW)"]
+    for tech in ["landbasedwind", "utilitypv"]:
+        tech_caps = cap_map.get(tech)
+        if not isinstance(tech_caps, dict) or not tech_caps:
+            continue
+        lines.append(f"# {tech}:")
+        for region_name in sorted(tech_caps.keys()):
+            cap_val = tech_caps[region_name]
+            try:
+                cap_display = int(round(float(cap_val)))
+            except Exception:
+                cap_display = cap_val
+            lines.append(f"#   {region_name}: {cap_display}")
+
+    return "\n".join(lines) if len(lines) > 1 else ""
 
 
 def _update_renewables_suggested_counts(wind_count, solar_count):
     el = document.getElementById("renewablesSuggestedCounts")
     if el:
-        el.textContent = f"Suggested: wind {wind_count}, solar {solar_count}"
+        el.textContent = f"Suggested budgets: wind {wind_count}, solar {solar_count}"
+
+
+def _get_renewables_tech_input_ids(tech):
+    if tech == "landbasedwind":
+        return (
+            "renewablesWindShare",
+            "renewablesWindAvgResourceMw",
+            "renewablesWindBudgetCount",
+        )
+    if tech == "utilitypv":
+        return (
+            "renewablesSolarShare",
+            "renewablesSolarAvgResourceMw",
+            "renewablesSolarBudgetCount",
+        )
+    raise ValueError(f"Unknown renewables tech: {tech}")
+
+
+def _get_renewables_share_for_tech(tech):
+    share_id, _, _ = _get_renewables_tech_input_ids(tech)
+    return max(0.0, min(1.0, (_get_float_input(share_id, 0.0) or 0.0) / 100.0))
+
+
+def _get_avg_resource_size_for_tech(tech):
+    _, avg_id, _ = _get_renewables_tech_input_ids(tech)
+    default = RENEWABLES_TECH_CONFIG[tech]["avg_resource_mw"]
+    avg_resource_mw = _get_float_input(avg_id, default)
+    return max(1.0, float(avg_resource_mw or default))
+
+
+def _compute_suggested_budget(region_data, region_targets, avg_resource_mw):
+    suggested = 0
+    for region_name, target_mwh in region_targets.items():
+        data = region_data.get(region_name)
+        if not data or target_mwh <= 0:
+            continue
+        cum_mwh = data["cum_mwh"]
+        if cum_mwh.size == 0:
+            continue
+        cutoff_idx = int(np.searchsorted(cum_mwh, target_mwh, side="left"))
+        if cutoff_idx >= cum_mwh.size:
+            cutoff_idx = cum_mwh.size - 1
+        cap_vals = data["capacity_mw"]
+        selected_capacity = float(cap_vals[: cutoff_idx + 1].sum())
+        if selected_capacity > 0:
+            suggested += int(math.ceil(selected_capacity / avg_resource_mw))
+    return suggested
+
+
+async def _refresh_renewables_budget_defaults(event=None):
+    wind_budget_el = document.getElementById("renewablesWindBudgetCount")
+    solar_budget_el = document.getElementById("renewablesSolarBudgetCount")
+
+    if not wind_budget_el or not solar_budget_el:
+        return
+
+    if not state.region_aggregations:
+        _update_renewables_suggested_counts(0, 0)
+        return
+    if state.resource_group_assignments is None:
+        _update_renewables_suggested_counts(0, 0)
+        return
+    if not state.reeds_annual_demand_avg:
+        _update_renewables_suggested_counts(0, 0)
+        return
+
+    region_demand, _ = _build_region_demand_map(state.region_aggregations)
+    suggested = {}
+
+    for tech in ["landbasedwind", "utilitypv"]:
+        config = RENEWABLES_TECH_CONFIG[tech]
+        share = _get_renewables_share_for_tech(tech)
+        avg_resource_mw = _get_avg_resource_size_for_tech(tech)
+        lcoe_df = _load_resource_group_lcoe_df(config["resource_key"])
+        if lcoe_df is None:
+            suggested[tech] = 0
+            continue
+
+        lcoe_df = lcoe_df[["region", "cf", "lcoe", "capacity_mw"]].copy()
+        lcoe_df["region"] = lcoe_df["region"].astype(str)
+        region_data = _prepare_lcoe_region_data(lcoe_df)
+        region_targets = {
+            region: region_demand.get(region, 0.0) * share
+            for region in region_data.keys()
+            if region_demand.get(region, 0.0) * share > 0
+        }
+        suggested[tech] = _compute_suggested_budget(
+            region_data, region_targets, avg_resource_mw
+        )
+
+    wind_suggest = int(suggested.get("landbasedwind", 0))
+    solar_suggest = int(suggested.get("utilitypv", 0))
+    _update_renewables_suggested_counts(wind_suggest, solar_suggest)
+
+    wind_budget_el.value = str(max(1, wind_suggest)) if wind_suggest > 0 else ""
+    solar_budget_el.value = str(max(1, solar_suggest)) if solar_suggest > 0 else ""
+
+
+def on_renewables_budget_inputs_change(event):
+    asyncio.create_task(_refresh_renewables_budget_defaults())
 
 
 async def _compute_renewables_clusters():
@@ -5180,14 +5307,10 @@ async def _compute_renewables_clusters():
             set_renewables_status("Annual demand data not loaded.", "error")
             return
 
-        wind_share = max(
-            0.0,
-            min(1.0, (_get_float_input("renewablesWindShare", 0.0) or 0.0) / 100),
-        )
-        solar_share = max(
-            0.0,
-            min(1.0, (_get_float_input("renewablesSolarShare", 0.0) or 0.0) / 100),
-        )
+        wind_share = _get_renewables_share_for_tech("landbasedwind")
+        solar_share = _get_renewables_share_for_tech("utilitypv")
+        wind_avg_resource_mw = _get_avg_resource_size_for_tech("landbasedwind")
+        solar_avg_resource_mw = _get_avg_resource_size_for_tech("utilitypv")
 
         region_demand, missing_bas = _build_region_demand_map(region_aggs)
         window.console.log(
@@ -5196,14 +5319,21 @@ async def _compute_renewables_clusters():
 
         clusters = []
         summary = {}
+        capacity_summary = {}
+        floor_notes = []
         for tech, share in [("landbasedwind", wind_share), ("utilitypv", solar_share)]:
             config = RENEWABLES_TECH_CONFIG[tech]
+            avg_resource_mw = (
+                wind_avg_resource_mw
+                if tech == "landbasedwind"
+                else solar_avg_resource_mw
+            )
             t_tech_start = time.perf_counter()
             lcoe_df = _load_resource_group_lcoe_df(config["resource_key"])
             if lcoe_df is None:
                 continue
 
-            lcoe_df = lcoe_df[["region", "cpa_mw", "cf", "lcoe", "capacity_mw"]].copy()
+            lcoe_df = lcoe_df[["region", "cf", "lcoe", "capacity_mw"]].copy()
             lcoe_df["region"] = lcoe_df["region"].astype(str)
             t_prep_start = time.perf_counter()
             region_data = _prepare_lcoe_region_data(lcoe_df)
@@ -5225,6 +5355,7 @@ async def _compute_renewables_clusters():
             region_caps = {}
             region_ranges = {}
             region_lcoe_max = {}
+            region_lcoe_map = {}  # New: store filtered arrays for optimizer
             suggested_total = 0
 
             last_status = 0.0
@@ -5262,14 +5393,20 @@ async def _compute_renewables_clusters():
                 region_caps[region_name] = capacity
                 region_ranges[region_name] = float(lcoe_max - lcoe_vals[0])
                 region_lcoe_max[region_name] = lcoe_max
+
+                # Capture arrays for intelligent optimization
                 if capacity > 0:
-                    suggested_total += int(math.ceil(capacity / config["chunk_mw"]))
+                    region_lcoe_map[region_name] = {
+                        "lcoe": lcoe_vals[: cutoff_idx + 1],
+                        "capacity": cap_vals[: cutoff_idx + 1],
+                    }
+                    suggested_total += int(math.ceil(capacity / avg_resource_mw))
 
             target_input = _get_int_input(
                 (
-                    "renewablesWindTargetCount"
+                    "renewablesWindBudgetCount"
                     if tech == "landbasedwind"
-                    else "renewablesSolarTargetCount"
+                    else "renewablesSolarBudgetCount"
                 ),
                 None,
             )
@@ -5277,13 +5414,27 @@ async def _compute_renewables_clusters():
             if target_total is None:
                 target_total = suggested_total
 
-            region_cfg, total_resources = _compute_region_bin_cluster_config(
-                region_caps,
-                region_ranges,
-                target_total,
-                config["mw_per_bin"],
-                config["n_clusters"],
+            region_cfg, total_resources, effective_target, minimum_budget = (
+                _compute_region_bin_cluster_config(
+                    region_caps,
+                    region_lcoe_map,  # Pass the map here
+                    region_ranges,
+                    target_total,
+                    config["mw_per_bin"],
+                    config["n_clusters"],
+                )
             )
+
+            if target_total < minimum_budget:
+                label = "wind" if tech == "landbasedwind" else "solar"
+                floor_notes.append(f"{label} budget raised to minimum {minimum_budget}")
+                budget_input = document.getElementById(
+                    "renewablesWindBudgetCount"
+                    if tech == "landbasedwind"
+                    else "renewablesSolarBudgetCount"
+                )
+                if budget_input:
+                    budget_input.value = str(minimum_budget)
 
             for region_name, lcoe_max in sorted(region_lcoe_max.items()):
                 cfg = region_cfg.get(region_name)
@@ -5298,6 +5449,7 @@ async def _compute_renewables_clusters():
                             {
                                 "feature": "lcoe",
                                 "weights": "capacity_mw",
+                                "q": cfg["q"],
                                 "mw_per_bin": cfg["mw_per_bin"],
                             }
                         ],
@@ -5311,9 +5463,17 @@ async def _compute_renewables_clusters():
                     }
                 )
 
+            capacity_summary[tech] = {
+                region_name: float(capacity)
+                for region_name, capacity in sorted(region_caps.items())
+                if float(capacity) > 0
+            }
+
             summary[tech] = {
                 "suggested": suggested_total,
                 "target": target_total,
+                "effective_target": effective_target,
+                "minimum_budget": minimum_budget,
                 "total": total_resources,
             }
             t_tech_end = time.perf_counter()
@@ -5323,6 +5483,7 @@ async def _compute_renewables_clusters():
 
         state.renewables_clusters = clusters
         state.renewables_clusters_info = summary
+        state.renewables_region_capacity_mw = capacity_summary
 
         wind_suggest = summary.get("landbasedwind", {}).get("suggested", 0)
         solar_suggest = summary.get("utilitypv", {}).get("suggested", 0)
@@ -5332,7 +5493,13 @@ async def _compute_renewables_clusters():
         missing_msg = (
             f" Missing demand data for {len(missing_bas)} BAs." if missing_bas else ""
         )
-        set_renewables_status(f"Renewables clusters computed.{missing_msg}", "success")
+        floor_msg = f" {'; '.join(floor_notes)}." if floor_notes else ""
+        set_renewables_status(
+            "Renewables clusters computed. "
+            "Extra budget is allocated to reduce weighted LCOE standard deviation."
+            f"{floor_msg}{missing_msg}",
+            "success",
+        )
         t_end = time.perf_counter()
         window.console.log(f"Renewables: total_time_s={(t_end - t_start):.2f}")
     except Exception as exc:
@@ -5464,7 +5631,9 @@ def generate_resources_settings():
 
     # Remove nulls to keep YAML clean
     out = {k: v for k, v in out.items() if v is not None}
-    return yaml.dump(out, default_flow_style=False, sort_keys=False)
+    resources_yaml = yaml.dump(out, default_flow_style=False, sort_keys=False)
+    comment_block = _format_renewables_capacity_comments()
+    return f"{comment_block}\n{resources_yaml}" if comment_block else resources_yaml
 
 
 def generate_fuels_settings():
@@ -6238,6 +6407,7 @@ async def _generate_resource_groups():
 
         state.resource_group_files = output_files
         _update_resource_group_list()
+        asyncio.create_task(_refresh_renewables_budget_defaults())
 
         if output_files:
             set_resource_group_status(
@@ -6657,6 +6827,18 @@ async def main():
         document.getElementById("computeRenewablesClustersBtn").addEventListener(
             "click", create_proxy(on_compute_renewables_clusters)
         )
+        document.getElementById("renewablesWindShare").addEventListener(
+            "input", create_proxy(on_renewables_budget_inputs_change)
+        )
+        document.getElementById("renewablesSolarShare").addEventListener(
+            "input", create_proxy(on_renewables_budget_inputs_change)
+        )
+        document.getElementById("renewablesWindAvgResourceMw").addEventListener(
+            "input", create_proxy(on_renewables_budget_inputs_change)
+        )
+        document.getElementById("renewablesSolarAvgResourceMw").addEventListener(
+            "input", create_proxy(on_renewables_budget_inputs_change)
+        )
 
         # ESR step
         document.getElementById("runESRBtn").addEventListener(
@@ -6711,6 +6893,7 @@ async def main():
 
         # Seed the plant budget with a 15% buffer above the minimum clusters
         update_default_cluster_budget()
+        asyncio.create_task(_refresh_renewables_budget_defaults())
 
         # Initialize Settings tab widgets
         populate_atb_picker()

@@ -1463,37 +1463,58 @@ wacc_real: 0.05"></textarea>
                 </div>
 
                 <div id="renewablesStatus" class="status info" style="display: none;">
-                    Configure demand shares and targets to build renewables clusters.
+                    Configure demand shares and budgets to build renewables clusters.
                 </div>
 
                 <div class="section">
-                    <label>Annual demand shares (applied to every model region)</label>
+                    <label style="display: flex; align-items: center; gap: 6px;">
+                        Annual demand shares (applied to every model region)
+                        <span class="info-icon"
+                            data-tooltip="Used to filter available sites. Provide more capacity than needed; filtering excludes very expensive sites so they do not raise average resource costs in the model.">?</span>
+                    </label>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
                         <div>
                             <label>Wind share (%)</label>
-                            <input type="number" id="renewablesWindShare" min="0" max="100" value="30" />
+                            <input type="number" id="renewablesWindShare" min="0" max="100" value="70" />
                         </div>
                         <div>
                             <label>Solar share (%)</label>
-                            <input type="number" id="renewablesSolarShare" min="0" max="100" value="20" />
+                            <input type="number" id="renewablesSolarShare" min="0" max="100" value="70" />
                         </div>
                     </div>
                 </div>
 
                 <div class="section">
-                    <label>Target total resource counts</label>
+                    <label>Average resource size used to suggest budgets (MW/resource)</label>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
                         <div>
-                            <label>Wind target count</label>
-                            <input type="number" id="renewablesWindTargetCount" min="1" placeholder="Auto" />
+                            <label>Wind average resource size (MW)</label>
+                            <input type="number" id="renewablesWindAvgResourceMw" min="1" value="2000" />
                         </div>
                         <div>
-                            <label>Solar target count</label>
-                            <input type="number" id="renewablesSolarTargetCount" min="1" placeholder="Auto" />
+                            <label>Solar average resource size (MW)</label>
+                            <input type="number" id="renewablesSolarAvgResourceMw" min="1" value="5000" />
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <label>Budget total resource counts</label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div>
+                            <label>Wind budget</label>
+                            <input type="number" id="renewablesWindBudgetCount" min="1" placeholder="Auto" />
+                        </div>
+                        <div>
+                            <label>Solar budget</label>
+                            <input type="number" id="renewablesSolarBudgetCount" min="1" placeholder="Auto" />
                         </div>
                     </div>
                     <div id="renewablesSuggestedCounts" class="hint" style="margin-top: 6px;">
-                        Suggested: wind 0, solar 0
+                        Suggested budgets: wind 0, solar 0
+                    </div>
+                    <div id="renewablesBudgetInfo" class="hint" style="margin-top: 6px;">
+                        Extra budget is allocated where it most reduces weighted LCOE standard deviation.
                     </div>
                 </div>
 
