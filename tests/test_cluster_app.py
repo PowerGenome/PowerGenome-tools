@@ -7,6 +7,7 @@ clustering, and YAML generation.
 """
 
 import json
+import math
 import re
 
 import networkx as nx
@@ -1898,11 +1899,11 @@ class TestESRFunctions:
         assert can_states_trade_transitively({"ca", "tx"}, rectable_data) is False
         assert can_states_trade_transitively({"ca", "co"}, rectable_data) is False
 
-    def test_split_bas_by_trading_zones_single_zone(self, hierarchy_data, rectable_data):
+    def test_split_bas_by_trading_zones_single_zone(
+        self, hierarchy_data, rectable_data
+    ):
         """Test splitting BAs when all in one trading zone."""
-        result = split_bas_by_trading_zones(
-            {"ca", "nv"}, hierarchy_data, rectable_data
-        )
+        result = split_bas_by_trading_zones({"ca", "nv"}, hierarchy_data, rectable_data)
         assert len(result) == 1
         assert result[0] == {"ca", "nv"}
 
@@ -1923,9 +1924,7 @@ class TestESRFunctions:
         self, hierarchy_data, rectable_data
     ):
         """Test splitting with an isolated state."""
-        result = split_bas_by_trading_zones(
-            {"ca", "co"}, hierarchy_data, rectable_data
-        )
+        result = split_bas_by_trading_zones({"ca", "co"}, hierarchy_data, rectable_data)
         assert len(result) == 2
         # CO should be in its own zone
         zones = [set(z) for z in result]
@@ -1967,7 +1966,7 @@ def add_manual_region_logic(state, region_name):
     """Logic for adding a manual region (without DOM dependencies)."""
     # Strip whitespace first
     region_name = region_name.strip() if region_name else ""
-    
+
     if not region_name:
         return False, "Please enter a region name"
 
@@ -1998,7 +1997,10 @@ def assign_bas_logic(state, bas_to_assign):
 
     # Assign BAs to selected region
     state.manual_regions[state.selected_manual_region].extend(new_bas)
-    return True, f"Assigned {len(new_bas)} BAs to region '{state.selected_manual_region}'"
+    return (
+        True,
+        f"Assigned {len(new_bas)} BAs to region '{state.selected_manual_region}'",
+    )
 
 
 def finalize_manual_logic(state):
@@ -2012,7 +2014,9 @@ def finalize_manual_logic(state):
         return False, f"Regions {empty_regions} have no BAs assigned"
 
     # Convert to region_aggregations format
-    state.region_aggregations = {name: list(bas) for name, bas in state.manual_regions.items()}
+    state.region_aggregations = {
+        name: list(bas) for name, bas in state.manual_regions.items()
+    }
     state.is_clustered = True
 
     # Build ba_to_region mapping
@@ -2023,7 +2027,10 @@ def finalize_manual_logic(state):
 
     num_regions = len(state.region_aggregations)
     total_bas = sum(len(bas) for bas in state.region_aggregations.values())
-    return True, f"Manual regions finalized! {num_regions} regions created with {total_bas} BAs."
+    return (
+        True,
+        f"Manual regions finalized! {num_regions} regions created with {total_bas} BAs.",
+    )
 
 
 def clear_manual_regions_logic(state):
@@ -2815,6 +2822,460 @@ class TestEdgeCases:
 
 
 # ============================================================================
+# Renewables Clustering Logic Tests
+# ============================================================================
+
+
+def compute_demand_avg(demand_df):
+    """Compute average annual demand per region (lowercased region names)."""
+    df = demand_df.copy()
+    df["region"] = df["region"].astype(str).str.lower()
+    return df.groupby("region")["annual_demand_mwh"].mean().to_dict()
+
+
+def select_resources_by_demand(df_region, target_mwh):
+    if df_region.empty or target_mwh <= 0:
+        return df_region.head(0)
+    df_sorted = df_region.sort_values("lcoe").copy()
+    df_sorted["annual_mwh"] = df_sorted["cpa_mw"] * df_sorted["cf"] * 8760
+    df_sorted["cum_mwh"] = df_sorted["annual_mwh"].cumsum()
+    selected = df_sorted[df_sorted["cum_mwh"] < target_mwh]
+    if selected.empty:
+        return df_sorted.head(1)
+    if selected["cum_mwh"].iloc[-1] < target_mwh and len(selected) < len(df_sorted):
+        return df_sorted.iloc[: len(selected) + 1]
+    return selected
+
+
+def allocate_bins_by_capacity(region_caps, region_ranges, target_bins_total):
+    regions = [r for r, cap in region_caps.items() if cap > 0]
+    if not regions:
+        return {}
+    total_cap = sum(region_caps[r] for r in regions)
+    bins = {}
+    for region in regions:
+        share = region_caps[region] / total_cap if total_cap > 0 else 0
+        bins[region] = max(1, int(round(share * target_bins_total)))
+
+    ordered = sorted(regions, key=lambda r: region_ranges.get(r, 0.0))
+    while sum(bins.values()) < target_bins_total:
+        for region in ordered:
+            bins[region] += 1
+            if sum(bins.values()) >= target_bins_total:
+                break
+
+    while sum(bins.values()) > target_bins_total:
+        made_change = False
+        for region in ordered:
+            if bins[region] > 1:
+                bins[region] -= 1
+                made_change = True
+                if sum(bins.values()) <= target_bins_total:
+                    break
+        # If we can't reduce further (all regions at minimum 1), break to avoid infinite loop
+        if not made_change:
+            break
+
+    return bins
+
+
+def compute_region_bin_cluster_config(
+    region_caps,
+    region_lcoe_data,
+    region_ranges,
+    target_total_resources,
+    default_mw_per_bin,
+    default_n_clusters,
+):
+    regions = [r for r, cap in region_caps.items() if cap > 0]
+    if not regions:
+        return {}, 0, 0, 0
+
+    bins = {
+        r: max(1, int(math.ceil(region_caps[r] / default_mw_per_bin))) for r in regions
+    }
+    minimum_total_resources = int(sum(bins.values()))
+
+    if not target_total_resources or target_total_resources <= 0:
+        n_clusters = {r: default_n_clusters for r in regions}
+        total = sum(bins[r] * n_clusters[r] for r in regions)
+        return (
+            {
+                r: {
+                    "bins": bins[r],
+                    "q": bins[r],
+                    "mw_per_bin": max(1, int(round(region_caps[r] / bins[r]))),
+                    "n_clusters": n_clusters[r],
+                }
+                for r in regions
+            },
+            total,
+            total,
+            minimum_total_resources,
+        )
+
+    effective_target = max(int(target_total_resources), minimum_total_resources)
+    n_clusters = optimize_cluster_allocation_logic(
+        region_lcoe_data, bins, effective_target
+    )
+
+    for region in regions:
+        if region not in n_clusters:
+            n_clusters[region] = 1
+
+    total = int(sum(bins[r] * n_clusters[r] for r in regions))
+
+    return (
+        {
+            r: {
+                "bins": bins[r],
+                "q": bins[r],
+                "mw_per_bin": max(1, int(round(region_caps[r] / bins[r]))),
+                "n_clusters": n_clusters[r],
+            }
+            for r in regions
+        },
+        total,
+        effective_target,
+        minimum_total_resources,
+    )
+
+
+def optimize_cluster_allocation_logic(region_lcoe_data, bins, target_total_resources):
+    regions = list(bins.keys())
+    if not regions:
+        return {}
+
+    n_clusters = {r: 1 for r in regions}
+    current_total = sum(bins[r] for r in regions)
+
+    if current_total >= target_total_resources:
+        return n_clusters
+
+    region_metrics = {}
+    for r, data in region_lcoe_data.items():
+        lcoe = data["lcoe"]
+        cap = data["capacity"]
+        total_cap = np.sum(cap)
+        if total_cap == 0:
+            region_metrics[r] = 0
+            continue
+
+        avg_lcoe = np.average(lcoe, weights=cap)
+        variance = np.average((lcoe - avg_lcoe) ** 2, weights=cap)
+        std_dev = np.sqrt(variance)
+        region_metrics[r] = total_cap * std_dev
+
+    while current_total < target_total_resources:
+        best_region = None
+        best_gain_per_cost = -1.0
+
+        for r in regions:
+            cost = bins[r]
+            if current_total + cost > target_total_resources:
+                continue
+
+            n = n_clusters[r]
+            metric = region_metrics.get(r, 0)
+            K = n * bins[r]
+            K_next = (n + 1) * bins[r]
+            gain = metric * (1.0 / K - 1.0 / K_next)
+            efficiency = gain / cost
+
+            if efficiency > best_gain_per_cost:
+                best_gain_per_cost = efficiency
+                best_region = r
+
+        if best_region is None:
+            break
+
+        n_clusters[best_region] += 1
+        current_total += bins[best_region]
+
+    return n_clusters
+
+
+def suggest_total_resources(region_caps, chunk_mw):
+    total = 0
+    for cap in region_caps.values():
+        if cap > 0:
+            total += int(math.ceil(cap / chunk_mw))
+    return total
+
+
+def compute_suggested_budget(region_data, region_targets, avg_resource_mw):
+    suggested = 0
+    for region_name, target_mwh in region_targets.items():
+        data = region_data.get(region_name)
+        if not data or target_mwh <= 0:
+            continue
+
+        cum_mwh = data["cum_mwh"]
+        if cum_mwh.size == 0:
+            continue
+
+        cutoff_idx = int(np.searchsorted(cum_mwh, target_mwh, side="left"))
+        if cutoff_idx >= cum_mwh.size:
+            cutoff_idx = cum_mwh.size - 1
+
+        cap_vals = data["capacity_mw"]
+        selected_capacity = float(cap_vals[: cutoff_idx + 1].sum())
+        if selected_capacity > 0:
+            suggested += int(math.ceil(selected_capacity / avg_resource_mw))
+
+    return suggested
+
+
+def compute_region_targets(region_data_keys, demand_map, share):
+    return {
+        region: demand_map.get(region, 0.0) * share
+        for region in region_data_keys
+        if demand_map.get(region, 0.0) * share > 0
+    }
+
+
+def compute_region_targets_by_demand_and_lcoe(region_demand, region_data, share):
+    return {
+        region: region_demand.get(region, 0.0) * share
+        for region in region_data.keys()
+        if region_demand.get(region, 0.0) * share > 0
+    }
+
+
+class TestRenewablesClusteringLogic:
+    """Test renewables clustering helpers (pure logic)."""
+
+    def test_compute_demand_avg_lowercases_regions(self):
+        demand_df = pd.DataFrame(
+            {
+                "region": ["P1", "p1", "P2", "p2"],
+                "weather_year": [2007, 2008, 2007, 2008],
+                "annual_demand_mwh": [100.0, 300.0, 200.0, 400.0],
+            }
+        )
+
+        avg = compute_demand_avg(demand_df)
+
+        assert avg["p1"] == 200.0
+        assert avg["p2"] == 300.0
+
+    def test_select_resources_by_demand_target_zero(self):
+        df = pd.DataFrame(
+            {
+                "region": ["r1", "r1"],
+                "cpa_mw": [100.0, 200.0],
+                "cf": [0.4, 0.5],
+                "lcoe": [40.0, 30.0],
+            }
+        )
+
+        selected = select_resources_by_demand(df, 0)
+
+        assert selected.empty
+
+    def test_select_resources_by_demand_minimum_selection(self):
+        df = pd.DataFrame(
+            {
+                "region": ["r1", "r1", "r1"],
+                "cpa_mw": [100.0, 200.0, 150.0],
+                "cf": [0.5, 0.4, 0.3],
+                "lcoe": [40.0, 35.0, 50.0],
+            }
+        )
+
+        selected = select_resources_by_demand(df, 1000.0)
+
+        assert len(selected) == 1
+        assert selected.iloc[0]["lcoe"] == 35.0
+
+    def test_select_resources_by_demand_includes_next_row(self):
+        df = pd.DataFrame(
+            {
+                "region": ["r1", "r1", "r1"],
+                "cpa_mw": [100.0, 200.0, 150.0],
+                "cf": [0.5, 0.4, 0.3],
+                "lcoe": [40.0, 35.0, 50.0],
+            }
+        )
+
+        selected = select_resources_by_demand(df, 800000.0)
+
+        assert len(selected) == 2
+        assert list(selected["lcoe"]) == [35.0, 40.0]
+
+    def test_allocate_bins_by_capacity_exact_total(self):
+        region_caps = {"A": 100.0, "B": 300.0, "C": 600.0}
+        region_ranges = {"A": 0.2, "B": 0.1, "C": 0.3}
+
+        bins = allocate_bins_by_capacity(region_caps, region_ranges, 10)
+
+        assert bins == {"A": 1, "B": 3, "C": 6}
+
+    def test_allocate_bins_by_capacity_adds_bins_by_range(self):
+        region_caps = {"A": 50.0, "B": 50.0, "C": 50.0}
+        region_ranges = {"A": 0.3, "B": 0.2, "C": 0.1}
+
+        bins = allocate_bins_by_capacity(region_caps, region_ranges, 4)
+
+        assert bins["C"] == 2
+        assert bins["B"] == 1
+        assert bins["A"] == 1
+        assert sum(bins.values()) == 4
+
+    def test_allocate_bins_by_capacity_reduces_bins_by_range(self):
+        region_caps = {"A": 600.0, "B": 300.0, "C": 100.0}
+        region_ranges = {"A": 0.3, "B": 0.2, "C": 0.1}
+
+        bins = allocate_bins_by_capacity(region_caps, region_ranges, 5)
+
+        assert bins == {"A": 3, "B": 1, "C": 1}
+        assert sum(bins.values()) == 5
+
+    def test_compute_region_bin_cluster_config_default_target(self):
+        region_caps = {"A": 100.0, "B": 250.0}
+        region_ranges = {"A": 0.1, "B": 0.2}
+        region_lcoe_data = {
+            "A": {"lcoe": np.array([10.0]), "capacity": np.array([100.0])},
+            "B": {"lcoe": np.array([20.0, 25.0]), "capacity": np.array([150.0, 100.0])},
+        }
+
+        cfg, total, effective_target, minimum_budget = (
+            compute_region_bin_cluster_config(
+                region_caps, region_lcoe_data, region_ranges, None, 100.0, 2
+            )
+        )
+
+        assert total == 8
+        assert effective_target == 8
+        assert minimum_budget == 4
+        assert cfg["A"]["bins"] == 1
+        assert cfg["B"]["bins"] == 3
+        assert cfg["A"]["q"] == 1
+        assert cfg["B"]["q"] == 3
+        assert cfg["A"]["mw_per_bin"] == 100
+        assert cfg["B"]["mw_per_bin"] == 83
+        assert cfg["A"]["n_clusters"] == 2
+
+    def test_compute_region_bin_cluster_config_applies_budget_floor(self):
+        region_caps = {"A": 100.0, "B": 300.0}
+        region_ranges = {"A": 0.2, "B": 0.1}
+        region_lcoe_data = {
+            "A": {"lcoe": np.array([10.0, 12.0]), "capacity": np.array([50.0, 50.0])},
+            "B": {"lcoe": np.array([9.0, 11.0]), "capacity": np.array([150.0, 150.0])},
+        }
+
+        cfg, total, effective_target, minimum_budget = (
+            compute_region_bin_cluster_config(
+                region_caps, region_lcoe_data, region_ranges, 2, 100.0, 2
+            )
+        )
+
+        assert minimum_budget == 4
+        assert effective_target == 4
+        assert total == 4
+        assert cfg["A"]["bins"] == 1
+        assert cfg["B"]["bins"] == 3
+        assert cfg["A"]["q"] == 1
+        assert cfg["B"]["q"] == 3
+        assert cfg["A"]["mw_per_bin"] == 100
+        assert cfg["B"]["mw_per_bin"] == 100
+        assert cfg["A"]["n_clusters"] == 1
+        assert cfg["B"]["n_clusters"] == 1
+
+    def test_compute_region_bin_cluster_config_allocates_extra_to_higher_spread(self):
+        region_caps = {"A": 100.0, "B": 100.0}
+        region_ranges = {"A": 0.1, "B": 0.2}
+        region_lcoe_data = {
+            "A": {"lcoe": np.array([10.0, 10.4]), "capacity": np.array([50.0, 50.0])},
+            "B": {"lcoe": np.array([0.0, 20.0]), "capacity": np.array([50.0, 50.0])},
+        }
+
+        cfg, total, effective_target, minimum_budget = (
+            compute_region_bin_cluster_config(
+                region_caps, region_lcoe_data, region_ranges, 3, 100.0, 2
+            )
+        )
+
+        assert minimum_budget == 2
+        assert effective_target == 3
+        assert total == 3
+        assert cfg["A"]["q"] == 1
+        assert cfg["A"]["mw_per_bin"] == 100
+        assert cfg["B"]["q"] == 1
+        assert cfg["B"]["mw_per_bin"] == 100
+        assert cfg["A"]["n_clusters"] == 1
+        assert cfg["B"]["n_clusters"] == 2
+
+    def test_compute_region_bin_cluster_config_cost_constraint_when_extra_budget_small(
+        self,
+    ):
+        region_caps = {"A": 200.0, "B": 100.0}
+        region_ranges = {"A": 0.3, "B": 0.1}
+        region_lcoe_data = {
+            "A": {"lcoe": np.array([0.0, 20.0]), "capacity": np.array([100.0, 100.0])},
+            "B": {"lcoe": np.array([9.5, 10.5]), "capacity": np.array([50.0, 50.0])},
+        }
+
+        cfg, total, effective_target, minimum_budget = (
+            compute_region_bin_cluster_config(
+                region_caps, region_lcoe_data, region_ranges, 4, 100.0, 2
+            )
+        )
+
+        assert minimum_budget == 3
+        assert effective_target == 4
+        assert total == 4
+        assert cfg["A"]["bins"] == 2
+        assert cfg["B"]["bins"] == 1
+        assert cfg["A"]["n_clusters"] == 1
+        assert cfg["B"]["n_clusters"] == 2
+
+    def test_suggest_total_resources(self):
+        region_caps = {"A": 0.0, "B": 1999.0, "C": 2000.0}
+
+        suggested = suggest_total_resources(region_caps, 2000.0)
+
+        assert suggested == 2
+
+    def test_compute_suggested_budget_uses_selected_capacity_chunks(self):
+        region_data = {
+            "R1": {
+                "cum_mwh": np.array([100.0, 200.0]),
+                "capacity_mw": np.array([1200.0, 900.0]),
+            },
+            "R2": {
+                "cum_mwh": np.array([50.0, 100.0, 150.0]),
+                "capacity_mw": np.array([1800.0, 1700.0, 1700.0]),
+            },
+        }
+        region_targets = {"R1": 150.0, "R2": 60.0}
+
+        wind_suggested = compute_suggested_budget(region_data, region_targets, 2000.0)
+        solar_suggested = compute_suggested_budget(region_data, region_targets, 5000.0)
+
+        assert wind_suggested == 4
+        assert solar_suggested == 2
+
+    def test_region_targets_skip_missing_and_zero(self):
+        region_data_keys = {"A", "B", "C"}
+        demand_map = {"A": 100.0, "B": 0.0, "D": 50.0}
+
+        targets = compute_region_targets(region_data_keys, demand_map, 0.5)
+
+        assert targets == {"A": 50.0}
+
+    def test_region_targets_skip_missing_or_zero_regions(self):
+        region_demand = {"A": 100.0, "B": 0.0, "C": 200.0}
+        region_data = {"A": {"lcoe": np.array([10.0])}, "B": {}, "D": {}}
+
+        targets = compute_region_targets_by_demand_and_lcoe(
+            region_demand, region_data, 0.5
+        )
+
+        assert targets == {"A": 50.0}
+
+
+# ============================================================================
 # YAML Region Parsing Tests
 # ============================================================================
 
@@ -2822,70 +3283,76 @@ class TestEdgeCases:
 def parse_yaml_regions_logic(state, yaml_text):
     """
     Parse YAML region definitions and load them into manual regions.
-    
+
     Returns (success, message) tuple.
     """
     try:
         # Parse YAML
         parsed = yaml.safe_load(yaml_text)
-        
+
         if not isinstance(parsed, dict):
             return False, "YAML must be a dictionary/mapping"
-        
+
         # Determine format and extract region_aggregations
         region_aggregations = None
-        
+
         # Format 1: Full definition with model_regions and region_aggregations
         if "region_aggregations" in parsed:
             region_aggregations = parsed["region_aggregations"]
-            
+
             if not isinstance(region_aggregations, dict):
                 return False, "region_aggregations must be a dictionary"
         # Format 2 & 3: Direct region mappings
         else:
             region_aggregations = parsed
-        
+
         # Validate region_aggregations structure
         if not region_aggregations:
             return False, "No region definitions found in YAML"
-        
+
         for region_name, bas in region_aggregations.items():
             if not isinstance(bas, list):
                 return False, f"Region '{region_name}' must map to a list of BAs"
             if not all(isinstance(ba, str) for ba in bas):
                 return False, f"All BAs in region '{region_name}' must be strings"
-        
+
         # Validate that all BAs exist in our data
         invalid_bas = []
         for region_name, bas in region_aggregations.items():
             for ba in bas:
                 if ba not in state.all_bas:
                     invalid_bas.append(ba)
-        
+
         if invalid_bas:
             unique_invalid = sorted(set(invalid_bas))
             return False, f"Invalid BA codes in YAML: {', '.join(unique_invalid[:10])}"
-        
+
         # Check for duplicate BAs across regions
         all_bas = []
         for bas in region_aggregations.values():
             all_bas.extend(bas)
-        
+
         if len(all_bas) != len(set(all_bas)):
             duplicates = [ba for ba in set(all_bas) if all_bas.count(ba) > 1]
-            return False, f"Duplicate BAs found in multiple regions: {', '.join(duplicates[:5])}"
-        
+            return (
+                False,
+                f"Duplicate BAs found in multiple regions: {', '.join(duplicates[:5])}",
+            )
+
         # Load regions from YAML
         state.manual_regions.clear()
         for region_name, bas in region_aggregations.items():
             state.manual_regions[region_name] = list(bas)
-        
+
         num_regions = len(state.manual_regions)
         total_bas = sum(len(bas) for bas in state.manual_regions.values())
         region_word = "region" if num_regions == 1 else "regions"
         ba_word = "BA" if total_bas == 1 else "BAs"
-        return True, f"Successfully loaded {num_regions} {region_word} with {total_bas} {ba_word} from YAML"
-        
+        return (
+            True,
+            f"Successfully loaded {num_regions} {region_word} with {total_bas} {ba_word} from YAML",
+        )
+
     except yaml.YAMLError as e:
         return False, f"Invalid YAML format: {str(e)}"
     except Exception as e:
@@ -2894,12 +3361,12 @@ def parse_yaml_regions_logic(state, yaml_text):
 
 class TestYAMLRegionParsing:
     """Test YAML region parsing functionality."""
-    
+
     def test_format1_full_definition(self):
         """Test Format 1: Full definition with model_regions and region_aggregations."""
         state = MockAppState()
         state.all_bas = {"p8", "p9", "p10", "p11", "p27", "p28", "p29", "p30", "p31"}
-        
+
         yaml_text = """
 model_regions:
   - AZ
@@ -2917,21 +3384,21 @@ region_aggregations:
     - p27
     - p30
 """
-        
+
         success, msg = parse_yaml_regions_logic(state, yaml_text)
-        
+
         assert success is True
         assert "2 regions with 8 BAs" in msg
         assert "CA" in state.manual_regions
         assert "AZ" in state.manual_regions
         assert set(state.manual_regions["CA"]) == {"p8", "p9", "p10", "p11"}
         assert set(state.manual_regions["AZ"]) == {"p29", "p28", "p27", "p30"}
-    
+
     def test_format2_region_aggregations_only(self):
         """Test Format 2: Only region_aggregations without model_regions."""
         state = MockAppState()
         state.all_bas = {"p8", "p9", "p10", "p11", "p27", "p28", "p29", "p30"}
-        
+
         yaml_text = """
 region_aggregations:
   CA:
@@ -2945,19 +3412,19 @@ region_aggregations:
     - p27
     - p30
 """
-        
+
         success, msg = parse_yaml_regions_logic(state, yaml_text)
-        
+
         assert success is True
         assert "2 regions with 8 BAs" in msg
         assert "CA" in state.manual_regions
         assert "AZ" in state.manual_regions
-    
+
     def test_format3_direct_mappings(self):
         """Test Format 3: Direct region mappings without region_aggregations wrapper."""
         state = MockAppState()
         state.all_bas = {"p8", "p9", "p10", "p11", "p27", "p28", "p29", "p30"}
-        
+
         yaml_text = """
 CA:
   - p8
@@ -2970,82 +3437,82 @@ AZ:
   - p27
   - p30
 """
-        
+
         success, msg = parse_yaml_regions_logic(state, yaml_text)
-        
+
         assert success is True
         assert "2 regions with 8 BAs" in msg
         assert "CA" in state.manual_regions
         assert "AZ" in state.manual_regions
-    
+
     def test_invalid_yaml_format(self):
         """Test handling of invalid YAML syntax."""
         state = MockAppState()
         state.all_bas = {"p8", "p9"}
-        
+
         yaml_text = """
 CA:
   - p8
   invalid syntax here
 """
-        
+
         success, msg = parse_yaml_regions_logic(state, yaml_text)
-        
+
         assert success is False
         assert "Invalid YAML format" in msg
-    
+
     def test_non_dict_yaml(self):
         """Test handling of YAML that's not a dictionary."""
         state = MockAppState()
         state.all_bas = {"p8", "p9"}
-        
+
         yaml_text = """
 - p8
 - p9
 """
-        
+
         success, msg = parse_yaml_regions_logic(state, yaml_text)
-        
+
         assert success is False
         assert "must be a dictionary" in msg
-    
+
     def test_region_not_list(self):
         """Test handling of region that doesn't map to a list."""
         state = MockAppState()
         state.all_bas = {"p8", "p9"}
-        
+
         yaml_text = """
 CA: p8
 """
-        
+
         success, msg = parse_yaml_regions_logic(state, yaml_text)
-        
+
         assert success is False
         assert "must map to a list" in msg
-    
+
     def test_invalid_ba_codes(self):
         """Test handling of BA codes that don't exist."""
         state = MockAppState()
         state.all_bas = {"p8", "p9"}
-        
+
         yaml_text = """
 CA:
   - p8
   - invalid_ba
   - another_invalid
 """
-        
+
         success, msg = parse_yaml_regions_logic(state, yaml_text)
-        
+
         assert success is False
         assert "Invalid BA codes" in msg
         assert "invalid_ba" in msg or "another_invalid" in msg
-    
+
     def test_duplicate_bas_across_regions(self):
         """Test handling of duplicate BAs in multiple regions."""
         state = MockAppState()
         state.all_bas = {"p8", "p9", "p10"}
-        
+
         yaml_text = """
 CA:
   - p8
@@ -3054,104 +3521,104 @@ AZ:
   - p9
   - p10
 """
-        
+
         success, msg = parse_yaml_regions_logic(state, yaml_text)
-        
+
         assert success is False
         assert "Duplicate BAs" in msg
         assert "p9" in msg
-    
+
     def test_empty_yaml(self):
         """Test handling of empty YAML."""
         state = MockAppState()
         state.all_bas = {"p8", "p9"}
-        
+
         yaml_text = ""
-        
+
         success, msg = parse_yaml_regions_logic(state, yaml_text)
-        
+
         # Empty YAML returns None, which is not a dict
         assert success is False
-    
+
     def test_empty_region_aggregations(self):
         """Test handling of empty region_aggregations."""
         state = MockAppState()
         state.all_bas = {"p8", "p9"}
-        
+
         yaml_text = """
 region_aggregations: {}
 """
-        
+
         success, msg = parse_yaml_regions_logic(state, yaml_text)
-        
+
         assert success is False
         assert "No region definitions found" in msg
-    
+
     def test_non_string_ba_ids(self):
         """Test handling of non-string BA IDs."""
         state = MockAppState()
         state.all_bas = {"8", "9"}
-        
+
         yaml_text = """
 CA:
   - 8
   - 9
 """
-        
+
         success, msg = parse_yaml_regions_logic(state, yaml_text)
-        
+
         # Numbers are valid in YAML but should be caught as non-strings
         assert success is False
         assert "must be strings" in msg
-    
+
     def test_clears_existing_regions(self):
         """Test that parsing new YAML clears existing manual regions."""
         state = MockAppState()
         state.all_bas = {"p8", "p9", "p10"}
         state.manual_regions = {"OldRegion": ["p8"]}
-        
+
         yaml_text = """
 NewRegion:
   - p9
   - p10
 """
-        
+
         success, msg = parse_yaml_regions_logic(state, yaml_text)
-        
+
         assert success is True
         assert "OldRegion" not in state.manual_regions
         assert "NewRegion" in state.manual_regions
-    
+
     def test_single_region(self):
         """Test parsing YAML with a single region."""
         state = MockAppState()
         state.all_bas = {"p8", "p9", "p10"}
-        
+
         yaml_text = """
 SingleRegion:
   - p8
   - p9
   - p10
 """
-        
+
         success, msg = parse_yaml_regions_logic(state, yaml_text)
-        
+
         assert success is True
         assert "1 region" in msg and "3 BAs" in msg
         assert len(state.manual_regions) == 1
-    
+
     def test_many_regions(self):
         """Test parsing YAML with many regions."""
         state = MockAppState()
         state.all_bas = {f"ba{i}" for i in range(20)}
-        
+
         yaml_parts = []
         for i in range(10):
             yaml_parts.append(f"Region{i}:\n  - ba{i*2}\n  - ba{i*2+1}")
         yaml_text = "\n".join(yaml_parts)
-        
+
         success, msg = parse_yaml_regions_logic(state, yaml_text)
-        
+
         assert success is True
         assert "10 regions with 20 BAs" in msg
         assert len(state.manual_regions) == 10

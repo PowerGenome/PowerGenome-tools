@@ -14,7 +14,9 @@ The project consists of an interactive **[Web Application](web_app.md)** that wa
 4. **New Resources** - Select new-build technologies from NREL ATB and define modified resources
 5. **Fuels** - Choose fuel price scenarios
 6. **ESR Policies** - Build Energy Share Requirement policies based on selected regions and resources
-7. **Export** - Generate and download complete PowerGenome settings YAML files
+7. **Resource Groups** - Generate resource group outputs and LCOE tables
+8. **Renewables Clustering** - Build renewables_clusters settings from demand shares and LCOE data
+9. **Export** - Generate and download complete PowerGenome settings YAML files
 
 ## Key Features
 

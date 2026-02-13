@@ -8,3 +8,4 @@ packages = ["pandas", "networkx", "numpy", "pyyaml"]
 "./fast_interconnection/__init__.py" = "./fast_interconnection/__init__.py"
 "./fast_interconnection/fast_assign.py" = "./fast_interconnection/fast_assign.py"
 "./fast_interconnection/resource_groups.py" = "./fast_interconnection/resource_groups.py"
+"./renewables_utils.py" = "./renewables_utils.py"
