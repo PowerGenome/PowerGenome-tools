@@ -5092,7 +5092,7 @@ def _compute_region_bin_cluster_config(
             {
                 r: {
                     "bins": bins[r],
-                    "q": max(1, int(round(region_caps[r] / default_mw_per_bin))),
+                    "q": bins[r],
                     "mw_per_bin": max(1, int(round(region_caps[r] / bins[r]))),
                     "n_clusters": n_clusters[r],
                 }
@@ -5121,7 +5121,7 @@ def _compute_region_bin_cluster_config(
         {
             r: {
                 "bins": bins[r],
-                "q": max(1, int(round(region_caps[r] / default_mw_per_bin))),
+                "q": bins[r],
                 "mw_per_bin": max(1, int(round(region_caps[r] / bins[r]))),
                 "n_clusters": n_clusters[r],
             }
