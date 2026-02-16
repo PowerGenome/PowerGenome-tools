@@ -516,6 +516,24 @@ The Renewables Clustering step builds `renewables_clusters` settings for wind an
 * **Average resource size (MW/resource)**: Used to convert selected wind/solar capacity into suggested budget counts. Defaults are 2,000 MW/resource for wind and 5,000 MW/resource for solar. These values are editable, and suggested budgets refresh from the updated inputs.
 * **Wind/Solar budget counts**: Users can edit wind and solar budget totals directly. Leaving a budget blank uses the suggested value.
 
+### Advanced Renewables Workflow
+
+The **Advanced** section in Step 8 is collapsed by default to keep the base workflow simple. Click the **Advanced** header/caret to expand it and show interactive regional controls.
+
+When expanded, the app shows side-by-side wind and solar model-region maps. Region shading is sequential: darker shading means a larger fraction of that region's available capacity is currently included in the clustering selection, while lighter shading means a smaller included fraction.
+
+**Click behavior:**
+
+* Maps are click-driven for supply-curve inspection.
+* Clicking a region opens the full supply curve panel below the maps for that selected region/technology.
+* The panel includes a regional capacity slider for that selected region/technology.
+
+**Overrides and recalculation:**
+
+* Capacity overrides let users increase or decrease included capacity per region within the available regional range.
+* Override values are session-only and autosaved in app state while the page remains open.
+* **Recalculate** reruns the full Step 8 computation using current overrides and refreshes the generated `renewables_clusters` output used by Step 9 export.
+
 ### How Renewables Clusters Are Computed
 
 1. **Prerequisites**: Requires region aggregations from Step 1 and the in-memory resource group assignments/LCOE tables from Step 7 (onshore wind + solar) in the current browser session. Step 7 must be completed in this session; downloaded parquet/ZIP outputs alone are not sufficient after a page refresh.

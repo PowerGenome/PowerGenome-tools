@@ -263,6 +263,132 @@
             text-align: center;
         }
 
+        .renewables-advanced-section {
+            border: 1px solid #d7dce2;
+            border-radius: 8px;
+            padding: 0;
+            background: linear-gradient(180deg, #f8fafc 0%, #f3f6f9 100%);
+            overflow: hidden;
+        }
+
+        .renewables-advanced-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            font-weight: 600;
+            user-select: none;
+            padding: 10px 12px;
+            color: #2c3e50;
+            background: rgba(255, 255, 255, 0.55);
+            border-bottom: 1px solid #e1e6ec;
+        }
+
+        .renewables-advanced-content.hidden {
+            display: none;
+        }
+
+        .renewables-advanced-content {
+            padding: 10px;
+            background: transparent;
+        }
+
+        .renewables-advanced-hint {
+            font-size: 12px;
+            color: #666;
+            margin-top: 6px;
+        }
+
+        .renewables-map-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-top: 10px;
+        }
+
+        .renewables-map-panel {
+            border: 1px solid #e6e6e6;
+            border-radius: 4px;
+            padding: 8px;
+            background: #fff;
+        }
+
+        .renewables-map-title {
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: #333;
+        }
+
+        .renewables-map {
+            width: 100%;
+            height: 280px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        .renewables-map-legend {
+            margin-top: 6px;
+            font-size: 11px;
+            color: #666;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .renewables-legend-ramp {
+            flex: 1;
+            height: 10px;
+            border-radius: 999px;
+            border: 1px solid #ccc;
+        }
+
+        .renewables-legend-ramp.wind {
+            background: linear-gradient(to right, #e6eef6, #1f4e79);
+        }
+
+        .renewables-legend-ramp.solar {
+            background: linear-gradient(to right, #fbf1db, #b87f00);
+        }
+
+        .renewables-region-editor {
+            margin-top: 12px;
+            border: 1px solid #e6e6e6;
+            border-radius: 4px;
+            padding: 10px;
+            background: #fff;
+        }
+
+        .renewables-region-editor h4 {
+            margin: 0 0 8px 0;
+            font-size: 13px;
+        }
+
+        .renewables-slider-row {
+            display: grid;
+            grid-template-columns: 180px 1fr 90px;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .renewables-slider-row input[type="range"] {
+            width: 100%;
+        }
+
+        .renewables-region-meta {
+            margin-top: 8px;
+            font-size: 11px;
+            color: #555;
+        }
+
+        #renewablesRegionPlot {
+            margin-top: 10px;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            padding: 8px;
+            background: #fafafa;
+        }
+
         label {
             display: block;
             margin-bottom: 4px;
@@ -1582,6 +1708,61 @@ wacc_real: 0.05"></textarea>
                     <button class="btn btn-primary" id="computeRenewablesClustersBtn" type="button">
                         Compute Renewables Clusters
                     </button>
+                    <button class="btn btn-secondary" id="recalcRenewablesClustersBtn" type="button">
+                        Recalculate Renewables Clusters
+                    </button>
+                </div>
+
+                <div class="section renewables-advanced-section">
+                    <div class="renewables-advanced-header"
+                        onclick="toggleCollapsible('renewablesAdvancedContent', 'renewablesAdvancedToggle')">
+                        <span>Advanced Regional Capacity Overrides</span>
+                        <span class="instructions-toggle" id="renewablesAdvancedToggle">▶ Show</span>
+                    </div>
+                    <div id="renewablesAdvancedContent" class="renewables-advanced-content hidden">
+                        <div class="renewables-advanced-hint" id="renewablesAdvancedHint">
+                            Compute renewables clusters to populate advanced maps and regional supply curves.
+                        </div>
+
+                        <div class="renewables-map-grid">
+                            <div class="renewables-map-panel">
+                                <div class="renewables-map-title">Wind regions: fraction of available capacity included
+                                </div>
+                                <div id="renewablesWindMap" class="renewables-map"></div>
+                                <div class="renewables-map-legend">
+                                    <span>Low</span>
+                                    <div class="renewables-legend-ramp wind"></div>
+                                    <span>High</span>
+                                </div>
+                            </div>
+                            <div class="renewables-map-panel">
+                                <div class="renewables-map-title">Solar regions: fraction of available capacity included
+                                </div>
+                                <div id="renewablesSolarMap" class="renewables-map"></div>
+                                <div class="renewables-map-legend">
+                                    <span>Low</span>
+                                    <div class="renewables-legend-ramp solar"></div>
+                                    <span>High</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="renewables-region-editor" id="renewablesRegionEditor">
+                            <h4 id="renewablesRegionEditorTitle">Select a region from either map</h4>
+                            <div class="renewables-slider-row">
+                                <label id="renewablesSliderLabel" style="margin: 0;">Capacity included (MW)</label>
+                                <input type="range" id="renewablesRegionCapacitySlider" min="0" max="1" step="1"
+                                    disabled />
+                                <div id="renewablesRegionCapacityValue">—</div>
+                            </div>
+                            <div class="renewables-region-meta" id="renewablesRegionMeta">
+                                Click a model region to inspect its supply curve and change the set capacity.
+                            </div>
+                            <div id="renewablesRegionPlot">
+                                <em>Select a region to display the full supply curve.</em>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="section">
@@ -1680,6 +1861,14 @@ wacc_real: 0.05"></textarea>
                     window.loadESRDataOnDemand();
                 }
             }
+
+            if (stepNum === 8) {
+                if (window.invalidateRenewablesMaps) {
+                    setTimeout(() => {
+                        window.invalidateRenewablesMaps();
+                    }, 100);
+                }
+            }
         }
 
         // Instructions Toggles
@@ -1689,6 +1878,11 @@ wacc_real: 0.05"></textarea>
             if (content.classList.contains('hidden')) {
                 content.classList.remove('hidden');
                 toggle.textContent = '▼ Hide';
+                if (contentId === 'renewablesAdvancedContent' && window.invalidateRenewablesMaps) {
+                    setTimeout(() => {
+                        window.invalidateRenewablesMaps();
+                    }, 100);
+                }
             } else {
                 content.classList.add('hidden');
                 toggle.textContent = '▶ Show';

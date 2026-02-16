@@ -107,6 +107,27 @@ class AppState:
         self.renewables_region_capacity_mw = (
             {}
         )  # tech -> region -> selected capacity MW
+        self.renewables_region_base_capacity_mw = (
+            {}
+        )  # tech -> region -> baseline selected capacity MW from share target
+        self.renewables_pending_region_capacity_mw = (
+            {}
+        )  # tech -> region -> current advanced slider capacity MW
+        self.renewables_region_available_mw = (
+            {}
+        )  # tech -> region -> total available capacity MW
+        self.renewables_capacity_overrides_mw = {
+            "landbasedwind": {},
+            "utilitypv": {},
+        }  # session-only tech -> region -> override capacity MW
+        self.renewables_curve_data = {}  # tech -> region -> arrays + selection metadata
+        self.renewables_selected_region = None
+        self.renewables_selected_tech = "landbasedwind"
+        self.renewables_maps = {}  # tech -> Leaflet map
+        self.renewables_map_layers = {}  # tech -> Leaflet geojson layer
+        self.renewables_map_initialized = False
+        self.renewables_regions_geojson_cache = None  # dissolved model-region GeoJSON
+        self.renewables_regions_geojson_key = None  # cache key for dissolved geometry
 
         # Fuel scenario options (Settings tab)
         self.fuel_prices_df = None  # fuel price scenarios from PowerGenome-data
@@ -786,6 +807,19 @@ RENEWABLES_TECH_CONFIG = {
         "cluster_feature": "lcoe",
         "n_clusters": 5,
         "avg_resource_mw": 5000,
+    },
+}
+
+RENEWABLES_TECH_STYLES = {
+    "landbasedwind": {
+        "label": "Wind",
+        "base_color": "#1f4e79",
+        "bar_color": "#1f4e79",
+    },
+    "utilitypv": {
+        "label": "Solar",
+        "base_color": "#b87f00",
+        "bar_color": "#b87f00",
     },
 }
 
@@ -5389,7 +5423,14 @@ def _format_number_short(value):
     return f"{val:.0f}"
 
 
-def _render_supply_curve_svg(bars, x_max, y_max, bar_fill):
+def _render_supply_curve_svg(
+    bars,
+    x_max,
+    y_max,
+    bar_fill,
+    included_capacity_mw=None,
+    excluded_fill=None,
+):
     width = 360
     height = 200
     margin_left = 44
@@ -5418,13 +5459,27 @@ def _render_supply_curve_svg(bars, x_max, y_max, bar_fill):
         w = max(1.0, (cap / x_max) * plot_w)
         h = max(0.0, min(plot_h, (lcoe / y_max) * plot_h))
         y = margin_top + (plot_h - h)
+        fill = bar_fill
+        if (
+            included_capacity_mw is not None
+            and excluded_fill
+            and cumulative >= _safe_float(included_capacity_mw, 0.0)
+        ):
+            fill = excluded_fill
         title = html.escape(
             f"{bar.get('label', 'Bar')}: {cap:,.0f} MW, LCOE {lcoe:.2f}"
         )
         svg_parts.append(
-            f'<rect x="{x0:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" fill="{bar_fill}"><title>{title}</title></rect>'
+            f'<rect x="{x0:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" fill="{fill}"><title>{title}</title></rect>'
         )
         cumulative += cap
+
+    if included_capacity_mw is not None:
+        marker = max(0.0, min(x_max, _safe_float(included_capacity_mw, 0.0)))
+        marker_x = margin_left + (marker / x_max) * plot_w
+        svg_parts.append(
+            f'<line x1="{marker_x:.2f}" y1="{margin_top}" x2="{marker_x:.2f}" y2="{margin_top + plot_h}" stroke="#d32f2f" stroke-width="1.25" />'
+        )
 
     svg_parts.extend(
         [
@@ -5592,6 +5647,7 @@ def _render_renewables_preview():
     if not state.renewables_clusters:
         preview_el.value = ""
         _render_renewables_supply_curves()
+        _render_renewables_advanced_panel()
         return
     renewables_yaml = yaml.dump(
         {"renewables_clusters": state.renewables_clusters},
@@ -5603,6 +5659,7 @@ def _render_renewables_preview():
         f"{comment_block}\n{renewables_yaml}" if comment_block else renewables_yaml
     )
     _render_renewables_supply_curves()
+    _render_renewables_advanced_panel()
 
 
 def _format_renewables_capacity_comments():
@@ -5682,6 +5739,526 @@ def _compute_suggested_budget(region_data, region_targets, avg_resource_mw):
         if selected_capacity > 0:
             suggested += int(math.ceil(selected_capacity / avg_resource_mw))
     return suggested
+
+
+def _get_renewables_override_map(tech):
+    if not isinstance(state.renewables_capacity_overrides_mw, dict):
+        state.renewables_capacity_overrides_mw = {"landbasedwind": {}, "utilitypv": {}}
+    return state.renewables_capacity_overrides_mw.setdefault(tech, {})
+
+
+def _get_curve_region_data(tech, region_name):
+    data = (
+        state.renewables_curve_data
+        if isinstance(state.renewables_curve_data, dict)
+        else {}
+    )
+    tech_data = data.get(tech)
+    if not isinstance(tech_data, dict):
+        return None
+    region_data = tech_data.get(region_name)
+    if not isinstance(region_data, dict):
+        return None
+    return region_data
+
+
+def _compute_cutoff_idx_from_capacity(cum_capacity_mw, target_capacity_mw):
+    cum = np.asarray(cum_capacity_mw, dtype=float)
+    if cum.size == 0:
+        return None
+    target = max(0.0, _safe_float(target_capacity_mw, 0.0))
+    idx = int(np.searchsorted(cum, target, side="left"))
+    if idx >= cum.size:
+        idx = cum.size - 1
+    if idx < 0:
+        idx = 0
+    return idx
+
+
+def _apply_capacity_override_to_curve_data(tech, region_name, requested_capacity_mw):
+    region_data = _get_curve_region_data(tech, region_name)
+    if not region_data:
+        return
+
+    cum_capacity = np.asarray(region_data.get("cum_capacity_mw", []), dtype=float)
+    lcoe_vals = np.asarray(region_data.get("lcoe", []), dtype=float)
+    if cum_capacity.size == 0 or lcoe_vals.size == 0:
+        return
+
+    baseline_capacity = _safe_float(region_data.get("baseline_capacity_mw", 0.0), 0.0)
+    available_capacity = _safe_float(region_data.get("available_capacity_mw", 0.0), 0.0)
+
+    requested = _safe_float(requested_capacity_mw, baseline_capacity)
+    target_capacity = max(0.0, min(requested, available_capacity))
+    cutoff_idx = _compute_cutoff_idx_from_capacity(cum_capacity, target_capacity)
+    if cutoff_idx is None:
+        return
+
+    included_capacity = float(cum_capacity[cutoff_idx])
+    lcoe_max = float(lcoe_vals[min(cutoff_idx, lcoe_vals.size - 1)])
+
+    region_data["cutoff_idx"] = int(cutoff_idx)
+    region_data["included_capacity_mw"] = included_capacity
+    region_data["lcoe_max"] = lcoe_max
+
+    pending = (
+        state.renewables_pending_region_capacity_mw
+        if isinstance(state.renewables_pending_region_capacity_mw, dict)
+        else {}
+    )
+    tech_pending = pending.setdefault(tech, {})
+    tech_pending[region_name] = included_capacity
+    state.renewables_pending_region_capacity_mw = pending
+
+
+def _fraction_to_sequential_color(base_color, fraction):
+    frac = max(0.0, min(1.0, _safe_float(fraction, 0.0)))
+    # low fraction: very light, high fraction: base color
+    lighten_factor = 0.82 - 0.67 * frac
+    return lighten_color(base_color, max(0.08, min(0.92, lighten_factor)))
+
+
+def _build_supply_curve_bars_from_curve_data(curve_data, max_points=None):
+    if not isinstance(curve_data, dict):
+        return []
+
+    caps = np.asarray(curve_data.get("capacity_mw", []), dtype=float)
+    lcoe = np.asarray(curve_data.get("lcoe", []), dtype=float)
+    if caps.size == 0 or lcoe.size == 0:
+        return []
+
+    n = min(caps.size, lcoe.size)
+    caps = caps[:n]
+    lcoe = lcoe[:n]
+
+    if max_points is None or max_points <= 0 or n <= max_points:
+        bars = []
+        for idx in range(n):
+            cap = float(caps[idx])
+            if cap <= 0:
+                continue
+            bars.append(
+                {
+                    "label": f"CPA {idx + 1}",
+                    "capacity_mw": cap,
+                    "lcoe": float(lcoe[idx]),
+                }
+            )
+        return bars
+
+    chunk = int(math.ceil(n / max_points))
+    bars = []
+    for start in range(0, n, chunk):
+        end = min(start + chunk, n)
+        block_caps = caps[start:end]
+        block_lcoe = lcoe[start:end]
+        total_cap = float(block_caps.sum())
+        if total_cap <= 0:
+            continue
+        weighted_lcoe = float((block_lcoe * block_caps).sum() / total_cap)
+        bars.append(
+            {
+                "label": f"CPA {start + 1}-{end}",
+                "capacity_mw": total_cap,
+                "lcoe": weighted_lcoe,
+            }
+        )
+
+    return bars
+
+
+def _render_region_supply_curve_svg(region_name, tech, compact=False):
+    curve_data = _get_curve_region_data(tech, region_name)
+    if not curve_data:
+        return "<em>No curve data available for this region.</em>"
+
+    max_points = 36 if compact else None
+    bars = _build_supply_curve_bars_from_curve_data(curve_data, max_points=max_points)
+    if not bars:
+        return "<em>No curve data available for this region.</em>"
+
+    x_max = sum(_safe_float(b.get("capacity_mw"), 0.0) for b in bars)
+    y_max = max((_safe_float(b.get("lcoe"), 0.0) for b in bars), default=1.0)
+    included_capacity = _safe_float(curve_data.get("included_capacity_mw", 0.0), 0.0)
+
+    tech_style = RENEWABLES_TECH_STYLES.get(tech, {})
+    bar_color = tech_style.get("bar_color", "#1f4e79")
+    excluded_color = lighten_color(bar_color, 0.55)
+
+    svg = _render_supply_curve_svg(
+        bars,
+        max(1.0, x_max),
+        max(1.0, y_max),
+        bar_color,
+        included_capacity_mw=included_capacity,
+        excluded_fill=excluded_color,
+    )
+    return svg
+
+
+def _render_selected_renewables_region_panel():
+    slider = document.getElementById("renewablesRegionCapacitySlider")
+    title_el = document.getElementById("renewablesRegionEditorTitle")
+    value_el = document.getElementById("renewablesRegionCapacityValue")
+    meta_el = document.getElementById("renewablesRegionMeta")
+    plot_el = document.getElementById("renewablesRegionPlot")
+    label_el = document.getElementById("renewablesSliderLabel")
+
+    if (
+        not slider
+        or not title_el
+        or not value_el
+        or not meta_el
+        or not plot_el
+        or not label_el
+    ):
+        return
+
+    region_name = state.renewables_selected_region
+    tech = state.renewables_selected_tech
+    if not region_name or not tech:
+        slider.disabled = True
+        title_el.textContent = "Select a region from either map"
+        label_el.textContent = "Capacity included (MW)"
+        value_el.textContent = "—"
+        meta_el.textContent = "Click a model region to inspect its supply curve and set additional included capacity."
+        plot_el.innerHTML = "<em>Select a region to display the full supply curve.</em>"
+        return
+
+    curve_data = _get_curve_region_data(tech, region_name)
+    if not curve_data:
+        slider.disabled = True
+        title_el.textContent = f"{region_name}"
+        plot_el.innerHTML = "<em>No curve data available for this region.</em>"
+        return
+
+    tech_label = RENEWABLES_TECH_STYLES.get(tech, {}).get("label", tech)
+    baseline_capacity = _safe_float(curve_data.get("baseline_capacity_mw", 0.0), 0.0)
+    included_capacity = _safe_float(curve_data.get("included_capacity_mw", 0.0), 0.0)
+    available_capacity = _safe_float(curve_data.get("available_capacity_mw", 0.0), 0.0)
+    lcoe_max = _safe_float(curve_data.get("lcoe_max", 0.0), 0.0)
+    extra_available = max(0.0, available_capacity - baseline_capacity)
+
+    slider.disabled = False
+    slider.min = "0"
+    slider.max = str(max(int(round(available_capacity)), int(round(baseline_capacity))))
+    slider.step = "1"
+    slider.value = str(int(round(included_capacity)))
+
+    title_el.textContent = f"{region_name} ({tech_label})"
+    label_el.textContent = f"{tech_label} included capacity (MW)"
+    value_el.textContent = f"{int(round(included_capacity)):,} MW"
+    meta_el.textContent = (
+        f"Baseline {int(round(baseline_capacity)):,} MW; "
+        f"available total {int(round(available_capacity)):,} MW "
+        f"(additional above baseline: {int(round(extra_available)):,} MW); "
+        f"current max included LCOE {lcoe_max:.2f}."
+    )
+
+    full_svg = _render_region_supply_curve_svg(region_name, tech, compact=False)
+    plot_el.innerHTML = full_svg
+
+
+def _render_renewables_advanced_hint(message):
+    hint_el = document.getElementById("renewablesAdvancedHint")
+    if hint_el:
+        hint_el.textContent = message
+
+
+def _renewables_feature_style(feature, tech):
+    props = feature.properties
+    region_name = str(
+        getattr(props, "model_region", "")
+        if not isinstance(props, dict)
+        else props.get("model_region", "")
+    )
+    if not region_name:
+        ba_id = str(
+            getattr(props, "rb", "")
+            if not isinstance(props, dict)
+            else props.get("rb", "")
+        )
+        region_name = state.ba_to_region.get(ba_id)
+    if not region_name:
+        return to_js(
+            {
+                "fillColor": "#f2f2f2",
+                "fillOpacity": 0.15,
+                "color": "#d0d0d0",
+                "weight": 1,
+            }
+        )
+
+    curve_data = _get_curve_region_data(tech, region_name)
+    if not curve_data:
+        return to_js(
+            {
+                "fillColor": "#f2f2f2",
+                "fillOpacity": 0.2,
+                "color": "#c0c0c0",
+                "weight": 1,
+            }
+        )
+
+    included = _safe_float(curve_data.get("included_capacity_mw", 0.0), 0.0)
+    available = _safe_float(curve_data.get("available_capacity_mw", 0.0), 0.0)
+    fraction = included / available if available > 0 else 0.0
+
+    base_color = RENEWABLES_TECH_STYLES.get(tech, {}).get("base_color", "#1f4e79")
+    fill_color = _fraction_to_sequential_color(base_color, fraction)
+
+    selected = (
+        region_name == state.renewables_selected_region
+        and tech == state.renewables_selected_tech
+    )
+    return to_js(
+        {
+            "fillColor": fill_color,
+            "fillOpacity": 0.72,
+            "color": "#d32f2f" if selected else "#666",
+            "weight": 2.8 if selected else 1.0,
+        }
+    )
+
+
+def _on_renewables_map_click(ba_id, tech):
+    region_name = state.ba_to_region.get(ba_id)
+    if not region_name:
+        return
+    state.renewables_selected_region = region_name
+    state.renewables_selected_tech = tech
+    _render_selected_renewables_region_panel()
+    _render_renewables_maps()
+
+
+def _on_each_renewables_map_feature(feature, layer, tech):
+    props = feature.properties
+    region_name = str(
+        getattr(props, "model_region", "")
+        if not isinstance(props, dict)
+        else props.get("model_region", "")
+    )
+    ba_id = str(
+        getattr(props, "rb", "") if not isinstance(props, dict) else props.get("rb", "")
+    )
+
+    def handle_click(event, region=region_name, ba=ba_id, t=tech):
+        if region:
+            state.renewables_selected_region = region
+            state.renewables_selected_tech = t
+            _render_selected_renewables_region_panel()
+            _render_renewables_maps()
+            return
+        _on_renewables_map_click(ba, t)
+
+    layer.on("click", create_proxy(handle_click))
+
+
+def _build_renewables_geojson_for_selected_bas():
+    if not isinstance(state.geojson_data, dict):
+        return None
+    features = state.geojson_data.get("features")
+    if not isinstance(features, list):
+        return None
+
+    selected_bas = set(state.ba_to_region.keys())
+    if not selected_bas:
+        return None
+
+    cache_key = tuple(sorted(state.ba_to_region.items()))
+    if (
+        state.renewables_regions_geojson_cache is not None
+        and state.renewables_regions_geojson_key == cache_key
+    ):
+        return state.renewables_regions_geojson_cache
+
+    region_geometries = {}
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        props = feature.get("properties", {})
+        ba_id = str(props.get("rb", ""))
+        region_name = state.ba_to_region.get(ba_id)
+        if not region_name:
+            continue
+        geometry = feature.get("geometry")
+        if not isinstance(geometry, dict):
+            continue
+        region_geometries.setdefault(region_name, []).append(geometry)
+
+    if not region_geometries:
+        return None
+
+    dissolved_features = []
+    try:
+        from shapely.geometry import mapping, shape
+        from shapely.ops import unary_union
+
+        for region_name in sorted(region_geometries.keys()):
+            geometries = region_geometries.get(region_name, [])
+            if not geometries:
+                continue
+            merged = unary_union([shape(g) for g in geometries])
+            dissolved_features.append(
+                {
+                    "type": "Feature",
+                    "properties": {"model_region": region_name},
+                    "geometry": mapping(merged),
+                }
+            )
+    except Exception:
+        for region_name in sorted(region_geometries.keys()):
+            geometries = region_geometries.get(region_name, [])
+            polygons = []
+            for geom in geometries:
+                gtype = geom.get("type")
+                coords = geom.get("coordinates")
+                if gtype == "Polygon" and isinstance(coords, list):
+                    polygons.append(coords)
+                elif gtype == "MultiPolygon" and isinstance(coords, list):
+                    polygons.extend(coords)
+            if not polygons:
+                continue
+            dissolved_features.append(
+                {
+                    "type": "Feature",
+                    "properties": {"model_region": region_name},
+                    "geometry": {"type": "MultiPolygon", "coordinates": polygons},
+                }
+            )
+
+    if not dissolved_features:
+        return None
+
+    dissolved_geojson = {
+        "type": "FeatureCollection",
+        "features": dissolved_features,
+    }
+    state.renewables_regions_geojson_cache = dissolved_geojson
+    state.renewables_regions_geojson_key = cache_key
+    return dissolved_geojson
+
+
+def _ensure_renewables_maps():
+    if not state.geojson_data:
+        return
+
+    map_specs = {
+        "landbasedwind": "renewablesWindMap",
+        "utilitypv": "renewablesSolarMap",
+    }
+
+    for tech, map_id in map_specs.items():
+        if state.renewables_maps.get(tech) is not None:
+            continue
+        map_obj = L.map(
+            map_id, to_js({"zoomControl": True, "attributionControl": False})
+        )
+        map_obj.setView(to_js([39.8, -98.5]), 4)
+        L.tileLayer(
+            "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+            to_js({"maxZoom": 12}),
+        ).addTo(map_obj)
+        state.renewables_maps[tech] = map_obj
+
+    state.renewables_map_initialized = True
+
+
+def _render_renewables_maps():
+    if not state.region_aggregations:
+        return
+    _ensure_renewables_maps()
+
+    if not state.renewables_map_initialized:
+        return
+
+    filtered_geojson = _build_renewables_geojson_for_selected_bas()
+    if not filtered_geojson:
+        return
+
+    for tech, map_obj in state.renewables_maps.items():
+        existing_layer = state.renewables_map_layers.get(tech)
+        if existing_layer is not None:
+            map_obj.removeLayer(existing_layer)
+
+        style_proxy = create_proxy(
+            lambda feature, t=tech: _renewables_feature_style(feature, t)
+        )
+        on_each_proxy = create_proxy(
+            lambda feature, layer, t=tech: _on_each_renewables_map_feature(
+                feature, layer, t
+            )
+        )
+
+        layer = L.geoJSON(
+            to_js(filtered_geojson),
+            to_js({"style": style_proxy, "onEachFeature": on_each_proxy}),
+        ).addTo(map_obj)
+        state.renewables_map_layers[tech] = layer
+
+        try:
+            map_obj.fitBounds(layer.getBounds())
+        except Exception:
+            pass
+
+
+def _render_renewables_advanced_panel():
+    if (
+        not isinstance(state.renewables_curve_data, dict)
+        or not state.renewables_curve_data
+    ):
+        _render_renewables_advanced_hint(
+            "Compute renewables clusters to populate advanced maps and regional supply curves."
+        )
+        _render_selected_renewables_region_panel()
+        return
+
+    _render_renewables_advanced_hint(
+        "Click a region in the wind or solar map to inspect supply curves and set additional included capacity."
+    )
+    _render_renewables_maps()
+    _render_selected_renewables_region_panel()
+
+
+def invalidate_renewables_maps():
+    if not isinstance(state.renewables_maps, dict):
+        return
+    for map_obj in state.renewables_maps.values():
+        try:
+            map_obj.invalidateSize(False)
+        except Exception:
+            pass
+    _render_renewables_maps()
+
+
+def on_renewables_capacity_slider_input(event):
+    region_name = state.renewables_selected_region
+    tech = state.renewables_selected_tech
+    if not region_name or not tech:
+        return
+
+    slider = document.getElementById("renewablesRegionCapacitySlider")
+    if not slider:
+        return
+
+    requested = _safe_float(slider.value, 0.0)
+    curve_data = _get_curve_region_data(tech, region_name)
+    if not curve_data:
+        return
+
+    baseline_capacity = _safe_float(curve_data.get("baseline_capacity_mw", 0.0), 0.0)
+    available_capacity = _safe_float(curve_data.get("available_capacity_mw", 0.0), 0.0)
+    target = max(0.0, min(requested, available_capacity))
+
+    override_map = _get_renewables_override_map(tech)
+    if target <= baseline_capacity + 1e-6:
+        override_map.pop(region_name, None)
+    else:
+        override_map[region_name] = float(target)
+
+    _apply_capacity_override_to_curve_data(tech, region_name, target)
+    _render_selected_renewables_region_panel()
+    _render_renewables_maps()
 
 
 async def _refresh_renewables_budget_defaults(event=None):
@@ -5766,6 +6343,10 @@ async def _compute_renewables_clusters():
         clusters = []
         summary = {}
         capacity_summary = {}
+        baseline_capacity_summary = {}
+        available_capacity_summary = {}
+        pending_capacity_summary = {}
+        curve_data_summary = {}
         floor_notes = []
         for tech, share in [("landbasedwind", wind_share), ("utilitypv", solar_share)]:
             config = RENEWABLES_TECH_CONFIG[tech]
@@ -5799,10 +6380,14 @@ async def _compute_renewables_clusters():
             )
 
             region_caps = {}
+            baseline_region_caps = {}
+            available_region_caps = {}
             region_ranges = {}
             region_lcoe_max = {}
-            region_lcoe_map = {}  # New: store filtered arrays for optimizer
+            region_lcoe_map = {}
+            curve_data_by_region = {}
             suggested_total = 0
+            override_map = _get_renewables_override_map(tech)
 
             last_status = 0.0
             for idx, region_name in enumerate(region_list, start=1):
@@ -5827,16 +6412,46 @@ async def _compute_renewables_clusters():
                 cum_mwh = data["cum_mwh"]
                 if cum_mwh.size == 0:
                     continue
-                cutoff_idx = int(np.searchsorted(cum_mwh, target_mwh, side="left"))
-                if cutoff_idx >= cum_mwh.size:
-                    cutoff_idx = cum_mwh.size - 1
 
                 lcoe_vals = data["lcoe"]
                 cap_vals = data["capacity_mw"]
+                if lcoe_vals.size == 0 or cap_vals.size == 0:
+                    continue
+
+                baseline_cutoff_idx = int(
+                    np.searchsorted(cum_mwh, target_mwh, side="left")
+                )
+                if baseline_cutoff_idx >= cum_mwh.size:
+                    baseline_cutoff_idx = cum_mwh.size - 1
+
+                cum_capacity = np.cumsum(cap_vals)
+                available_capacity = (
+                    float(cum_capacity[-1]) if cum_capacity.size else 0.0
+                )
+                baseline_capacity = float(cum_capacity[baseline_cutoff_idx])
+
+                requested_capacity = override_map.get(region_name)
+                target_capacity = baseline_capacity
+                if requested_capacity is not None:
+                    target_capacity = max(
+                        0.0,
+                        min(
+                            _safe_float(requested_capacity, baseline_capacity),
+                            available_capacity,
+                        ),
+                    )
+
+                cutoff_idx = _compute_cutoff_idx_from_capacity(
+                    cum_capacity, target_capacity
+                )
+                if cutoff_idx is None:
+                    continue
 
                 lcoe_max = float(lcoe_vals[cutoff_idx])
-                capacity = float(cap_vals[: cutoff_idx + 1].sum())
+                capacity = float(cum_capacity[cutoff_idx])
                 region_caps[region_name] = capacity
+                baseline_region_caps[region_name] = baseline_capacity
+                available_region_caps[region_name] = available_capacity
                 region_ranges[region_name] = float(lcoe_max - lcoe_vals[0])
                 region_lcoe_max[region_name] = lcoe_max
 
@@ -5847,6 +6462,18 @@ async def _compute_renewables_clusters():
                         "capacity": cap_vals[: cutoff_idx + 1],
                     }
                     suggested_total += int(math.ceil(capacity / avg_resource_mw))
+
+                curve_data_by_region[region_name] = {
+                    "lcoe": lcoe_vals,
+                    "capacity_mw": cap_vals,
+                    "cum_capacity_mw": cum_capacity,
+                    "baseline_cutoff_idx": int(baseline_cutoff_idx),
+                    "cutoff_idx": int(cutoff_idx),
+                    "baseline_capacity_mw": float(baseline_capacity),
+                    "included_capacity_mw": float(capacity),
+                    "available_capacity_mw": float(available_capacity),
+                    "lcoe_max": float(lcoe_max),
+                }
 
             target_input = _get_int_input(
                 (
@@ -5914,6 +6541,22 @@ async def _compute_renewables_clusters():
                 for region_name, capacity in sorted(region_caps.items())
                 if float(capacity) > 0
             }
+            baseline_capacity_summary[tech] = {
+                region_name: float(capacity)
+                for region_name, capacity in sorted(baseline_region_caps.items())
+                if float(capacity) > 0
+            }
+            available_capacity_summary[tech] = {
+                region_name: float(capacity)
+                for region_name, capacity in sorted(available_region_caps.items())
+                if float(capacity) > 0
+            }
+            pending_capacity_summary[tech] = {
+                region_name: float(capacity)
+                for region_name, capacity in sorted(region_caps.items())
+                if float(capacity) > 0
+            }
+            curve_data_summary[tech] = curve_data_by_region
 
             summary[tech] = {
                 "suggested": suggested_total,
@@ -5930,6 +6573,25 @@ async def _compute_renewables_clusters():
         state.renewables_clusters = clusters
         state.renewables_clusters_info = summary
         state.renewables_region_capacity_mw = capacity_summary
+        state.renewables_region_base_capacity_mw = baseline_capacity_summary
+        state.renewables_region_available_mw = available_capacity_summary
+        state.renewables_pending_region_capacity_mw = pending_capacity_summary
+        state.renewables_curve_data = curve_data_summary
+
+        if state.renewables_selected_region:
+            selected_data = _get_curve_region_data(
+                state.renewables_selected_tech, state.renewables_selected_region
+            )
+            if not selected_data:
+                state.renewables_selected_region = None
+
+        if not state.renewables_selected_region:
+            for tech in ["landbasedwind", "utilitypv"]:
+                tech_regions = curve_data_summary.get(tech, {})
+                if tech_regions:
+                    state.renewables_selected_tech = tech
+                    state.renewables_selected_region = sorted(tech_regions.keys())[0]
+                    break
 
         wind_suggest = summary.get("landbasedwind", {}).get("suggested", 0)
         solar_suggest = summary.get("utilitypv", {}).get("suggested", 0)
@@ -7289,6 +7951,12 @@ async def main():
         document.getElementById("computeRenewablesClustersBtn").addEventListener(
             "click", create_proxy(on_compute_renewables_clusters)
         )
+        document.getElementById("recalcRenewablesClustersBtn").addEventListener(
+            "click", create_proxy(on_compute_renewables_clusters)
+        )
+        document.getElementById("renewablesRegionCapacitySlider").addEventListener(
+            "input", create_proxy(on_renewables_capacity_slider_input)
+        )
         document.getElementById("renewablesWindShare").addEventListener(
             "input", create_proxy(on_renewables_budget_inputs_change)
         )
@@ -7366,6 +8034,7 @@ async def main():
         populate_settings_file_select()
         update_settings_preview()
         _update_resource_group_list()
+        _render_renewables_advanced_panel()
 
         # Set up deferred ESR data loading
         async def load_esr_data_deferred():
@@ -7377,6 +8046,7 @@ async def main():
         window.loadESRDataOnDemand = create_proxy(
             lambda: asyncio.ensure_future(load_esr_data_deferred())
         )
+        window.invalidateRenewablesMaps = create_proxy(invalidate_renewables_maps)
 
         # Done loading
         hide_loading()
