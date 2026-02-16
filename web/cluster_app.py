@@ -6773,7 +6773,9 @@ async def _generate_resource_groups():
             if total > 0:
                 percent = int(current / total * 100)
                 tech_label = f" ({tech})" if tech else ""
-                set_resource_group_status(f"Assigning resources{tech_label}... {percent}%", "info")
+                set_resource_group_status(
+                    f"Assigning resources{tech_label}... {percent}%", "info"
+                )
 
         settings = {
             "region_aggregations": state.region_aggregations,

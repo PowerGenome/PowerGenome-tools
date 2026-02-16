@@ -22,7 +22,9 @@ import yaml
 class tqdm:
     """Custom progress bar wrapper with tech parameter support for PyScript compatibility."""
 
-    def __init__(self, iterable=None, update_callback=None, total=None, tech=None, **kwargs):
+    def __init__(
+        self, iterable=None, update_callback=None, total=None, tech=None, **kwargs
+    ):
         self.iterable = iterable if iterable is not None else []
         self.update_callback = update_callback
         self.total = total or (
