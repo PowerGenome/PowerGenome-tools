@@ -6769,10 +6769,11 @@ async def _generate_resource_groups():
 
         set_resource_group_status("Running fast interconnection assignment...", "info")
 
-        def progress_callback(current, total):
+        def progress_callback(current, total, tech=None):
             if total > 0:
                 percent = int(current / total * 100)
-                set_resource_group_status(f"Assigning resources... {percent}%", "info")
+                tech_label = f" ({tech})" if tech else ""
+                set_resource_group_status(f"Assigning resources{tech_label}... {percent}%", "info")
 
         settings = {
             "region_aggregations": state.region_aggregations,

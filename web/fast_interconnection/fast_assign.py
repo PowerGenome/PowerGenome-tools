@@ -18,31 +18,34 @@ import numpy as np
 import pandas as pd
 import yaml
 
-try:
-    from tqdm import tqdm
-except Exception:
 
-    class tqdm:
-        def __init__(self, iterable=None, update_callback=None, total=None, **kwargs):
-            self.iterable = iterable if iterable is not None else []
-            self.update_callback = update_callback
-            self.total = total or (
-                len(self.iterable) if hasattr(self.iterable, "__len__") else 0
-            )
-            self.n = 0
+class tqdm:
+    """Custom progress bar wrapper with tech parameter support for PyScript compatibility."""
 
-        def __iter__(self):
-            for item in self.iterable:
-                yield item
-                self.update(1)
+    def __init__(self, iterable=None, update_callback=None, total=None, tech=None, **kwargs):
+        self.iterable = iterable if iterable is not None else []
+        self.update_callback = update_callback
+        self.total = total or (
+            len(self.iterable) if hasattr(self.iterable, "__len__") else 0
+        )
+        self.n = 0
+        self.tech = tech
 
-        def update(self, n=1):
-            self.n += n
-            if self.update_callback:
+    def __iter__(self):
+        for item in self.iterable:
+            yield item
+            self.update(1)
+
+    def update(self, n=1):
+        self.n += n
+        if self.update_callback:
+            if self.tech:
+                self.update_callback(self.n, self.total, self.tech)
+            else:
                 self.update_callback(self.n, self.total)
 
-        def close(self):
-            pass
+    def close(self):
+        pass
 
 
 def load_settings(path: Path) -> dict:
@@ -392,9 +395,9 @@ async def fast_assign_cpas(
     assigned_cpas = set()
     assignments = []
 
-    # Support callback in dummy tqdm
+    # Support callback - our custom tqdm always accepts update_callback
     tqdm_kwargs = {}
-    if "update_callback" in tqdm.__init__.__code__.co_varnames:
+    if progress_callback is not None:
         tqdm_kwargs["update_callback"] = progress_callback
 
     if strategy == "dynamic_lcoe":
@@ -437,11 +440,14 @@ async def fast_assign_cpas(
 
             batch_size = 5000  # Smaller batch = more accurate penalty
 
+            # Create tech-specific kwargs with tech parameter
+            tech_tqdm_kwargs = {**tqdm_kwargs, "tech": tech}
+
             pbar = tqdm(
                 total=len(remaining),
                 desc=f"Assigning {tech} (dynamic)",
                 disable=not show_progress,
-                **tqdm_kwargs,
+                **tech_tqdm_kwargs,
             )
 
             try:
