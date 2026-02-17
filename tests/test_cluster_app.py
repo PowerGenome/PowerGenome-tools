@@ -3287,6 +3287,94 @@ def _build_aggregated_supply_curve_bars(region_df, cluster_item):
     return bars
 
 
+def _compute_cutoff_idx_from_capacity(cum_capacity_mw, target_capacity_mw):
+    cum = np.asarray(cum_capacity_mw, dtype=float)
+    if cum.size == 0:
+        return None
+    target = max(0.0, _safe_float(target_capacity_mw, 0.0))
+    idx = int(np.searchsorted(cum, target, side="left"))
+    if idx >= cum.size:
+        idx = cum.size - 1
+    if idx < 0:
+        idx = 0
+    return idx
+
+
+def _apply_capacity_override_to_curve_data(region_data, requested_capacity_mw):
+    if not isinstance(region_data, dict):
+        return
+
+    cum_capacity = np.asarray(region_data.get("cum_capacity_mw", []), dtype=float)
+    lcoe_vals = np.asarray(region_data.get("lcoe", []), dtype=float)
+    if cum_capacity.size == 0 or lcoe_vals.size == 0:
+        return
+
+    baseline_capacity = _safe_float(region_data.get("baseline_capacity_mw", 0.0), 0.0)
+    available_capacity = _safe_float(region_data.get("available_capacity_mw", 0.0), 0.0)
+
+    requested = _safe_float(requested_capacity_mw, baseline_capacity)
+    target_capacity = max(0.0, min(requested, available_capacity))
+    cutoff_idx = _compute_cutoff_idx_from_capacity(cum_capacity, target_capacity)
+    if cutoff_idx is None:
+        return
+
+    included_capacity = float(cum_capacity[cutoff_idx])
+    lcoe_max = float(lcoe_vals[min(cutoff_idx, lcoe_vals.size - 1)])
+
+    region_data["cutoff_idx"] = int(cutoff_idx)
+    region_data["included_capacity_mw"] = included_capacity
+    region_data["lcoe_max"] = lcoe_max
+
+
+def _build_supply_curve_bars_from_curve_data(curve_data, max_points=None):
+    if not isinstance(curve_data, dict):
+        return []
+
+    caps = np.asarray(curve_data.get("capacity_mw", []), dtype=float)
+    lcoe = np.asarray(curve_data.get("lcoe", []), dtype=float)
+    if caps.size == 0 or lcoe.size == 0:
+        return []
+
+    n = min(caps.size, lcoe.size)
+    caps = caps[:n]
+    lcoe = lcoe[:n]
+
+    if max_points is None or max_points <= 0 or n <= max_points:
+        bars = []
+        for idx in range(n):
+            cap = float(caps[idx])
+            if cap <= 0:
+                continue
+            bars.append(
+                {
+                    "label": f"CPA {idx + 1}",
+                    "capacity_mw": cap,
+                    "lcoe": float(lcoe[idx]),
+                }
+            )
+        return bars
+
+    chunk = int(math.ceil(n / max_points))
+    bars = []
+    for start in range(0, n, chunk):
+        end = min(start + chunk, n)
+        block_caps = caps[start:end]
+        block_lcoe = lcoe[start:end]
+        total_cap = float(block_caps.sum())
+        if total_cap <= 0:
+            continue
+        weighted_lcoe = float((block_lcoe * block_caps).sum() / total_cap)
+        bars.append(
+            {
+                "label": f"CPA {start + 1}-{end}",
+                "capacity_mw": total_cap,
+                "lcoe": weighted_lcoe,
+            }
+        )
+
+    return bars
+
+
 class TestRenewablesClusteringLogic:
     """Test renewables clustering helpers (pure logic)."""
 
@@ -3642,6 +3730,72 @@ class TestRenewablesClusteringLogic:
         self, cluster_item, expected_q
     ):
         assert _extract_cluster_q(cluster_item) == expected_q
+
+    @pytest.mark.parametrize(
+        ("cum_capacity", "target", "expected_idx"),
+        [
+            ([], 10.0, None),
+            ([100.0, 250.0, 400.0], -5.0, 0),
+            ([100.0, 250.0, 400.0], 0.0, 0),
+            ([100.0, 250.0, 400.0], 250.0, 1),
+            ([100.0, 250.0, 400.0], 300.0, 2),
+            ([100.0, 250.0, 400.0], 999.0, 2),
+        ],
+    )
+    def test_compute_cutoff_idx_from_capacity_searchsorted_with_bounds(
+        self, cum_capacity, target, expected_idx
+    ):
+        assert _compute_cutoff_idx_from_capacity(cum_capacity, target) == expected_idx
+
+    def test_apply_capacity_override_clamps_to_available_upper_bound(self):
+        region_data = {
+            "cum_capacity_mw": np.array([100.0, 180.0, 260.0]),
+            "lcoe": np.array([20.0, 25.0, 30.0]),
+            "baseline_capacity_mw": 180.0,
+            "available_capacity_mw": 260.0,
+            "baseline_cutoff_idx": 1,
+        }
+
+        _apply_capacity_override_to_curve_data(region_data, 500.0)
+        assert region_data["included_capacity_mw"] == pytest.approx(260.0)
+        assert region_data["cutoff_idx"] == 2
+
+    def test_apply_capacity_override_below_baseline_can_reduce_to_first_bucket(self):
+        region_data = {
+            "cum_capacity_mw": np.array([100.0, 180.0, 260.0]),
+            "lcoe": np.array([20.0, 25.0, 30.0]),
+            "baseline_capacity_mw": 180.0,
+            "available_capacity_mw": 260.0,
+            "baseline_cutoff_idx": 1,
+            "cutoff_idx": 2,
+            "included_capacity_mw": 260.0,
+            "lcoe_max": 30.0,
+        }
+
+        _apply_capacity_override_to_curve_data(region_data, 120.0)
+
+        assert region_data["cutoff_idx"] == 1
+        assert region_data["included_capacity_mw"] == pytest.approx(180.0)
+        assert region_data["lcoe_max"] == pytest.approx(25.0)
+
+        _apply_capacity_override_to_curve_data(region_data, 50.0)
+
+        assert region_data["cutoff_idx"] == 0
+        assert region_data["included_capacity_mw"] == pytest.approx(100.0)
+        assert region_data["lcoe_max"] == pytest.approx(20.0)
+
+    def test_supply_curve_compression_preserves_capacity_and_caps_point_count(self):
+        curve_data = {
+            "capacity_mw": np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]),
+            "lcoe": np.array([10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0]),
+        }
+
+        bars = _build_supply_curve_bars_from_curve_data(curve_data, max_points=3)
+
+        assert len(bars) <= 3
+        assert sum(bar["capacity_mw"] for bar in bars) == pytest.approx(
+            float(np.sum(curve_data["capacity_mw"]))
+        )
 
 
 # ============================================================================
