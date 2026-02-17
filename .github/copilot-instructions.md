@@ -94,3 +94,70 @@ Only the web app in `/web` matters; CLI and legacy docs are ignored.
 - When updating or adding new features to the web app, please update the documentation in the `docs/` folder accordingly.
 - Follow the established documentation style and structure.
 - ALWAYS use the `docs-writer` subagent (via the `runSubagent` tool) to write or update documentation.
+
+## State Dependency Management and Cascading Resets
+
+The web app has many AppState attributes that depend on upstream selections. When upstream choices change, dependent state must be reset to maintain consistency.
+
+### Current Dependencies
+
+**Region-Dependent State** (depends on `region_aggregations`, `is_clustered`, `ba_to_region`):
+- Plant clustering settings (`plant_cluster_settings`)
+- Resource group files and assignments (`resource_group_files`, `resource_group_assignments`)
+- Renewables clustering and all capacity attributes (`renewables_clusters`, `renewables_clusters_info`, `renewables_region_capacity_mw`, etc.)
+- ESR zones and policies (`esr_zones`, `esr_map`, `esr_type_map`, `esr_policy_states`, `emission_policies_df`)
+
+**Planning Year-Dependent State** (depends on model years from Model Setup):
+- ESR policies (`esr_map`, `esr_type_map`, `esr_policy_states`, `emission_policies_df`)
+
+### Reset Functions
+
+Two helper functions manage cascading resets:
+
+1. **`reset_region_dependent_state()`**: Resets all state that depends on region clustering. Called when:
+   - Regions are cleared (`on_clear_selection`)
+   - Regions are re-clustered (`on_run_clustering`)
+   - Manual regions are cleared (`on_clear_manual_regions`)
+   - Manual regions are finalized (`on_finalize_manual`)
+   - Switching between clustering and manual modes (`on_region_mode_change`)
+
+2. **`reset_planning_year_dependent_state()`**: Resets all state that depends on planning years. Called when:
+   - Model years input changes (`on_model_years_change`)
+
+### Adding New Dependencies
+
+When adding new features to the app that depend on upstream state:
+
+1. **Identify the dependency**: Determine which upstream selections your feature depends on (e.g., regions, planning years, etc.)
+
+2. **Add reset logic**: Update the appropriate reset function to clear your new state attributes:
+   ```python
+   def reset_region_dependent_state():
+       # ... existing resets ...
+       state.your_new_attribute = None  # or appropriate reset value
+   ```
+
+3. **Document the dependency**: Update this section of copilot-instructions.md to list the new dependent attribute.
+
+4. **Test the reset**: Verify that changing upstream selections properly resets your feature's state.
+
+### Example
+
+If adding a new feature that computes data based on model regions:
+
+```python
+# In AppState.__init__
+self.my_region_data = None  # computed from regions
+
+# In reset_region_dependent_state()
+state.my_region_data = None  # reset when regions change
+
+# In your computation function
+def compute_my_region_data():
+    if not state.region_aggregations:
+        set_status("Please cluster regions first", "error")
+        return
+    # ... compute and set state.my_region_data ...
+```
+
+This pattern ensures consistency and prevents stale data from upstream changes affecting downstream features.
