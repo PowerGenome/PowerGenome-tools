@@ -8,7 +8,7 @@ functions to ensure proper cascading resets when upstream selections change.
 import importlib.util
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
