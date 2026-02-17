@@ -46,6 +46,7 @@ def cluster_app():
     spec = importlib.util.spec_from_file_location("cluster_app", module_path)
     module = importlib.util.module_from_spec(spec)
     sys.modules["cluster_app"] = module
+    assert spec.loader is not None
     spec.loader.exec_module(module)
 
     return module
