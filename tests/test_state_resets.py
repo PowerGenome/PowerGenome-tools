@@ -8,48 +8,69 @@ functions to ensure proper cascading resets when upstream selections change.
 import importlib.util
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 
 # Load cluster_app.py with mocked PyScript dependencies
-@pytest.fixture(scope="module")
+@pytest.fixture()
 def cluster_app():
     """Load cluster_app module with mocked js and DOM dependencies."""
-    # Mock the js and pyodide.ffi modules
-    mock_js = MagicMock()
-    mock_ffi = MagicMock()
-    mock_ffi.create_proxy = lambda x: x
-    mock_ffi.to_js = lambda x: x
+    # Save any existing sys.modules entries we are about to mock
+    module_names = [
+        "js",
+        "pyodide",
+        "pyodide.ffi",
+        "renewables_utils",
+        "fast_interconnection",
+        "fast_interconnection.fast_assign",
+        "fast_interconnection.resource_groups",
+        "cluster_app",
+    ]
+    original_modules = {name: sys.modules.get(name) for name in module_names}
 
-    sys.modules["js"] = mock_js
-    sys.modules["pyodide"] = MagicMock()
-    sys.modules["pyodide.ffi"] = mock_ffi
-    sys.modules["renewables_utils"] = MagicMock()
-    sys.modules["fast_interconnection"] = MagicMock()
-    sys.modules["fast_interconnection.fast_assign"] = MagicMock()
-    sys.modules["fast_interconnection.resource_groups"] = MagicMock()
+    try:
+        # Mock the js and pyodide.ffi modules
+        mock_js = MagicMock()
+        mock_ffi = MagicMock()
+        mock_ffi.create_proxy = lambda x: x
+        mock_ffi.to_js = lambda x: x
 
-    # Add mock L (Leaflet) object
-    mock_js.L = MagicMock()
-    mock_js.document = MagicMock()
-    mock_js.window = MagicMock()
-    mock_js.fetch = MagicMock()
-    mock_js.Uint8Array = MagicMock()
-    mock_js.globalThis = MagicMock()
+        sys.modules["js"] = mock_js
+        sys.modules["pyodide"] = MagicMock()
+        sys.modules["pyodide.ffi"] = mock_ffi
+        sys.modules["renewables_utils"] = MagicMock()
+        sys.modules["fast_interconnection"] = MagicMock()
+        sys.modules["fast_interconnection.fast_assign"] = MagicMock()
+        sys.modules["fast_interconnection.resource_groups"] = MagicMock()
 
-    # Load the module
-    web_dir = Path(__file__).parent.parent / "web"
-    module_path = web_dir / "cluster_app.py"
+        # Add mock L (Leaflet) object
+        mock_js.L = MagicMock()
+        mock_js.document = MagicMock()
+        mock_js.window = MagicMock()
+        mock_js.fetch = MagicMock()
+        mock_js.Uint8Array = MagicMock()
+        mock_js.globalThis = MagicMock()
 
-    spec = importlib.util.spec_from_file_location("cluster_app", module_path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["cluster_app"] = module
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
+        # Load the module
+        web_dir = Path(__file__).parent.parent / "web"
+        module_path = web_dir / "cluster_app.py"
 
-    return module
+        spec = importlib.util.spec_from_file_location("cluster_app", module_path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["cluster_app"] = module
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        yield module
+    finally:
+        # Restore original sys.modules entries
+        for name, original in original_modules.items():
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
 
 
 class TestResetRegionDependentState:
@@ -332,3 +353,105 @@ class TestStateDependencyIsolation:
         # Verify state is still properly reset
         assert cluster_app.state.plant_cluster_settings is None
         assert cluster_app.state.esr_map is None
+
+
+class TestRenderESRResultsUIClearing:
+    """Test render_esr_results() UI clearing behavior."""
+
+    def test_clears_csv_preview_when_emission_policies_df_is_none(self, cluster_app):
+        """Test that CSV preview is cleared when emission_policies_df is None."""
+        # Setup: Create mock csv_preview element
+        mock_csv_preview = MagicMock()
+        mock_csv_preview.value = "old CSV data"
+
+        # Setup state with no emission policies
+        cluster_app.state.emission_policies_df = None
+        cluster_app.state.esr_map = None
+        cluster_app.state.esr_zones = []
+
+        # Mock document.getElementById to return our mock elements
+        mock_js = sys.modules["js"]
+        original_get_elem = mock_js.document.getElementById
+        mock_js.document.getElementById = MagicMock(side_effect=lambda id: {
+            "esrCsvPreview": mock_csv_preview,
+            "esrZonesList": MagicMock(),
+            "esrRPSTechList": None,
+            "esrCESTechList": None
+        }.get(id))
+
+        try:
+            cluster_app.render_esr_results()
+            # Verify CSV preview was cleared
+            assert mock_csv_preview.value == ""
+        finally:
+            mock_js.document.getElementById = original_get_elem
+
+    def test_renders_csv_preview_when_emission_policies_df_exists(self, cluster_app):
+        """Test that CSV preview is rendered when emission_policies_df exists."""
+        import pandas as pd
+
+        # Setup: Create mock csv_preview element
+        mock_csv_preview = MagicMock()
+        mock_csv_preview.value = ""
+
+        # Setup state with emission policies
+        test_df = pd.DataFrame({
+            "region": ["region1"],
+            "year": [2030],
+            "policy": ["RPS"]
+        })
+        cluster_app.state.emission_policies_df = test_df
+        cluster_app.state.esr_map = {"ESR_1": ["region1"]}
+        cluster_app.state.esr_type_map = {"ESR_1": "RPS"}
+        cluster_app.state.esr_zones = [["TX"]]
+        cluster_app.state.esr_rps_techs = ["wind", "solar"]
+        cluster_app.state.esr_ces_techs = ["nuclear"]
+
+        # Mock document.getElementById to return our mock elements
+        mock_js = sys.modules["js"]
+        original_get_elem = mock_js.document.getElementById
+        mock_zones_list = MagicMock()
+        mock_rps_list = MagicMock()
+        mock_ces_list = MagicMock()
+        mock_js.document.getElementById = MagicMock(side_effect=lambda id: {
+            "esrCsvPreview": mock_csv_preview,
+            "esrZonesList": mock_zones_list,
+            "esrRPSTechList": mock_rps_list,
+            "esrCESTechList": mock_ces_list
+        }.get(id))
+
+        try:
+            cluster_app.render_esr_results()
+            # Verify CSV preview was populated (not empty)
+            assert mock_csv_preview.value != ""
+            assert "region" in mock_csv_preview.value
+        finally:
+            mock_js.document.getElementById = original_get_elem
+
+    def test_clears_zones_list_when_no_esr_data(self, cluster_app):
+        """Test that zones list is cleared when no ESR data is available."""
+        # Setup: Create mock zones_list element
+        mock_zones_list = MagicMock()
+        mock_zones_list.innerHTML = "old zones data"
+
+        # Setup state with no ESR data
+        cluster_app.state.esr_map = None
+        cluster_app.state.esr_zones = []
+        cluster_app.state.emission_policies_df = None
+
+        # Mock document.getElementById to return our mock elements
+        mock_js = sys.modules["js"]
+        original_get_elem = mock_js.document.getElementById
+        mock_js.document.getElementById = MagicMock(side_effect=lambda id: {
+            "esrCsvPreview": MagicMock(),
+            "esrZonesList": mock_zones_list,
+            "esrRPSTechList": None,
+            "esrCESTechList": None
+        }.get(id))
+
+        try:
+            cluster_app.render_esr_results()
+            # Verify zones list was cleared
+            assert mock_zones_list.innerHTML == ""
+        finally:
+            mock_js.document.getElementById = original_get_elem

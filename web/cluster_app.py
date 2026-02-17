@@ -3312,7 +3312,7 @@ def on_model_years_change(event):
     try:
         set_status(
             "ESR policy state has been reset because model years changed. Please rerun ESR analysis.",
-            level="info",
+            status_type="info",
         )
     except NameError:
         # If status messaging is not available, fail silently.
@@ -7813,11 +7813,18 @@ def render_esr_results():
             for i, zone in enumerate(state.esr_zones)
         )
         zones_list.innerHTML = zones_html
+    elif zones_list:
+        # Clear zones list when no ESR data is available to avoid stale UI
+        zones_list.innerHTML = ""
 
     # Render CSV preview
-    if csv_preview and state.emission_policies_df is not None:
-        csv_str = state.emission_policies_df.to_csv(index=False)
-        csv_preview.value = csv_str
+    if csv_preview:
+        if state.emission_policies_df is not None:
+            csv_str = state.emission_policies_df.to_csv(index=False)
+            csv_preview.value = csv_str
+        else:
+            # Clear CSV preview when data is None to avoid stale UI
+            csv_preview.value = ""
 
 
 def on_run_esr_analysis(event):
