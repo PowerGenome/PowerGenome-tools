@@ -2996,6 +2996,9 @@ def on_run_clustering(event):
     # Store region aggregations for transmission line drawing
     state.region_aggregations = region_aggregations
 
+    # Reset all downstream state that depends on regions (before setting new values)
+    reset_region_dependent_state()
+
     # Update map colors to show clusters
     update_map_cluster_colors(region_aggregations)
 
@@ -3219,6 +3222,101 @@ def on_select_all(event):
     update_selected_display()
 
 
+# ============================================================================
+# State Reset Helpers
+# ============================================================================
+
+
+def reset_region_dependent_state():
+    """Reset all state attributes that depend on region clustering.
+
+    This should be called whenever regions are cleared or re-clustered,
+    as many downstream features depend on the region aggregations.
+    """
+    # Plant clustering settings depend on region mapping
+    state.plant_cluster_settings = None
+
+    # Resource groups depend on region aggregations
+    state.resource_group_files = {}
+    state.resource_group_assignments = None
+
+    # Renewables clustering depends on regions and resource groups
+    state.renewables_clusters = None
+    state.renewables_clusters_info = None
+    state.renewables_region_capacity_mw = {}
+    state.renewables_region_base_capacity_mw = {}
+    state.renewables_pending_region_capacity_mw = {}
+    state.renewables_region_available_mw = {}
+    state.renewables_capacity_overrides_mw = {
+        "landbasedwind": {},
+        "utilitypv": {},
+    }
+    state.renewables_curve_data = {}
+    state.renewables_selected_region = None
+    state.renewables_regions_geojson_cache = None
+    state.renewables_regions_geojson_key = None
+
+    # ESR zones and policies depend on region aggregations
+    state.esr_zones = None
+    state.esr_map = None
+    state.esr_type_map = None
+    state.esr_policy_states = None
+    state.emission_policies_df = None
+    # Note: esr_rps_techs and esr_ces_techs are set during ESR generation
+    # and don't persist in AppState, so no reset needed
+
+    # After resetting region-dependent state, refresh UI panels that depend
+    # on these values so they don't display stale data.
+    _update_rg = globals().get("_update_resource_group_list")
+    if callable(_update_rg):
+        _update_rg()
+
+    _render_renew = globals().get("_render_renewables_preview")
+    if callable(_render_renew):
+        _render_renew()
+
+    _render_esr = globals().get("render_esr_results")
+    if callable(_render_esr):
+        _render_esr()
+def reset_planning_year_dependent_state():
+    """Reset all state attributes that depend on planning years.
+
+    This should be called whenever model years are changed in the Model Setup step,
+    as ESR policies depend on the planning years.
+    """
+    # ESR policies depend on model years (planning years)
+    state.esr_map = None
+    state.esr_type_map = None
+    state.esr_policy_states = None
+    state.emission_policies_df = None
+
+
+def on_model_years_change(event):
+    """Handle changes to model years input.
+
+    This is called when the user modifies model years in the Model Setup step.
+    It resets downstream state that depends on planning years and refreshes the ESR UI.
+    """
+    # Clear ESR-related state that depends on planning years
+    reset_planning_year_dependent_state()
+
+    # Refresh ESR results UI so that any previously displayed constraints/zones/CSV
+    # are cleared or updated to reflect the reset state.
+    try:
+        render_esr_results()
+    except NameError:
+        # If ESR UI rendering is not available in this context, skip UI refresh.
+        pass
+
+    # Inform the user that ESR policies were reset due to the change in model years.
+    try:
+        set_status(
+            "ESR policy state has been reset because model years changed. Please rerun ESR analysis.",
+            status_type="info",
+        )
+    except NameError:
+        # If status messaging is not available, fail silently.
+        pass
 def on_clear_selection(event):
     """Clear all selections."""
     # Reset cluster state
@@ -3226,6 +3324,9 @@ def on_clear_selection(event):
     state.ba_to_region = {}
     state.is_clustered = False
     state.region_aggregations = None
+
+    # Reset all downstream state that depends on regions
+    reset_region_dependent_state()
 
     for ba_id, layer in state.ba_layers.items():
         if ba_id in state.selected_bas:
@@ -3268,6 +3369,8 @@ def on_region_mode_change(is_manual):
         state.ba_to_region = {}
         state.is_clustered = False
         state.region_aggregations = None
+        # Reset all downstream state that depends on regions
+        reset_region_dependent_state()
         # Update UI
         update_manual_regions_display()
         update_unassigned_display()
@@ -3370,6 +3473,9 @@ def on_finalize_manual(event):
     }
     state.is_clustered = True
 
+    # Reset all downstream state that depends on regions (before setting new values)
+    reset_region_dependent_state()
+
     # Build ba_to_region mapping
     state.ba_to_region = {}
     for region_name, bas in state.region_aggregations.items():
@@ -3408,6 +3514,9 @@ def on_clear_manual_regions(event):
     state.ba_to_region = {}
     state.is_clustered = False
     state.region_aggregations = None
+
+    # Reset all downstream state that depends on regions
+    reset_region_dependent_state()
 
     # Reset map colors
     for ba_id, layer in state.ba_layers.items():
@@ -7704,11 +7813,18 @@ def render_esr_results():
             for i, zone in enumerate(state.esr_zones)
         )
         zones_list.innerHTML = zones_html
+    elif zones_list:
+        # Clear zones list when no ESR data is available to avoid stale UI
+        zones_list.innerHTML = ""
 
     # Render CSV preview
-    if csv_preview and state.emission_policies_df is not None:
-        csv_str = state.emission_policies_df.to_csv(index=False)
-        csv_preview.value = csv_str
+    if csv_preview:
+        if state.emission_policies_df is not None:
+            csv_str = state.emission_policies_df.to_csv(index=False)
+            csv_preview.value = csv_str
+        else:
+            # Clear CSV preview when data is None to avoid stale UI
+            csv_preview.value = ""
 
 
 def on_run_esr_analysis(event):
@@ -7914,6 +8030,11 @@ async def main():
         )
         document.getElementById("omitResetBtn").addEventListener(
             "click", create_proxy(on_reset_omit_defaults)
+        )
+
+        # Model Setup - planning years change
+        document.getElementById("modelYears").addEventListener(
+            "input", create_proxy(on_model_years_change)
         )
 
         # Settings tab
