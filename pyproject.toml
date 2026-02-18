@@ -37,3 +37,18 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+# Only include scripts in the web/ directory
+source = ["/web"]
+include = ["/web/**/*.py"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+]
+omit = ["**/tests/**", "**/test_*.py", "**/*_test.py"]
