@@ -277,6 +277,7 @@ The **Grouping Column** determines how BAs are initially partitioned before clus
 | **Interconnect** | 3 | ~45 BAs per group (median 35) | None noted | Highly imbalanced regions; misses operational detail | Rarely used |
 | **Census Division** | 9 | ~15 BAs per group (median 17) | Regional policy rollups | Doesn't reflect grid ops; splits transmission clusters | High-level regional summaries |
 | **State** | 48 | ~3 BAs per group (median 2) | Aligns to state policy boundaries | Doesn't reflect grid ops; splits transmission clusters | State-level policy analysis |
+| **ESR trading zone** | Varies | Groups states by REC/ESR trading rules within interconnects | Respects policy trading boundaries; useful for RPS/CES modeling | May not align with transmission patterns | RPS/CES policy analysis requiring trading zone alignment |
 
 **Recommendation**: Use **Transmission Group** (default) or **Transmission Region** for grid-focused analyses. These options respect ISO/RTO boundaries that reflect how the grid is actually operated and studied.
 
