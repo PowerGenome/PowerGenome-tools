@@ -1,6 +1,6 @@
 # ESR Policies
 
-Energy Share Requirements (ESR) are policy constraints that require a fraction of electricity demand to be met by qualifying resources. The PowerGenome Settings Builder supports two types of ESR policies:
+Energy Share Requirements (ESR) are policy constraints that require a fraction of electricity demand to be met by qualifying resources. PowerGenome System Design supports two types of ESR policies:
 
 * **Renewable Portfolio Standards (RPS)**: Require a percentage of electricity to come from renewable sources
 * **Clean Energy Standards (CES)**: Require a percentage from clean energy sources (renewables plus other zero-carbon technologies like nuclear)
@@ -91,13 +91,13 @@ flowchart LR
         NY --- NJ
         PA --- MD[MD]
     end
-    
+
     subgraph Zone2 ["Zone 2 (Western)"]
         CA[CA] --- OR[OR]
         OR --- WA[WA]
         CA --- AZ[AZ]
     end
-    
+
     subgraph Zone3 ["Zone 3 (ERCOT)"]
         TX[TX]
     end

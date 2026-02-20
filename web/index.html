@@ -4,7 +4,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PowerGenome Region Clustering</title>
+    <title>PowerGenome Design</title>
 
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -16,7 +16,51 @@
     <link rel="stylesheet" href="https://pyscript.net/releases/2025.11.1/core.css" />
     <script type="module" src="https://pyscript.net/releases/2025.11.1/core.js"></script>
 
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+        rel="stylesheet" />
+
     <style>
+        /* ── Design tokens ──────────────────────────────────── */
+        :root {
+            --bg: #eef1f7;
+            --surface: #ffffff;
+            --surface-2: #f5f7fb;
+            --surface-3: #eaecf4;
+            --border: #dde2ec;
+            --border-strong: #b8c4d8;
+            --navy: #0c1e3c;
+            --navy-mid: #1c3462;
+            --navy-light: #2a4a82;
+            --accent: #df6d00;
+            --accent-hover: #c46000;
+            --blue: #1a56c4;
+            --text: #18202e;
+            --text-muted: #58677c;
+            --text-faint: #8f9ab0;
+            --success: #196e38;
+            --success-bg: #edf9f2;
+            --success-border: #7ecfa0;
+            --error: #bd3010;
+            --error-bg: #fff2ee;
+            --error-border: #f4b0a0;
+            --info: #1648a8;
+            --info-bg: #eef3ff;
+            --info-border: #a8beed;
+            --warn-text: #6b4e00;
+            --warn-bg: #fffbeb;
+            --warn-border: #e8d07a;
+            --font-ui: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-mono: "IBM Plex Mono", "Courier New", monospace;
+            --radius: 3px;
+            --radius-md: 5px;
+            --shadow-sm: 0 1px 3px rgba(12, 30, 60, 0.06), 0 1px 2px rgba(12, 30, 60, 0.04);
+            --shadow-md: 0 4px 14px rgba(12, 30, 60, 0.09), 0 2px 4px rgba(12, 30, 60, 0.05);
+        }
+
         * {
             box-sizing: border-box;
         }
@@ -25,14 +69,16 @@
         body {
             height: 100%;
             margin: 0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-family: var(--font-ui);
             font-size: 14px;
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            color: var(--text);
+            background: var(--bg);
         }
 
-        /* Hide PyScript terminal/stderr output (deprecation warnings) */
+        /* ── PyScript: hide terminal output ────────────────── */
         script[type="py"]+* .py-terminal,
         .py-terminal,
         .py-error,
@@ -40,63 +86,158 @@
             display: none !important;
         }
 
-        /* Navbar */
+        /* ── Loading screen ─────────────────────────────────── */
+        #loading {
+            position: fixed;
+            inset: 0;
+            background: var(--navy);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        #loading.hidden {
+            display: none;
+        }
+
+        .spinner {
+            width: 34px;
+            height: 34px;
+            border: 3px solid rgba(255, 255, 255, 0.12);
+            border-top-color: #f0a030;
+            border-radius: 50%;
+            animation: spin 0.75s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        #loadingText {
+            color: rgba(255, 255, 255, 0.55);
+            font-size: 12.5px;
+            font-family: var(--font-mono);
+            letter-spacing: 0.05em;
+        }
+
+        /* ── Navbar ─────────────────────────────────────────── */
         #navbar {
-            background: #2c3e50;
+            background: var(--navy);
             color: white;
-            padding: 0 16px;
-            height: 56px;
+            padding: 0 20px;
+            height: 52px;
             display: flex;
             align-items: center;
             flex-shrink: 0;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
             z-index: 2000;
+            gap: 0;
         }
 
         #navbar h1 {
             margin: 0;
-            font-size: 18px;
-            margin-right: 32px;
-            font-weight: 600;
+            font-size: 15px;
+            font-weight: 700;
+            letter-spacing: -0.01em;
             display: flex;
             align-items: center;
             gap: 8px;
+            white-space: nowrap;
+            padding-right: 24px;
+            border-right: 1px solid rgba(255, 255, 255, 0.12);
+            margin-right: 20px;
+        }
+
+        #navbar h1 .brand-bolt {
+            color: #f0a030;
         }
 
         .nav-steps {
             display: flex;
-            gap: 4px;
+            gap: 2px;
             flex: 1;
             overflow-x: auto;
+            scrollbar-width: none;
+        }
+
+        .nav-steps::-webkit-scrollbar {
+            display: none;
         }
 
         .nav-step {
-            padding: 8px 12px;
+            padding: 6px 11px;
             cursor: pointer;
-            font-size: 13px;
-            color: #bdc3c7;
-            border-radius: 4px;
-            transition: all 0.2s;
+            font-size: 12px;
+            font-weight: 500;
+            color: rgba(255, 255, 255, 0.48);
+            border-radius: var(--radius);
+            transition: background 0.15s, color 0.15s;
             white-space: nowrap;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .nav-step .step-num {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 17px;
+            height: 17px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.10);
+            font-size: 10px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            flex-shrink: 0;
+            transition: background 0.15s, color 0.15s;
         }
 
         .nav-step:hover {
-            background: rgba(255, 255, 255, 0.1);
-            color: white;
+            background: rgba(255, 255, 255, 0.07);
+            color: rgba(255, 255, 255, 0.82);
         }
 
         .nav-step.active {
-            background: #3498db;
             color: white;
-            font-weight: 600;
+            background: rgba(255, 255, 255, 0.09);
         }
 
-        /* Wizard Content */
+        .nav-step.active .step-num {
+            background: #f0a030;
+            color: var(--navy);
+        }
+
+        .nav-docs-link {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.42);
+            text-decoration: none;
+            padding: 6px 10px;
+            border-radius: var(--radius);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            transition: all 0.15s;
+            white-space: nowrap;
+            margin-left: 12px;
+            font-weight: 500;
+        }
+
+        .nav-docs-link:hover {
+            color: white;
+            border-color: rgba(255, 255, 255, 0.28);
+            background: rgba(255, 255, 255, 0.07);
+        }
+
+        /* ── Wizard content ─────────────────────────────────── */
         #wizard-content {
             flex: 1;
             overflow: hidden;
             position: relative;
-            background: #f5f5f5;
+            background: var(--bg);
         }
 
         .step-pane {
@@ -109,7 +250,7 @@
             display: block;
         }
 
-        /* Step 1: Split Layout */
+        /* ── Step 1: Split layout ────────────────────────────── */
         #step1-layout {
             display: grid;
             grid-template-columns: 340px 1fr;
@@ -117,11 +258,22 @@
         }
 
         #step1-sidebar {
-            padding: 16px;
-            border-right: 1px solid #ddd;
+            padding: 14px 16px;
+            border-right: 1px solid var(--border);
             overflow-y: auto;
-            background: #fafafa;
+            background: var(--surface);
             position: relative;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
+        }
+
+        #step1-sidebar::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        #step1-sidebar::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
         }
 
         #sidebarResizer {
@@ -136,7 +288,7 @@
         }
 
         #sidebarResizer:hover {
-            background: rgba(0, 0, 0, 0.06);
+            background: rgba(0, 0, 0, 0.05);
         }
 
         body.resizing {
@@ -154,409 +306,304 @@
             width: 100%;
         }
 
-        /* Steps 2-6: Centered Layout */
+        /* ── Centered steps ──────────────────────────────────── */
         .centered-step {
-            max-width: 800px;
+            max-width: 760px;
             margin: 0 auto;
-            padding: 32px;
-            background: white;
+            padding: 28px 32px 48px;
+            background: var(--surface);
             height: 100%;
             overflow-y: auto;
-            box-shadow: 0 0 20px rgba(0, 0, 0, 0.05);
+            box-shadow: var(--shadow-md);
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
+        }
+
+        .centered-step::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        .centered-step::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
         }
 
         .step-header {
-            margin-bottom: 24px;
-            padding-bottom: 16px;
-            border-bottom: 1px solid #eee;
+            margin-bottom: 22px;
+            padding-bottom: 14px;
+            border-bottom: 2px solid var(--navy);
         }
 
         .step-header h2 {
             margin: 0;
-            color: #2c3e50;
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--navy);
+            letter-spacing: -0.02em;
         }
 
         .step-footer {
             margin-top: 32px;
-            padding-top: 16px;
-            border-top: 1px solid #eee;
+            padding-top: 14px;
+            border-top: 1px solid var(--border);
             display: flex;
             justify-content: space-between;
             margin-bottom: 32px;
         }
 
-        /* Reused Styles */
+        /* ── Sections ────────────────────────────────────────── */
         .section {
-            margin-bottom: 16px;
-            padding-bottom: 16px;
-            border-bottom: 1px solid #eee;
+            margin-bottom: 18px;
+            padding-bottom: 18px;
+            border-bottom: 1px solid var(--border);
         }
 
         .section:last-child {
             border-bottom: none;
         }
 
-        /* In centered steps, sections look better as cards or just blocks */
         .centered-step .section {
-            background: #fff;
-            padding: 0 0 16px 0;
-            border-bottom: 1px solid #eee;
+            background: var(--surface);
+            padding: 0 0 18px 0;
+            border-bottom: 1px solid var(--border);
         }
 
-        .renewables-plot-results {
-            margin-top: 16px;
-        }
-
-        .renewables-supply-curves {
-            max-height: none;
-            overflow: visible;
-            background: transparent;
-            border: none;
-            border-radius: 0;
-            padding: 0;
-        }
-
-        .renewables-plot-region {
-            border: 1px solid #eee;
-            border-radius: 4px;
-            padding: 12px;
-            margin-bottom: 12px;
-        }
-
-        .renewables-plot-region h4 {
-            margin: 0 0 10px 0;
-            font-size: 14px;
-        }
-
-        .renewables-plot-grid {
-            display: grid;
-            grid-template-columns: repeat(4, minmax(170px, 1fr));
-            gap: 10px;
-        }
-
-        .renewables-plot-card {
-            border: 1px solid #eee;
-            border-radius: 4px;
-            padding: 8px;
-            background: #fafafa;
-        }
-
-        .renewables-plot-card h5 {
-            margin: 0 0 6px 0;
-            font-size: 12px;
-            font-weight: 600;
-        }
-
-        .renewables-plot-meta {
-            font-size: 11px;
-            color: #666;
-            margin-top: 4px;
-        }
-
-        .renewables-plot-empty {
-            font-size: 12px;
-            color: #666;
-            min-height: 120px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-        }
-
-        .renewables-advanced-section {
-            border: 1px solid #d7dce2;
-            border-radius: 8px;
-            padding: 0;
-            background: linear-gradient(180deg, #f8fafc 0%, #f3f6f9 100%);
-            overflow: hidden;
-        }
-
-        .renewables-advanced-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            cursor: pointer;
-            font-weight: 600;
-            user-select: none;
-            padding: 10px 12px;
-            color: #2c3e50;
-            background: rgba(255, 255, 255, 0.55);
-            border-bottom: 1px solid #e1e6ec;
-        }
-
-        .renewables-advanced-content.hidden {
-            display: none;
-        }
-
-        .renewables-advanced-content {
-            padding: 10px;
-            background: transparent;
-        }
-
-        .renewables-advanced-hint {
-            font-size: 12px;
-            color: #666;
-            margin-top: 6px;
-        }
-
-        .renewables-map-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-            margin-top: 10px;
-        }
-
-        .renewables-map-panel {
-            border: 1px solid #e6e6e6;
-            border-radius: 4px;
-            padding: 8px;
-            background: #fff;
-        }
-
-        .renewables-map-title {
-            font-size: 12px;
-            font-weight: 600;
-            margin-bottom: 6px;
-            color: #333;
-        }
-
-        .renewables-map {
-            width: 100%;
-            height: 280px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }
-
-        .renewables-map-legend {
-            margin-top: 6px;
-            font-size: 11px;
-            color: #666;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .renewables-legend-ramp {
-            flex: 1;
-            height: 10px;
-            border-radius: 999px;
-            border: 1px solid #ccc;
-        }
-
-        .renewables-legend-ramp.wind {
-            background: linear-gradient(to right, #e6eef6, #1f4e79);
-        }
-
-        .renewables-legend-ramp.solar {
-            background: linear-gradient(to right, #fbf1db, #b87f00);
-        }
-
-        .renewables-region-editor {
-            margin-top: 12px;
-            border: 1px solid #e6e6e6;
-            border-radius: 4px;
-            padding: 10px;
-            background: #fff;
-        }
-
-        .renewables-region-editor h4 {
-            margin: 0 0 8px 0;
-            font-size: 13px;
-        }
-
-        .renewables-slider-row {
-            display: grid;
-            grid-template-columns: 180px 1fr 90px;
-            gap: 10px;
-            align-items: center;
-        }
-
-        .renewables-slider-row input[type="range"] {
-            width: 100%;
-        }
-
-        .renewables-region-meta {
-            margin-top: 8px;
-            font-size: 11px;
-            color: #555;
-        }
-
-        #renewablesRegionPlot {
-            margin-top: 10px;
-            border: 1px solid #eee;
-            border-radius: 4px;
-            padding: 8px;
-            background: #fafafa;
-        }
-
+        /* ── Labels ──────────────────────────────────────────── */
         label {
             display: block;
-            margin-bottom: 4px;
-            font-weight: 500;
+            margin-bottom: 5px;
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--text);
         }
 
+        /* ── Form elements ───────────────────────────────────── */
         select,
         input[type="number"],
         input[type="text"] {
             width: 100%;
-            padding: 8px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            font-size: 14px;
+            padding: 8px 10px;
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius);
+            font-size: 13px;
+            font-family: var(--font-ui);
+            color: var(--text);
+            background: var(--surface);
+            transition: border-color 0.15s, box-shadow 0.15s;
+            outline: none;
+            appearance: none;
+            -webkit-appearance: none;
         }
 
-        .btn {
-            padding: 10px 16px;
-            border: none;
-            border-radius: 4px;
+        select {
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%235a6478' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            padding-right: 28px;
+        }
+
+        select:focus,
+        input[type="number"]:focus,
+        input[type="text"]:focus {
+            border-color: var(--navy-light);
+            box-shadow: 0 0 0 3px rgba(42, 74, 130, 0.12);
+        }
+
+        input[type="checkbox"] {
+            accent-color: var(--navy);
+            width: 14px;
+            height: 14px;
             cursor: pointer;
-            font-size: 14px;
-            margin-right: 8px;
-            margin-bottom: 8px;
+        }
+
+        /* ── Buttons ─────────────────────────────────────────── */
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: var(--radius);
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            font-family: var(--font-ui);
+            margin-right: 6px;
+            margin-bottom: 6px;
+            transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
+            letter-spacing: 0.01em;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .btn:active {
+            transform: translateY(1px);
         }
 
         .btn-primary {
-            background: #0066cc;
+            background: var(--accent);
             color: white;
+            box-shadow: 0 1px 4px rgba(223, 109, 0, 0.28);
         }
 
         .btn-primary:hover {
-            background: #0052a3;
+            background: var(--accent-hover);
+            box-shadow: 0 2px 8px rgba(223, 109, 0, 0.32);
         }
 
         .btn-primary:disabled {
-            background: #999;
+            background: var(--text-faint);
+            box-shadow: none;
             cursor: not-allowed;
+            transform: none;
         }
 
         .btn-secondary {
-            background: #e0e0e0;
-            color: #333;
+            background: var(--surface);
+            color: var(--navy);
+            border: 1px solid var(--border-strong);
+            box-shadow: var(--shadow-sm);
         }
 
         .btn-secondary:hover {
-            background: #d0d0d0;
+            background: var(--surface-3);
+            border-color: var(--navy-light);
         }
 
+        .small-btn {
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+
+        /* ── Checkbox groups ──────────────────────────────────── */
         .checkbox-group {
             max-height: 150px;
             overflow-y: auto;
-            border: 1px solid #ddd;
-            padding: 8px;
-            border-radius: 4px;
-            background: white;
+            border: 1px solid var(--border);
+            padding: 8px 10px;
+            border-radius: var(--radius);
+            background: var(--surface);
+            scrollbar-width: thin;
         }
 
         .checkbox-group label {
             display: flex;
             align-items: center;
-            font-weight: normal;
+            font-weight: 400;
             margin-bottom: 4px;
             cursor: pointer;
+            font-size: 12.5px;
         }
 
         .checkbox-group input {
-            margin-right: 8px;
+            margin-right: 7px;
         }
 
+        /* ── BA / Tag lists ───────────────────────────────────── */
         .ba-list {
             max-height: 120px;
             overflow-y: auto;
             font-size: 12px;
-            background: white;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
+            background: var(--surface-2);
+            padding: 8px 10px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text-muted);
+            scrollbar-width: thin;
         }
 
         .ba-tag {
             display: inline-block;
-            padding: 2px 6px;
-            background: #e3f2fd;
-            border: 1px solid #90caf9;
-            border-radius: 3px;
+            padding: 2px 7px;
+            background: #e7effc;
+            border: 1px solid #a8c0ec;
+            border-radius: 2px;
             margin: 2px;
             font-size: 11px;
+            font-family: var(--font-mono);
+            color: var(--navy-mid);
         }
 
         .ba-tag.unclustered {
-            background: #fff3e0;
-            border-color: #ffb74d;
+            background: #fff2e0;
+            border-color: #efb870;
+            color: #7a4800;
         }
 
+        /* ── YAML textareas ───────────────────────────────────── */
         #yamlOut,
         #plantYamlOut {
             width: 100%;
             height: 180px;
-            font-family: monospace;
-            font-size: 11px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            padding: 8px;
+            font-family: var(--font-mono);
+            font-size: 11.5px;
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius);
+            padding: 10px;
+            background: #f4f6fa;
+            color: var(--navy-mid);
+            resize: vertical;
+            outline: none;
         }
 
-        #loading {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(255, 255, 255, 0.9);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 9999;
-            flex-direction: column;
+        #yamlOut:focus,
+        #plantYamlOut:focus {
+            border-color: var(--navy-light);
+            box-shadow: 0 0 0 3px rgba(42, 74, 130, 0.10);
         }
 
-        #loading.hidden {
-            display: none;
+        textarea {
+            font-family: var(--font-mono);
+            font-size: 11.5px;
+            border: 1px solid var(--border-strong) !important;
+            border-radius: var(--radius) !important;
+            padding: 9px 10px !important;
+            background: #f4f6fa !important;
+            color: var(--navy-mid) !important;
+            outline: none;
+            transition: border-color 0.15s, box-shadow 0.15s;
+            resize: vertical;
         }
 
-        .spinner {
-            width: 40px;
-            height: 40px;
-            border: 4px solid #e0e0e0;
-            border-top-color: #0066cc;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-bottom: 16px;
+        textarea:focus {
+            border-color: var(--navy-light) !important;
+            box-shadow: 0 0 0 3px rgba(42, 74, 130, 0.10) !important;
         }
 
-        @keyframes spin {
-            to {
-                transform: rotate(360deg);
-            }
-        }
-
+        /* ── Status messages ──────────────────────────────────── */
         .status {
-            padding: 8px 12px;
-            border-radius: 4px;
-            margin-bottom: 12px;
-            font-size: 13px;
+            padding: 9px 12px 9px 14px;
+            border-radius: var(--radius);
+            margin-bottom: 14px;
+            font-size: 12.5px;
+            line-height: 1.5;
+            border-left: 3px solid;
         }
 
         .status.info {
-            background: #e3f2fd;
-            color: #1565c0;
+            background: var(--info-bg);
+            color: var(--info);
+            border-color: var(--blue);
         }
 
         .status.success {
-            background: #e8f5e9;
-            color: #2e7d32;
+            background: var(--success-bg);
+            color: var(--success);
+            border-color: var(--success);
         }
 
         .status.error {
-            background: #ffebee;
-            color: #c62828;
+            background: var(--error-bg);
+            color: var(--error);
+            border-color: var(--error);
         }
 
+        /* ── Map legend ───────────────────────────────────────── */
         .legend {
             background: white;
             padding: 8px 12px;
-            border-radius: 4px;
-            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-md);
             font-size: 12px;
+            border: 1px solid var(--border);
         }
 
         .legend-item {
@@ -567,12 +614,13 @@
 
         .legend-color {
             width: 20px;
-            height: 14px;
+            height: 13px;
             margin-right: 8px;
-            border: 1px solid #999;
+            border-radius: 2px;
+            border: 1px solid rgba(0, 0, 0, 0.12);
         }
 
-        /* Box selection mode */
+        /* ── Selection mode ───────────────────────────────────── */
         .selection-mode {
             display: flex;
             gap: 4px;
@@ -582,72 +630,95 @@
         .mode-btn {
             flex: 1;
             padding: 6px 8px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            background: white;
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius);
+            background: var(--surface);
             cursor: pointer;
             font-size: 12px;
-            transition: all 0.2s;
+            font-weight: 500;
+            transition: all 0.15s;
+            color: var(--text-muted);
+            font-family: var(--font-ui);
         }
 
-        .candidate-item {
-            padding: 6px 8px;
-            border: 1px solid #eee;
-            border-radius: 4px;
-            margin-bottom: 6px;
-            background: #fff;
-            font-size: 12px;
+        .mode-btn:hover {
+            background: var(--surface-3);
+            color: var(--navy);
+            border-color: var(--navy-light);
         }
 
-        /* Tooltip styles */
-        .info-icon {
-            display: inline-block;
-            width: 14px;
-            height: 14px;
-            line-height: 14px;
-            text-align: center;
-            border-radius: 50%;
-            background: #999;
+        .mode-btn.active {
+            background: var(--navy);
             color: white;
-            font-size: 10px;
-            font-weight: bold;
+            border-color: var(--navy);
+        }
+
+        /* ── Candidate items ──────────────────────────────────── */
+        .candidate-item {
+            padding: 6px 9px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            margin-bottom: 5px;
+            background: var(--surface);
+            font-size: 12px;
+            font-family: var(--font-mono);
+            color: var(--text-muted);
+        }
+
+        /* ── Info icon tooltips ───────────────────────────────── */
+        .info-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            background: var(--text-faint);
+            color: white;
+            font-size: 9px;
+            font-weight: 700;
             cursor: help;
             margin-left: 4px;
             position: relative;
+            vertical-align: middle;
+            font-family: var(--font-mono);
         }
 
         .info-icon:hover::after {
             content: attr(data-tooltip);
             position: absolute;
             bottom: 100%;
-            left: 0;
-            width: 200px;
-            padding: 8px;
-            background: #333;
-            color: white;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 210px;
+            padding: 8px 10px;
+            background: var(--navy);
+            color: rgba(255, 255, 255, 0.88);
             font-size: 11px;
-            border-radius: 4px;
+            border-radius: var(--radius-md);
             z-index: 1000;
-            font-weight: normal;
-            line-height: 1.4;
-            margin-bottom: 6px;
+            font-weight: 400;
+            line-height: 1.5;
+            margin-bottom: 7px;
             white-space: normal;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+            box-shadow: var(--shadow-md);
             pointer-events: none;
+            font-family: var(--font-ui);
         }
 
+        /* ── Dual list ────────────────────────────────────────── */
         .group-editor {
-            margin-top: 8px;
-            border: 1px solid #e0e0e0;
-            border-radius: 6px;
-            padding: 10px;
-            background: #fff;
+            margin-top: 10px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 12px;
+            background: var(--surface-2);
         }
 
         .dual-list {
             display: flex;
             flex-direction: row;
-            gap: 12px;
+            gap: 10px;
             align-items: center;
         }
 
@@ -659,55 +730,45 @@
         .dual-list select {
             height: 160px;
             width: 100%;
+            padding: 4px;
+            font-size: 12px;
+            font-family: var(--font-mono);
+            background-image: none;
+            padding-right: 8px;
         }
 
         .dual-buttons {
             display: flex;
             flex-direction: column;
             justify-content: center;
-            gap: 8px;
-            margin: 0;
-        }
-
-        .small-btn {
-            padding: 6px 10px;
-            font-size: 12px;
+            gap: 6px;
         }
 
         .group-empty {
             font-size: 12px;
-            color: #666;
+            color: var(--text-faint);
             margin-top: 6px;
         }
 
-        .mode-btn:hover {
-            background: #f0f0f0;
-        }
-
-        .mode-btn.active {
-            background: #0066cc;
-            color: white;
-            border-color: #0066cc;
-        }
-
+        /* ── Selection box (drag) ─────────────────────────────── */
         #map.box-select-mode {
             cursor: crosshair;
         }
 
         .selection-box {
             position: absolute;
-            border: 2px dashed #0066cc;
-            background: rgba(0, 102, 204, 0.1);
+            border: 2px dashed var(--accent);
+            background: rgba(223, 109, 0, 0.08);
             pointer-events: none;
             z-index: 1000;
         }
 
-        /* Instructions panel */
+        /* ── Instructions / collapsible ───────────────────────── */
         .instructions {
-            background: #fff8e1;
-            border: 1px solid #ffcc02;
-            border-radius: 6px;
-            margin-bottom: 16px;
+            background: var(--warn-bg);
+            border: 1px solid var(--warn-border);
+            border-radius: var(--radius-md);
+            margin-bottom: 18px;
             overflow: hidden;
         }
 
@@ -715,26 +776,31 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px 12px;
+            padding: 9px 13px;
             cursor: pointer;
-            background: #fff3c4;
-            font-weight: 500;
+            background: #fef8d8;
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--warn-text);
+            transition: background 0.15s;
         }
 
         .instructions-header:hover {
-            background: #ffecb3;
+            background: #fdf3c0;
         }
 
         .instructions-toggle {
-            font-size: 12px;
-            color: #666;
+            font-size: 11px;
+            color: #997a00;
+            font-family: var(--font-mono);
         }
 
         .instructions-content {
-            padding: 12px;
-            font-size: 13px;
-            line-height: 1.5;
-            border-top: 1px solid #ffe082;
+            padding: 12px 14px;
+            font-size: 12.5px;
+            line-height: 1.6;
+            border-top: 1px solid var(--warn-border);
+            color: #3e3000;
         }
 
         .instructions-content.hidden {
@@ -742,27 +808,30 @@
         }
 
         .instructions-content ol {
-            margin: 8px 0;
-            padding-left: 20px;
+            margin: 6px 0;
+            padding-left: 18px;
         }
 
         .instructions-content li {
-            margin-bottom: 6px;
+            margin-bottom: 5px;
         }
 
         .instructions-content code {
-            background: #fff;
+            background: rgba(255, 255, 255, 0.75);
             padding: 1px 4px;
-            border-radius: 3px;
-            font-size: 12px;
+            border-radius: 2px;
+            font-size: 11.5px;
+            font-family: var(--font-mono);
         }
 
         .instructions-content .tip {
-            background: #e3f2fd;
-            padding: 8px;
-            border-radius: 4px;
+            background: rgba(26, 86, 196, 0.07);
+            border-left: 3px solid var(--blue);
+            padding: 7px 10px;
+            border-radius: 0 var(--radius) var(--radius) 0;
             margin-top: 8px;
             font-size: 12px;
+            color: var(--navy-mid);
         }
 
         .collapsible-header {
@@ -772,39 +841,235 @@
             padding: 8px 0;
             cursor: pointer;
             user-select: none;
-            border-bottom: 1px solid #eee;
-            margin-bottom: 8px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 10px;
+            transition: color 0.15s;
         }
 
         .collapsible-header:hover {
-            background-color: #f9f9f9;
+            color: var(--navy-mid);
         }
 
         .collapsible-content.hidden {
             display: none;
         }
 
-        /* Button group layout - responsive */
+        /* ── Button groups ────────────────────────────────────── */
         .button-group,
         .button-group-with-input {
             display: flex;
-            gap: 8px;
+            gap: 6px;
             align-items: center;
             margin-bottom: 8px;
+            flex-wrap: wrap;
         }
 
         .button-group-with-input input {
             flex: 1;
-            padding: 6px;
+            padding: 7px 9px;
             min-width: 120px;
         }
 
-        /* Add top margin variant for spacing */
         .button-group--spaced {
             margin-top: 8px;
         }
 
-        /* Responsive layout for smaller screens */
+        /* ── Renewables ───────────────────────────────────────── */
+        .renewables-plot-results {
+            margin-top: 16px;
+        }
+
+        .renewables-supply-curves {
+            max-height: none;
+            overflow: visible;
+            background: transparent;
+            border: none;
+            padding: 0;
+        }
+
+        .renewables-plot-region {
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 12px;
+            margin-bottom: 10px;
+            background: var(--surface-2);
+        }
+
+        .renewables-plot-region h4 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            color: var(--navy);
+        }
+
+        .renewables-plot-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(160px, 1fr));
+            gap: 8px;
+        }
+
+        .renewables-plot-card {
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 8px;
+            background: var(--surface);
+        }
+
+        .renewables-plot-card h5 {
+            margin: 0 0 5px 0;
+            font-size: 11.5px;
+            font-weight: 600;
+            color: var(--navy);
+        }
+
+        .renewables-plot-meta {
+            font-size: 11px;
+            color: var(--text-faint);
+            margin-top: 3px;
+        }
+
+        .renewables-plot-empty {
+            font-size: 12px;
+            color: var(--text-faint);
+            min-height: 110px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+
+        .renewables-advanced-section {
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            background: var(--surface-2);
+        }
+
+        .renewables-advanced-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            font-weight: 600;
+            user-select: none;
+            padding: 10px 14px;
+            color: var(--navy);
+            background: var(--surface-3);
+            border-bottom: 1px solid var(--border);
+            font-size: 13px;
+            transition: background 0.15s;
+        }
+
+        .renewables-advanced-header:hover {
+            background: var(--surface-2);
+        }
+
+        .renewables-advanced-content.hidden {
+            display: none;
+        }
+
+        .renewables-advanced-content {
+            padding: 12px;
+        }
+
+        .renewables-advanced-hint {
+            font-size: 12px;
+            color: var(--text-faint);
+            margin-top: 5px;
+        }
+
+        .renewables-map-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-top: 10px;
+        }
+
+        .renewables-map-panel {
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 9px;
+            background: var(--surface);
+        }
+
+        .renewables-map-title {
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: var(--navy);
+        }
+
+        .renewables-map {
+            width: 100%;
+            height: 260px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+        }
+
+        .renewables-map-legend {
+            margin-top: 6px;
+            font-size: 11px;
+            color: var(--text-faint);
+            display: flex;
+            align-items: center;
+            gap: 7px;
+        }
+
+        .renewables-legend-ramp {
+            flex: 1;
+            height: 9px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+        }
+
+        .renewables-legend-ramp.wind {
+            background: linear-gradient(to right, #dae8f5, #1a4070);
+        }
+
+        .renewables-legend-ramp.solar {
+            background: linear-gradient(to right, #fdf0d5, #a06a00);
+        }
+
+        .renewables-region-editor {
+            margin-top: 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 12px;
+            background: var(--surface);
+        }
+
+        .renewables-region-editor h4 {
+            margin: 0 0 8px 0;
+            font-size: 13px;
+            color: var(--navy);
+        }
+
+        .renewables-slider-row {
+            display: grid;
+            grid-template-columns: 180px 1fr 90px;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .renewables-slider-row input[type="range"] {
+            width: 100%;
+            accent-color: var(--accent);
+        }
+
+        .renewables-region-meta {
+            margin-top: 7px;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        #renewablesRegionPlot {
+            margin-top: 10px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 8px;
+            background: var(--surface-2);
+        }
+
+        /* ── Responsive ───────────────────────────────────────── */
         @media (max-width: 768px) {
 
             .button-group,
@@ -816,22 +1081,37 @@
             .button-group .btn,
             .button-group-with-input .btn {
                 margin-right: 0;
-                margin-bottom: 8px;
+                margin-bottom: 6px;
             }
 
             .button-group-with-input input {
                 width: 100%;
-                margin-bottom: 8px;
+                margin-bottom: 6px;
             }
         }
 
-        /* Extra small screens - ensure even better stacking */
         @media (max-width: 480px) {
             .btn {
                 width: 100%;
                 margin-right: 0;
                 text-align: center;
             }
+        }
+
+        /* ── Utility ─────────────────────────────────────────── */
+        .hint {
+            font-size: 12px;
+            color: var(--text-faint);
+            line-height: 1.5;
+        }
+
+        code {
+            background: var(--surface-3);
+            padding: 1px 5px;
+            border-radius: 2px;
+            font-size: 0.9em;
+            font-family: var(--font-mono);
+            color: var(--navy-mid);
         }
     </style>
 </head>
@@ -844,22 +1124,19 @@
 
     <!-- Navbar -->
     <div id="navbar">
-        <h1>⚡ PowerGenome Design</h1>
+        <h1>PowerGenome System Design</h1>
         <div class="nav-steps">
-            <div class="nav-step active" onclick="goToStep(1)">1. Regions</div>
-            <div class="nav-step" onclick="goToStep(2)">2. Model Setup</div>
-            <div class="nav-step" onclick="goToStep(3)">3. Existing Plants</div>
-            <div class="nav-step" onclick="goToStep(4)">4. New Resources</div>
-            <div class="nav-step" onclick="goToStep(5)">5. Fuels</div>
-            <div class="nav-step" onclick="goToStep(6)">6. ESR Policies</div>
-            <div class="nav-step" onclick="goToStep(7)">7. Resource Groups</div>
-            <div class="nav-step" onclick="goToStep(8)">8. Renewables</div>
-            <div class="nav-step" onclick="goToStep(9)">9. Export</div>
+            <div class="nav-step active" onclick="goToStep(1)"><span class="step-num">1</span> Regions</div>
+            <div class="nav-step" onclick="goToStep(2)"><span class="step-num">2</span> Model Setup</div>
+            <div class="nav-step" onclick="goToStep(3)"><span class="step-num">3</span> Existing Plants</div>
+            <div class="nav-step" onclick="goToStep(4)"><span class="step-num">4</span> New Resources</div>
+            <div class="nav-step" onclick="goToStep(5)"><span class="step-num">5</span> Fuels</div>
+            <div class="nav-step" onclick="goToStep(6)"><span class="step-num">6</span> ESR Policies</div>
+            <div class="nav-step" onclick="goToStep(7)"><span class="step-num">7</span> Resource Groups</div>
+            <div class="nav-step" onclick="goToStep(8)"><span class="step-num">8</span> Renewables</div>
+            <div class="nav-step" onclick="goToStep(9)"><span class="step-num">9</span> Export</div>
         </div>
-        <div style="font-size: 12px;">
-            <a href="https://gschivley.github.io/PowerGenome-tools/" target="_blank"
-                style="color: #bdc3c7; text-decoration: none;">Docs ↗</a>
-        </div>
+        <a href="https://gschivley.github.io/PowerGenome-tools/" target="_blank" class="nav-docs-link">Docs ↗</a>
     </div>
 
     <div id="wizard-content">

@@ -1,6 +1,6 @@
 # Web Application
 
-The PowerGenome Settings Builder is a comprehensive web-based interface for building complete PowerGenome settings files. It guides users through a step-by-step workflow to define model regions, configure resources, and export ready-to-use configuration files. The application runs entirely in the browser using PyScript—no installation required.
+PowerGenome System Design is a comprehensive web-based interface for building complete PowerGenome settings files. It guides users through a step-by-step workflow to define model regions, configure resources, and export ready-to-use configuration files. The application runs entirely in the browser using PyScript—no installation required.
 
 [Launch Web App](https://gschivley.github.io/PowerGenome-tools/web/){ .md-button .md-button--primary }
 
