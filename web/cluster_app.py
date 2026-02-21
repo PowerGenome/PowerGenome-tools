@@ -3278,6 +3278,8 @@ def reset_region_dependent_state():
     _render_esr = globals().get("render_esr_results")
     if callable(_render_esr):
         _render_esr()
+
+
 def reset_planning_year_dependent_state():
     """Reset all state attributes that depend on planning years.
 
@@ -3317,6 +3319,8 @@ def on_model_years_change(event):
     except NameError:
         # If status messaging is not available, fail silently.
         pass
+
+
 def on_clear_selection(event):
     """Clear all selections."""
     # Reset cluster state
@@ -4852,21 +4856,73 @@ def parse_new_resources_text(text):
 
 
 def render_new_resources_list():
+    """Render both regular and modified (attribute-override) new resources together."""
     container = document.getElementById("newResourcesList")
     raw_el = document.getElementById("newResourcesRaw")
-    if not container or not raw_el:
+    if not container:
         return
 
-    items = parse_new_resources_text(raw_el.value)
-    if not items:
+    # Parse regular resources from textarea
+    regular_items = []
+    if raw_el:
+        regular_items = parse_new_resources_text(raw_el.value)
+
+    # Get resources with attribute modifiers
+    modified_items = []
+    for key in sorted(state.modified_new_resources.keys()):
+        item = state.modified_new_resources[key]
+        # Only include items that are purely attribute modifiers (not custom fuels or identity changes)
+        if (
+            (item.get("fuel_type") == "standard" or item.get("fuel_type") == "none")
+            and item.get("technology") == item.get("new_technology")
+            and item.get("tech_detail") == item.get("new_tech_detail")
+            and item.get("cost_case") == item.get("new_cost_case")
+        ):
+            attr_mods = item.get("attr_modifiers") or {}
+            if attr_mods:  # Only show if it actually has attribute modifiers
+                modified_items.append((key, item, attr_mods))
+
+    if not regular_items and not modified_items:
         container.innerHTML = "<em>No new-build resources selected yet.</em>"
         return
 
     parts = []
-    for tech, detail, case, size in items:
+
+    # Render regular resources with delete buttons
+    for idx, (tech, detail, case, size) in enumerate(regular_items):
         parts.append(
-            f"<div class='candidate-item'><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW</div>"
+            f"<div class='candidate-item' style='display: flex; justify-content: space-between; align-items: center;'>"
+            f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW</span>"
+            f"<button onclick='window.deleteNewResource({idx})' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
+            f"</div>"
         )
+
+    # Render modified resources (with attribute overrides) with delete buttons
+    for key, item, attr_mods in modified_items:
+        tech = item.get("technology")
+        detail = item.get("tech_detail")
+        case = item.get("cost_case")
+        size = item.get("size_mw", 1)
+
+        # Build modifier summary
+        mod_summary = []
+        for attr, val in sorted(attr_mods.items()):
+            if isinstance(val, list) and len(val) == 2:
+                mod_summary.append(f"{attr}=[{val[0]}, {val[1]}]")
+            else:
+                mod_summary.append(f"{attr}={val}")
+        mod_text = "; ".join(mod_summary[:3])  # Show first 3 modifiers
+        if len(mod_summary) > 3:
+            mod_text += f" (+{len(mod_summary)-3} more)"
+
+        parts.append(
+            f"<div class='candidate-item' style='display: flex; justify-content: space-between; align-items: center; background-color: #fff3cd;'>"
+            f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW "
+            f"<span style='color: #856404; font-size: 10px;'>({html.escape(mod_text)})</span></span>"
+            f"<button onclick='window.deleteModifiedNewResource(\"{html.escape(key, quote=True)}\")' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
+            f"</div>"
+        )
+
     container.innerHTML = "".join(parts)
 
 
@@ -4897,21 +4953,53 @@ def on_add_new_resource(event):
     attr_overrides = {}
     override_fields = [
         ("capex_mw", "atbOverrideCapex"),
+        ("capex_mwh", "atbOverrideCapexMwh"),
         ("heat_rate", "atbOverrideHeatRate"),
         ("fixed_o_m_mw", "atbOverrideFixedOM"),
         ("variable_o_m_mwh", "atbOverrideVarOM"),
+        ("variable_o_m_mwh_in", "atbOverrideVarOMIn"),
         ("wacc_real", "atbOverrideWacc"),
     ]
     for attr, el_id in override_fields:
         el = document.getElementById(el_id)
-        if el is not None and str(el.value).strip():
-            try:
-                attr_overrides[attr] = float(str(el.value).strip())
-            except ValueError:
-                set_status(
-                    f"Invalid value for {attr}: '{el.value.strip()}'", "error"
-                )
-                return
+        if el is None:
+            continue
+
+        # Get value safely and check if it's actually filled in
+        try:
+            raw_value = el.value
+        except Exception:
+            continue
+
+        if raw_value is None or raw_value == "":
+            continue
+
+        value_str = str(raw_value).strip()
+        if not value_str or value_str.lower() == "none":
+            continue
+
+        try:
+            # Check if value starts with an operator (e.g., "add:100", "mul:1.1")
+            if ":" in value_str:
+                parts = value_str.split(":", 1)
+                if len(parts) == 2:
+                    op, val = parts[0].strip().lower(), parts[1].strip()
+                    if op in ["add", "mul", "truediv", "sub"]:
+                        attr_overrides[attr] = [op, float(val)]
+                    else:
+                        set_status(
+                            f"Invalid operator for {attr}: '{op}'. Must be add, mul, truediv, or sub.",
+                            "error",
+                        )
+                        return
+                else:
+                    raise ValueError("Invalid format")
+            else:
+                # Plain numeric value
+                attr_overrides[attr] = float(value_str)
+        except ValueError:
+            set_status(f"Invalid value for {attr}: '{value_str}'", "error")
+            return
 
     if attr_overrides:
         # Add as a modified resource so PowerGenome applies the attribute overrides
@@ -4945,6 +5033,17 @@ def on_add_new_resource(event):
             "fuel_desc": fuel_desc,
         }
         render_modified_resources_list()
+        render_new_resources_list()  # Also update the main list to show this resource
+
+        # Clear override fields for next entry
+        for attr, el_id in override_fields:
+            el = document.getElementById(el_id)
+            if el is not None:
+                try:
+                    el.value = ""
+                except Exception:
+                    pass
+
         n = len(attr_overrides)
         set_status(
             f"Added '{key}' as a modified resource with {n} attribute override(s).",
@@ -4957,26 +5056,92 @@ def on_add_new_resource(event):
         render_new_resources_list()
 
 
+def delete_new_resource(index):
+    """Delete a regular new resource by index."""
+    raw_el = document.getElementById("newResourcesRaw")
+    if not raw_el:
+        return
+
+    items = parse_new_resources_text(raw_el.value)
+    if 0 <= index < len(items):
+        items.pop(index)
+        # Rebuild textarea
+        lines = [
+            f"{tech} | {detail} | {case} | {size}" for tech, detail, case, size in items
+        ]
+        raw_el.value = "\n".join(lines)
+        render_new_resources_list()
+        set_status("Resource deleted.", "success")
+
+
+def delete_modified_new_resource(key):
+    """Delete a modified new resource with attribute overrides by key."""
+    if key in state.modified_new_resources:
+        del state.modified_new_resources[key]
+        render_modified_resources_list()
+        render_new_resources_list()  # Update main list too
+        set_status(f"Deleted modified resource: {key}", "success")
+    else:
+        set_status(f"Resource not found: {key}", "error")
+
+
+# Export delete functions to JavaScript (must be after function definitions)
+window.deleteNewResource = create_proxy(delete_new_resource)
+window.deleteModifiedNewResource = create_proxy(delete_modified_new_resource)
+
+
 def render_modified_resources_list():
+    """Render resources with custom fuels or technology identity changes.
+
+    Resources with ONLY attribute modifiers (no fuel/identity changes) are shown
+    in the main new_resources list instead.
+    """
     container = document.getElementById("modifiedResourcesList")
     if not container:
         return
-    if not state.modified_new_resources:
-        container.innerHTML = "<em>No modified resources added yet.</em>"
+
+    # Filter to only show resources with custom fuels or identity changes
+    to_display = []
+    for key in sorted(state.modified_new_resources.keys()):
+        item = state.modified_new_resources[key]
+        # Show if: custom fuel, OR technology/detail/case changed
+        if (
+            item.get("fuel_type") == "new"
+            or item.get("technology") != item.get("new_technology")
+            or item.get("tech_detail") != item.get("new_tech_detail")
+            or item.get("cost_case") != item.get("new_cost_case")
+        ):
+            to_display.append((key, item))
+
+    if not to_display:
+        container.innerHTML = (
+            "<em>No modified resources with custom fuels or identity changes.</em>"
+        )
         return
 
     parts = []
-    for key in sorted(state.modified_new_resources.keys()):
-        item = state.modified_new_resources[key]
+    for key, item in to_display:
         new_tech = item.get("new_technology")
         fuel_desc = item.get("fuel_desc", "")
         tag_class = item.get("tag_class", "")
-        try:
-            n_mods = len(item.get("attr_modifiers") or {})
-        except Exception:
-            n_mods = 0
+
+        # Build a summary of attribute modifiers
+        attr_mods = item.get("attr_modifiers") or {}
+        mod_summary = []
+        for attr, val in sorted(attr_mods.items()):
+            if isinstance(val, list) and len(val) == 2:
+                # Operator-based modification
+                mod_summary.append(f"{attr}=[{val[0]}, {val[1]}]")
+            else:
+                # Absolute value
+                mod_summary.append(f"{attr}={val}")
+
+        mod_text = "; ".join(mod_summary) if mod_summary else "no attr modifiers"
         parts.append(
-            f"<div class='candidate-item'><strong>{html.escape(key)}</strong> — {html.escape(str(new_tech))} — {html.escape(str(tag_class))} — {html.escape(str(fuel_desc))} — {n_mods} modifiers</div>"
+            f"<div class='candidate-item' style='display: flex; justify-content: space-between; align-items: center;'>"
+            f"<span><strong>{html.escape(key)}</strong> — {html.escape(str(new_tech))} — {html.escape(str(tag_class))} — {html.escape(str(fuel_desc))} — ({html.escape(mod_text)})</span>"
+            f"<button onclick='window.deleteModifiedNewResource(\"{html.escape(key, quote=True)}\")' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
+            f"</div>"
         )
     container.innerHTML = "".join(parts)
 
@@ -6928,30 +7093,44 @@ def generate_resources_settings():
             if isinstance(state.renewables_clusters, list) and state.renewables_clusters
             else DEFAULT_RENEWABLES_CLUSTERS
         ),
-        "modified_new_resources": (
-            {
-                k: (
-                    {
-                        "technology": v["technology"],
-                        "tech_detail": v["tech_detail"],
-                        "cost_case": v["cost_case"],
-                        "size_mw": v["size_mw"],
-                        "new_technology": v["new_technology"],
-                        "new_tech_detail": v["new_tech_detail"],
-                        "new_cost_case": v["new_cost_case"],
-                        **(
-                            v.get("attr_modifiers")
-                            if isinstance(v.get("attr_modifiers"), dict)
-                            else {}
-                        ),
-                    }
-                )
-                for k, v in sorted(state.modified_new_resources.items())
-            }
-            if state.modified_new_resources
-            else None
-        ),
     }
+
+    # Build resource_modifiers from modified_new_resources
+    # This replaces the old modified_new_resources in the YAML output
+    if state.modified_new_resources:
+        resource_modifiers = {}
+        for k, v in sorted(state.modified_new_resources.items()):
+            modifier_dict = {
+                "technology": v["technology"],
+                "tech_detail": v["tech_detail"],
+            }
+            # Add attribute overrides (can be numeric or [operator, value] lists)
+            if isinstance(v.get("attr_modifiers"), dict):
+                modifier_dict.update(v["attr_modifiers"])
+            resource_modifiers[k] = modifier_dict
+        out["resource_modifiers"] = resource_modifiers
+
+    # Also output modified_new_resources for custom fuels (if any have new fuel types)
+    modified_with_fuel = {}
+    if state.modified_new_resources:
+        for k, v in sorted(state.modified_new_resources.items()):
+            # Only include in modified_new_resources if it has custom fuel or needs the full structure
+            if v.get("fuel_type") == "new" or (
+                v.get("new_technology") != v.get("technology")
+                or v.get("new_tech_detail") != v.get("tech_detail")
+                or v.get("new_cost_case") != v.get("cost_case")
+            ):
+                modified_with_fuel[k] = {
+                    "technology": v["technology"],
+                    "tech_detail": v["tech_detail"],
+                    "cost_case": v["cost_case"],
+                    "size_mw": v["size_mw"],
+                    "new_technology": v["new_technology"],
+                    "new_tech_detail": v["new_tech_detail"],
+                    "new_cost_case": v["new_cost_case"],
+                }
+    if modified_with_fuel:
+        out["modified_new_resources"] = modified_with_fuel
 
     # Remove nulls to keep YAML clean
     out = {k: v for k, v in out.items() if v is not None}

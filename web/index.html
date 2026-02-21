@@ -1631,37 +1631,45 @@
                         <div style="padding: 8px 0 4px 12px; border-left: 2px solid #ddd; margin-top: 6px;">
                             <div style="font-size: 11px; color: #666; margin-bottom: 6px;">
                                 Leave blank to use ATB defaults. If any value is set, the resource will be
-                                added as a modified resource (under <code>modified_new_resources</code>).
+                                added as a modified resource (under <code>resource_modifiers</code>).
+                                Use numeric values for absolute settings or prefix with operator
+                                (<code>add:</code>, <code>mul:</code>, <code>truediv:</code>, <code>sub:</code>)
+                                for relative changes (e.g., <code>add:1000</code> or <code>mul:1.1</code>).
                             </div>
                             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px;">
                                 <div>
                                     <label style="font-size: 11px; display: block;">CAPEX ($/MW)</label>
-                                    <input id="atbOverrideCapex" type="number" min="0" step="1"
-                                        placeholder="ATB default"
+                                    <input id="atbOverrideCapex" type="text" placeholder="ATB default"
+                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                </div>
+                                <div>
+                                    <label style="font-size: 11px; display: block;">CAPEX Storage ($/MWh)</label>
+                                    <input id="atbOverrideCapexMwh" type="text" placeholder="For batteries only"
                                         style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
                                 </div>
                                 <div>
                                     <label style="font-size: 11px; display: block;">Heat Rate (MMBtu/MWh)</label>
-                                    <input id="atbOverrideHeatRate" type="number" min="0" step="0.01"
-                                        placeholder="ATB default"
+                                    <input id="atbOverrideHeatRate" type="text" placeholder="ATB default"
                                         style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
                                 </div>
                                 <div>
                                     <label style="font-size: 11px; display: block;">Fixed O&amp;M ($/MW-yr)</label>
-                                    <input id="atbOverrideFixedOM" type="number" min="0" step="1"
-                                        placeholder="ATB default"
+                                    <input id="atbOverrideFixedOM" type="text" placeholder="ATB default"
                                         style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
                                 </div>
                                 <div>
                                     <label style="font-size: 11px; display: block;">Variable O&amp;M ($/MWh)</label>
-                                    <input id="atbOverrideVarOM" type="number" min="0" step="0.01"
-                                        placeholder="ATB default"
+                                    <input id="atbOverrideVarOM" type="text" placeholder="ATB default"
+                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                </div>
+                                <div>
+                                    <label style="font-size: 11px; display: block;">Variable O&amp;M In ($/MWh)</label>
+                                    <input id="atbOverrideVarOMIn" type="text" placeholder="For batteries only"
                                         style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
                                 </div>
                                 <div>
                                     <label style="font-size: 11px; display: block;">WACC real (0–1)</label>
-                                    <input id="atbOverrideWacc" type="number" min="0" max="1" step="0.001"
-                                        placeholder="ATB default"
+                                    <input id="atbOverrideWacc" type="text" placeholder="ATB default"
                                         style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
                                 </div>
                             </div>
@@ -1671,21 +1679,29 @@
                     <button class="btn btn-secondary" id="addNewResourceBtn" type="button">Add New-build
                         Resource</button>
 
+                    <div style="font-size: 11px; color: #666; margin-top: 8px; margin-bottom: 4px;">
+                        Resources are listed below. Resources with attribute overrides are shown with a yellow
+                        background.
+                    </div>
                     <div id="newResourcesList" class="ba-list" style="margin-top: 8px;">
                         <em>No new-build resources selected yet.</em>
                     </div>
 
-                    <label style="font-size: 12px; margin-top: 8px;">Manual new_resources (one per line)</label>
+                    <label style="font-size: 12px; margin-top: 16px;">Manual new_resources (one per line)</label>
+                    <div style="font-size: 11px; color: #666; margin-bottom: 4px;">
+                        You can also add resources manually in the format: Technology | Tech Detail | Cost Case | Size
+                    </div>
                     <textarea id="newResourcesRaw"
                         style="width: 100%; height: 90px; font-family: monospace; font-size: 11px; border: 1px solid #ddd; border-radius: 4px; padding: 8px;"
                         placeholder="Example: NaturalGas | 1-on-1 Combined Cycle (H-Frame) | Moderate | 500"></textarea>
                 </div>
 
                 <div class="section">
-                    <label>Modified New Resources</label>
+                    <label>Modified New Resources (Advanced)</label>
                     <div style="font-size: 11px; color: #666; margin-bottom: 8px;">
-                        Creates entries under <code>modified_new_resources</code>. You will be asked to define the fuel
-                        and resource class tags.
+                        Create custom resources with new fuels or changed technology identity.
+                        <strong>Note:</strong> For simple attribute overrides (cost/performance adjustments),
+                        use the "Optional: Override cost/performance attributes" panel above instead.
                     </div>
 
                     <label style="font-size: 12px;">Name (key)</label>

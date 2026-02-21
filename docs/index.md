@@ -24,7 +24,7 @@ The project consists of an interactive **[Web Application](web_app.md)** that wa
 * **Comprehensive Configuration**: Define all major PowerGenome settings in one place, from regional boundaries to resource portfolios.
 * **Flexible Grouping**: Cluster regions based on various hierarchies like NERC regions, Transmission Groups, or States.
 * **Plant Aggregation**: Cluster power plants within regions based on technology and efficiency, allocating clusters based on a budget while minimizing variability.
-* **NREL ATB Integration**: Select new-build resources directly from NREL's Annual Technology Baseline with support for custom modified resources.
+* **NREL ATB Integration**: Select new-build resources directly from NREL's Annual Technology Baseline with support for custom modified resources and cost/performance attribute overrides.
 * **Complete Settings Export**: Generate all seven major PowerGenome settings YAML files ready for use.
 
 ## Getting Started
