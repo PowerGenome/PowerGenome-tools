@@ -5219,8 +5219,6 @@ def on_add_modified_resource(event):
     new_detail_el = document.getElementById("modNewTechDetail")
     new_case_el = document.getElementById("modNewCostCase")
 
-    attr_mods_el = document.getElementById("modAttrModifiers")
-
     fuel_type_el = document.getElementById("modFuelType")
     std_fuel_el = document.getElementById("modStandardFuel")
     new_fuel_name_el = document.getElementById("modNewFuelName")
@@ -5247,44 +5245,57 @@ def on_add_modified_resource(event):
     new_detail = str(_get_select_value(new_detail_el, "")).strip()
     new_case = str(_get_select_value(new_case_el, "")).strip()
 
-    # Optional attribute modifiers (YAML mapping)
+    # Collect optional attribute overrides from the collapsible panel
     attr_modifiers = {}
-    if attr_mods_el is not None:
-        raw_mods = str(_get_select_value(attr_mods_el, "") or "").strip()
-        if raw_mods:
-            try:
-                parsed = yaml.safe_load(raw_mods)
-            except Exception as exc:
-                set_status(f"Attribute modifiers YAML error: {exc}", "error")
-                return
+    override_fields = [
+        ("capex_mw", "modOverrideCapexMw"),
+        ("capex_mwh", "modOverrideCapexMwh"),
+        ("heat_rate", "modOverrideHeatRate"),
+        ("fixed_o_m_mw", "modOverrideFixedOM"),
+        ("variable_o_m_mwh", "modOverrideVarOM"),
+        ("variable_o_m_mwh_in", "modOverrideVarOMIn"),
+        ("wacc_real", "modOverrideWacc"),
+    ]
+    for attr, el_id in override_fields:
+        el = document.getElementById(el_id)
+        if el is None:
+            continue
 
-            if not isinstance(parsed, dict):
-                set_status(
-                    "Attribute modifiers must be a YAML mapping (key: value).",
-                    "error",
-                )
-                return
+        # Get value safely and check if it's actually filled in
+        try:
+            raw_value = el.value
+        except Exception:
+            continue
 
-            reserved_keys = {
-                "technology",
-                "tech_detail",
-                "cost_case",
-                "size_mw",
-                "new_technology",
-                "new_tech_detail",
-                "new_cost_case",
-            }
-            overlap = reserved_keys & set(parsed.keys())
-            if overlap:
-                set_status(
-                    "Attribute modifiers cannot change core resource identity fields. "
-                    "These fields are managed automatically by the resource definition; "
-                    "please use different keys for custom attributes.",
-                    "error",
-                )
-                return
+        if raw_value is None or raw_value == "":
+            continue
 
-            attr_modifiers = parsed
+        value_str = str(raw_value).strip()
+        if not value_str or value_str.lower() == "none":
+            continue
+
+        try:
+            # Check if value starts with an operator (e.g., "add:100", "mul:1.1")
+            if ":" in value_str:
+                parts = value_str.split(":", 1)
+                if len(parts) == 2:
+                    op, val = parts[0].strip().lower(), parts[1].strip()
+                    if op in ["add", "mul", "truediv", "sub"]:
+                        attr_modifiers[attr] = [op, float(val)]
+                    else:
+                        set_status(
+                            f"Invalid operator for {attr}: '{op}'. Must be add, mul, truediv, or sub.",
+                            "error",
+                        )
+                        return
+                else:
+                    raise ValueError("Invalid format")
+            else:
+                # Plain numeric value
+                attr_modifiers[attr] = float(value_str)
+        except ValueError:
+            set_status(f"Invalid value for {attr}: '{value_str}'", "error")
+            return
 
     if not (
         base_tech and base_detail and base_case and new_tech and new_detail and new_case
@@ -5351,12 +5362,14 @@ def on_add_modified_resource(event):
         "fuel_desc": fuel_desc,
     }
 
-    # Clear modifiers editor for next entry
-    if attr_mods_el is not None:
-        try:
-            attr_mods_el.value = ""
-        except Exception:
-            pass
+    # Clear attribute override fields for next entry
+    for attr, el_id in override_fields:
+        el = document.getElementById(el_id)
+        if el is not None:
+            try:
+                el.value = ""
+            except Exception:
+                pass
 
     render_modified_resources_list()
     set_status(f"Added modified resource: {key}", "success")

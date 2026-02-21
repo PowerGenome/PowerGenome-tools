@@ -1728,18 +1728,54 @@
                     <label style="font-size: 12px; margin-top: 8px;">New: Cost Case</label>
                     <input id="modNewCostCase" type="text" placeholder="e.g., Moderate" />
 
-                    <label style="font-size: 12px; margin-top: 8px;">Attribute modifiers (optional)</label>
-                    <textarea id="modAttrModifiers"
-                        style="width: 100%; height: 110px; font-family: monospace; font-size: 11px; border: 1px solid #ddd; border-radius: 4px; padding: 8px;"
-                        placeholder="Example:
-capex_mw: [add, 116000]
-heat_rate: [add, 0.365]
-fixed_o_m_mw: [add, 9670]
-variable_o_m_mwh: [mul, 1.076]
-wacc_real: 0.05"></textarea>
-                    <div style="font-size: 11px; color: #666; margin-top: 4px;">
-                        YAML mapping applied under <code>modified_new_resources</code> for this entry.
-                    </div>
+                    <details style="margin-top: 8px;">
+                        <summary style="font-weight: 600; cursor: pointer; font-size: 12px;">Optional: Override
+                            cost/performance attributes</summary>
+                        <div style="margin-top: 10px; padding: 10px; background: #f5f5f5; border-radius: 4px;">
+                            <div style="font-size: 10px; color: #555; margin-bottom: 8px;">
+                                Leave blank to use ATB default. Use operators for relative changes:
+                                <code>add:value</code>, <code>mul:value</code>, <code>truediv:value</code>,
+                                <code>sub:value</code>
+                            </div>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                                <div>
+                                    <label style="font-size: 11px; display: block;">CapEx ($/MW)</label>
+                                    <input id="modOverrideCapexMw" type="text" placeholder="ATB default"
+                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                </div>
+                                <div>
+                                    <label style="font-size: 11px; display: block;">CapEx ($/MWh)</label>
+                                    <input id="modOverrideCapexMwh" type="text" placeholder="ATB default"
+                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                </div>
+                                <div>
+                                    <label style="font-size: 11px; display: block;">Heat Rate (MMBtu/MWh)</label>
+                                    <input id="modOverrideHeatRate" type="text" placeholder="ATB default"
+                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                </div>
+                                <div>
+                                    <label style="font-size: 11px; display: block;">Fixed O&amp;M ($/MW-yr)</label>
+                                    <input id="modOverrideFixedOM" type="text" placeholder="ATB default"
+                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                </div>
+                                <div>
+                                    <label style="font-size: 11px; display: block;">Variable O&amp;M ($/MWh)</label>
+                                    <input id="modOverrideVarOM" type="text" placeholder="ATB default"
+                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                </div>
+                                <div>
+                                    <label style="font-size: 11px; display: block;">Variable O&amp;M In ($/MWh)</label>
+                                    <input id="modOverrideVarOMIn" type="text" placeholder="For batteries only"
+                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                </div>
+                                <div style="grid-column: 1 / -1;">
+                                    <label style="font-size: 11px; display: block;">WACC real (0–1)</label>
+                                    <input id="modOverrideWacc" type="text" placeholder="ATB default"
+                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                </div>
+                            </div>
+                        </div>
+                    </details>
 
                     <label style="font-size: 12px; margin-top: 8px;">Fuel Type</label>
                     <select id="modFuelType">
