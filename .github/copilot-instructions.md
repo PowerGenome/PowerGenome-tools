@@ -70,8 +70,9 @@ Only the web app in `/web` matters; CLI and legacy docs are ignored.
 - Test changes by serving `/web` via local HTTP server (e.g., `python -m http.server 8000`).
 - ALWAYS use the `test-writer` subagent (via the `runSubagent` tool) to write tests for any new or changed functionality.
 - Use browser console for PyScript errors; use `console.log()` in Python via `js.console.log()`.
-- Local environment set up using uv and .venv. All scripts and tests should use this environment.
+- Local environment set up using uv and .venv. All development dependencies are included in `pyproject.toml`. Use `uv sync` to install them into your virtual environment.
 - Dependencies are listed in pyproject.toml and uv.lock.
+- **Manditory**: Copilot and other AI tools should try to use uv or the local venv when running tests or scripts, not a global Python installation. This ensures consistent dependencies and environment across developers.
 
 ## PowerGenome Context
 - This web app is designed to help users build their settings for PowerGenome.
