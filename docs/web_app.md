@@ -424,6 +424,43 @@ You can also paste resources manually, one per line:
 
     Technology | Tech Detail | Cost Case | Size
 
+#### Customize Attributes (Optional)
+
+After selecting an ATB resource, you can optionally click **⚙ Customize attributes** to override default ATB values. This compact panel allows you to adjust key technical and cost parameters:
+
+**Cost and Performance Overrides:**
+
+* **capex_mw** ($/MW): Capital cost adjustment using add or multiply operation
+* **heat_rate** (MMBtu/MWh): Heat rate adjustment using add or multiply operation  
+* **fixed_o_m_mw** ($/MW-yr): Fixed O&M adjustment using add or multiply operation
+* **variable_o_m_mwh** ($/MWh): Variable O&M adjustment using add or multiply operation
+* **wacc_real**: Weighted average cost of capital (direct value, e.g., 0.05 for 5%)
+
+Each parameter has an operation dropdown:
+
+* **—** (no change): Use the ATB default value
+* **add**: Add the specified value to the ATB default
+* **mul**: Multiply the ATB default by the specified factor
+
+**Resource Identity:**
+
+* **Resource key**: Auto-generated identifier (editable to create a unique name)
+* **Resource class**: Automatically inferred from technology (THERM, VRE, STOR, HYDRO, MUST_RUN, LDS)
+* **Fuel**: Automatically inferred from technology (naturalgas, coal, distillate, uranium, or no fuel for VRE/storage)
+
+!!! example "Example: Higher cost offshore wind"
+    To model offshore wind with project-specific cost increases:
+    
+    1. Select: OffShoreWind → Class12 → Moderate → 1 MW
+    2. Open "⚙ Customize attributes"
+    3. Set capex_mw operation to **add**, value **200000** (adds $200k/MW)
+    4. Click "Add New-build Resource"
+    
+    The resource is added to `modified_new_resources` with the capital cost override applied.
+
+!!! note
+    Resources with customized attributes are automatically added to the `modified_new_resources` section instead of the standard `new_resources` list. If no attributes are modified, the resource is added as a standard ATB resource.
+
 ### Modified New Resources
 
 Create custom resources by modifying existing ATB entries:

@@ -12,7 +12,7 @@ import importlib.util
 import math
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import networkx as nx
 import numpy as np
@@ -2312,3 +2312,641 @@ class TestRunClustering:
             assert info == {}
         finally:
             self._restore_state(cluster_app, orig)
+
+
+# ---------------------------------------------------------------------------
+# 21. Inline Attribute Customization
+# ---------------------------------------------------------------------------
+
+
+class TestInlineAttrCustomization:
+    """Tests for inline attribute customization panel functionality."""
+
+    @pytest.fixture(autouse=True)
+    def reset_state(self, cluster_app):
+        """Reset modified_new_resources state before each test."""
+        cluster_app.state.modified_new_resources = {}
+        yield
+        cluster_app.state.modified_new_resources = {}
+
+    def _mock_element(self, value="", has_value=True):
+        """Create a mock DOM element with a value property."""
+        mock_el = MagicMock()
+        if has_value:
+            mock_el.value = value
+        mock_el.classList.contains.return_value = False
+        return mock_el
+
+    def _setup_document_mock(self, cluster_app, element_values):
+        """
+        Setup document.getElementById to return mock elements.
+        
+        Args:
+            cluster_app: The cluster_app module
+            element_values: Dict mapping element IDs to values
+        """
+        def get_element_by_id(element_id):
+            if element_id not in element_values:
+                return None
+            value = element_values[element_id]
+            if value is None:
+                return None
+            mock_el = self._mock_element(value)
+            # Special handling for classList.contains("hidden")
+            if element_id == "attrCustomizeContent":
+                mock_el.classList.contains.return_value = value == "hidden"
+            return mock_el
+        
+        return patch.object(
+            cluster_app, 'document', MagicMock(getElementById=get_element_by_id)
+        )
+
+    # -----------------------------------------------------------------------
+    # Tests for _collect_inline_attr_modifiers
+    # -----------------------------------------------------------------------
+
+    def test_empty_panel(self, cluster_app):
+        """No attributes set → returns ({}, 'naturalgas', 'THERM')."""
+        element_values = {
+            "attrCapexOp": "",
+            "attrCapexVal": "",
+            "attrHeatRateOp": "",
+            "attrHeatRateVal": "",
+            "attrFixedOmOp": "",
+            "attrFixedOmVal": "",
+            "attrVarOmOp": "",
+            "attrVarOmVal": "",
+            "attrWaccVal": "",
+            "attrFuel": "naturalgas",
+            "attrTagClass": "THERM",
+        }
+        
+        with self._setup_document_mock(cluster_app, element_values):
+            result = cluster_app._collect_inline_attr_modifiers()
+        
+        attr_modifiers, fuel, tag_class = result
+        assert attr_modifiers == {}
+        assert fuel == "naturalgas"
+        assert tag_class == "THERM"
+
+    def test_capex_add(self, cluster_app):
+        """Capex with 'add' operation → {'capex_mw': ['add', 116000]}."""
+        element_values = {
+            "attrCapexOp": "add",
+            "attrCapexVal": "116000",
+            "attrHeatRateOp": "",
+            "attrHeatRateVal": "",
+            "attrFixedOmOp": "",
+            "attrFixedOmVal": "",
+            "attrVarOmOp": "",
+            "attrVarOmVal": "",
+            "attrWaccVal": "",
+            "attrFuel": "naturalgas",
+            "attrTagClass": "THERM",
+        }
+        
+        with self._setup_document_mock(cluster_app, element_values):
+            result = cluster_app._collect_inline_attr_modifiers()
+        
+        attr_modifiers, fuel, tag_class = result
+        assert attr_modifiers == {"capex_mw": ["add", 116000.0]}
+        assert fuel == "naturalgas"
+        assert tag_class == "THERM"
+
+    def test_heat_rate_mul(self, cluster_app):
+        """Heat rate with 'mul' operation → {'heat_rate_mmbtu_mwh': ['mul', 1.1]}."""
+        element_values = {
+            "attrCapexOp": "",
+            "attrCapexVal": "",
+            "attrHeatRateOp": "mul",
+            "attrHeatRateVal": "1.1",
+            "attrFixedOmOp": "",
+            "attrFixedOmVal": "",
+            "attrVarOmOp": "",
+            "attrVarOmVal": "",
+            "attrWaccVal": "",
+            "attrFuel": "naturalgas",
+            "attrTagClass": "THERM",
+        }
+        
+        with self._setup_document_mock(cluster_app, element_values):
+            result = cluster_app._collect_inline_attr_modifiers()
+        
+        attr_modifiers, fuel, tag_class = result
+        assert attr_modifiers == {"heat_rate_mmbtu_mwh": ["mul", 1.1]}
+        assert fuel == "naturalgas"
+        assert tag_class == "THERM"
+
+    def test_wacc_direct(self, cluster_app):
+        """WACC direct override → {'wacc_real': 0.05}."""
+        element_values = {
+            "attrCapexOp": "",
+            "attrCapexVal": "",
+            "attrHeatRateOp": "",
+            "attrHeatRateVal": "",
+            "attrFixedOmOp": "",
+            "attrFixedOmVal": "",
+            "attrVarOmOp": "",
+            "attrVarOmVal": "",
+            "attrWaccVal": "0.05",
+            "attrFuel": "naturalgas",
+            "attrTagClass": "THERM",
+        }
+        
+        with self._setup_document_mock(cluster_app, element_values):
+            result = cluster_app._collect_inline_attr_modifiers()
+        
+        attr_modifiers, fuel, tag_class = result
+        assert attr_modifiers == {"wacc_real": 0.05}
+        assert fuel == "naturalgas"
+        assert tag_class == "THERM"
+
+    def test_fixed_om_add(self, cluster_app):
+        """Fixed O&M with 'add' → {'fixed_o_m_mw': ['add', 9670]}."""
+        element_values = {
+            "attrCapexOp": "",
+            "attrCapexVal": "",
+            "attrHeatRateOp": "",
+            "attrHeatRateVal": "",
+            "attrFixedOmOp": "add",
+            "attrFixedOmVal": "9670",
+            "attrVarOmOp": "",
+            "attrVarOmVal": "",
+            "attrWaccVal": "",
+            "attrFuel": "naturalgas",
+            "attrTagClass": "THERM",
+        }
+        
+        with self._setup_document_mock(cluster_app, element_values):
+            result = cluster_app._collect_inline_attr_modifiers()
+        
+        attr_modifiers, fuel, tag_class = result
+        assert attr_modifiers == {"fixed_o_m_mw": ["add", 9670.0]}
+        assert fuel == "naturalgas"
+        assert tag_class == "THERM"
+
+    def test_var_om_mul(self, cluster_app):
+        """Variable O&M with 'mul' → {'variable_o_m_mwh': ['mul', 1.076]}."""
+        element_values = {
+            "attrCapexOp": "",
+            "attrCapexVal": "",
+            "attrHeatRateOp": "",
+            "attrHeatRateVal": "",
+            "attrFixedOmOp": "",
+            "attrFixedOmVal": "",
+            "attrVarOmOp": "mul",
+            "attrVarOmVal": "1.076",
+            "attrWaccVal": "",
+            "attrFuel": "naturalgas",
+            "attrTagClass": "THERM",
+        }
+        
+        with self._setup_document_mock(cluster_app, element_values):
+            result = cluster_app._collect_inline_attr_modifiers()
+        
+        attr_modifiers, fuel, tag_class = result
+        assert attr_modifiers == {"variable_o_m_mwh": ["mul", 1.076]}
+        assert fuel == "naturalgas"
+        assert tag_class == "THERM"
+
+    def test_invalid_capex(self, cluster_app):
+        """Invalid capex value → returns (None, None, None) and calls set_status."""
+        element_values = {
+            "attrCapexOp": "add",
+            "attrCapexVal": "not_a_number",
+            "attrHeatRateOp": "",
+            "attrHeatRateVal": "",
+            "attrFixedOmOp": "",
+            "attrFixedOmVal": "",
+            "attrVarOmOp": "",
+            "attrVarOmVal": "",
+            "attrWaccVal": "",
+            "attrFuel": "naturalgas",
+            "attrTagClass": "THERM",
+        }
+        
+        with self._setup_document_mock(cluster_app, element_values):
+            with patch.object(cluster_app, 'set_status') as mock_status:
+                result = cluster_app._collect_inline_attr_modifiers()
+        
+        assert result == (None, None, None)
+        mock_status.assert_called_once()
+        call_args = mock_status.call_args[0]
+        assert "Invalid value for capex_mw" in call_args[0]
+        assert call_args[1] == "error"
+
+    def test_vre_fuel_type(self, cluster_app):
+        """VRE resource with fuel='none', tag_class='VRE'."""
+        element_values = {
+            "attrCapexOp": "",
+            "attrCapexVal": "",
+            "attrHeatRateOp": "",
+            "attrHeatRateVal": "",
+            "attrFixedOmOp": "",
+            "attrFixedOmVal": "",
+            "attrVarOmOp": "",
+            "attrVarOmVal": "",
+            "attrWaccVal": "",
+            "attrFuel": "none",
+            "attrTagClass": "VRE",
+        }
+        
+        with self._setup_document_mock(cluster_app, element_values):
+            result = cluster_app._collect_inline_attr_modifiers()
+        
+        attr_modifiers, fuel, tag_class = result
+        assert attr_modifiers == {}
+        assert fuel == "none"
+        assert tag_class == "VRE"
+
+    def test_multiple_attributes(self, cluster_app):
+        """Multiple attributes set at once."""
+        element_values = {
+            "attrCapexOp": "add",
+            "attrCapexVal": "100000",
+            "attrHeatRateOp": "mul",
+            "attrHeatRateVal": "1.05",
+            "attrFixedOmOp": "add",
+            "attrFixedOmVal": "5000",
+            "attrVarOmOp": "mul",
+            "attrVarOmVal": "0.95",
+            "attrWaccVal": "0.07",
+            "attrFuel": "coal",
+            "attrTagClass": "THERM",
+        }
+        
+        with self._setup_document_mock(cluster_app, element_values):
+            result = cluster_app._collect_inline_attr_modifiers()
+        
+        attr_modifiers, fuel, tag_class = result
+        assert attr_modifiers == {
+            "capex_mw": ["add", 100000.0],
+            "heat_rate_mmbtu_mwh": ["mul", 1.05],
+            "fixed_o_m_mw": ["add", 5000.0],
+            "variable_o_m_mwh": ["mul", 0.95],
+            "wacc_real": 0.07,
+        }
+        assert fuel == "coal"
+        assert tag_class == "THERM"
+
+    def test_invalid_wacc(self, cluster_app):
+        """Invalid WACC value → returns (None, None, None) and calls set_status."""
+        element_values = {
+            "attrCapexOp": "",
+            "attrCapexVal": "",
+            "attrHeatRateOp": "",
+            "attrHeatRateVal": "",
+            "attrFixedOmOp": "",
+            "attrFixedOmVal": "",
+            "attrVarOmOp": "",
+            "attrVarOmVal": "",
+            "attrWaccVal": "invalid",
+            "attrFuel": "naturalgas",
+            "attrTagClass": "THERM",
+        }
+        
+        with self._setup_document_mock(cluster_app, element_values):
+            with patch.object(cluster_app, 'set_status') as mock_status:
+                result = cluster_app._collect_inline_attr_modifiers()
+        
+        assert result == (None, None, None)
+        mock_status.assert_called_once()
+        call_args = mock_status.call_args[0]
+        assert "Invalid wacc_real value" in call_args[0]
+        assert call_args[1] == "error"
+
+    # -----------------------------------------------------------------------
+    # Tests for on_add_new_resource with attribute customization
+    # -----------------------------------------------------------------------
+
+    def test_panel_closed(self, cluster_app):
+        """Panel closed → adds to textarea."""
+        element_values = {
+            "newResourcesRaw": "",
+            "atbYearSelect": "2023",
+            "atbTechSelect": "NaturalGas",
+            "atbTechDetailSelect": "CCCCSAvgCF",
+            "atbCostCaseSelect": "Moderate",
+            "atbSizeMw": "500",
+            "attrCustomizeContent": "hidden",  # panel is hidden
+        }
+        
+        mock_raw_el = self._mock_element("")
+        
+        def get_element_by_id(element_id):
+            if element_id == "newResourcesRaw":
+                return mock_raw_el
+            if element_id not in element_values:
+                return None
+            value = element_values[element_id]
+            mock_el = self._mock_element(value)
+            if element_id == "attrCustomizeContent":
+                mock_el.classList.contains.return_value = True  # hidden
+            return mock_el
+        
+        with patch.object(cluster_app, 'document', MagicMock(getElementById=get_element_by_id)):
+            with patch.object(cluster_app, 'render_new_resources_list') as mock_render:
+                cluster_app.on_add_new_resource(None)
+        
+        # Should have added to textarea
+        assert mock_raw_el.value == "NaturalGas | CCCCSAvgCF | Moderate | 500"
+        mock_render.assert_called_once()
+        assert len(cluster_app.state.modified_new_resources) == 0
+
+    def test_panel_open_no_attrs(self, cluster_app):
+        """Panel open but no attributes → adds to textarea."""
+        element_values = {
+            "newResourcesRaw": "",
+            "atbYearSelect": "2023",
+            "atbTechSelect": "NaturalGas",
+            "atbTechDetailSelect": "CCCCSAvgCF",
+            "atbCostCaseSelect": "Moderate",
+            "atbSizeMw": "500",
+            "attrCustomizeContent": "visible",  # panel is open
+            "attrCapexOp": "",
+            "attrCapexVal": "",
+            "attrHeatRateOp": "",
+            "attrHeatRateVal": "",
+            "attrFixedOmOp": "",
+            "attrFixedOmVal": "",
+            "attrVarOmOp": "",
+            "attrVarOmVal": "",
+            "attrWaccVal": "",
+            "attrFuel": "naturalgas",
+            "attrTagClass": "THERM",
+        }
+        
+        mock_raw_el = self._mock_element("")
+        
+        def get_element_by_id(element_id):
+            if element_id == "newResourcesRaw":
+                return mock_raw_el
+            if element_id not in element_values:
+                return None
+            value = element_values[element_id]
+            mock_el = self._mock_element(value)
+            if element_id == "attrCustomizeContent":
+                mock_el.classList.contains.return_value = False  # NOT hidden
+            return mock_el
+        
+        with patch.object(cluster_app, 'document', MagicMock(getElementById=get_element_by_id)):
+            with patch.object(cluster_app, 'render_new_resources_list') as mock_render:
+                cluster_app.on_add_new_resource(None)
+        
+        # Should have added to textarea (no attrs means use textarea path)
+        assert mock_raw_el.value == "NaturalGas | CCCCSAvgCF | Moderate | 500"
+        mock_render.assert_called_once()
+        assert len(cluster_app.state.modified_new_resources) == 0
+
+    def test_panel_open_with_capex(self, cluster_app):
+        """Panel open with capex override → creates modified_new_resources entry."""
+        element_values = {
+            "newResourcesRaw": "",
+            "atbYearSelect": "2023",
+            "atbTechSelect": "NaturalGas",
+            "atbTechDetailSelect": "CCCCSAvgCF",
+            "atbCostCaseSelect": "Moderate",
+            "atbSizeMw": "500",
+            "attrCustomizeContent": "visible",  # panel is open
+            "attrCapexOp": "add",
+            "attrCapexVal": "50000",
+            "attrHeatRateOp": "",
+            "attrHeatRateVal": "",
+            "attrFixedOmOp": "",
+            "attrFixedOmVal": "",
+            "attrVarOmOp": "",
+            "attrVarOmVal": "",
+            "attrWaccVal": "",
+            "attrFuel": "naturalgas",
+            "attrTagClass": "THERM",
+            "attrResKey": "my_custom_ng",
+        }
+        
+        mock_raw_el = self._mock_element("")
+        
+        def get_element_by_id(element_id):
+            if element_id == "newResourcesRaw":
+                return mock_raw_el
+            if element_id not in element_values:
+                return None
+            value = element_values[element_id]
+            mock_el = self._mock_element(value)
+            if element_id == "attrCustomizeContent":
+                mock_el.classList.contains.return_value = False  # NOT hidden
+            return mock_el
+        
+        with patch.object(cluster_app, 'document', MagicMock(getElementById=get_element_by_id)):
+            with patch.object(cluster_app, 'render_modified_resources_list') as mock_render:
+                with patch.object(cluster_app, 'set_status') as mock_status:
+                    cluster_app.on_add_new_resource(None)
+        
+        # Should NOT have added to textarea
+        assert mock_raw_el.value == ""
+        
+        # Should have created entry in modified_new_resources
+        assert "my_custom_ng" in cluster_app.state.modified_new_resources
+        entry = cluster_app.state.modified_new_resources["my_custom_ng"]
+        assert entry["technology"] == "NaturalGas"
+        assert entry["tech_detail"] == "CCCCSAvgCF"
+        assert entry["cost_case"] == "Moderate"
+        assert entry["size_mw"] == 500
+        assert entry["attr_modifiers"] == {"capex_mw": ["add", 50000.0]}
+        assert entry["fuel_type"] == "standard"
+        assert entry["standard_fuel"] == "naturalgas"
+        assert entry["tag_class"] == "THERM"
+        assert entry["is_commit"] is True
+        
+        mock_render.assert_called_once()
+        mock_status.assert_called_once()
+        assert "Added resource with attribute overrides" in mock_status.call_args[0][0]
+        assert mock_status.call_args[0][1] == "success"
+
+    def test_duplicate_key(self, cluster_app):
+        """Duplicate key → calls set_status with 'error'."""
+        # Pre-populate with an existing key
+        cluster_app.state.modified_new_resources["my_custom_ng"] = {}
+        
+        element_values = {
+            "newResourcesRaw": "",
+            "atbYearSelect": "2023",
+            "atbTechSelect": "NaturalGas",
+            "atbTechDetailSelect": "CCCCSAvgCF",
+            "atbCostCaseSelect": "Moderate",
+            "atbSizeMw": "500",
+            "attrCustomizeContent": "visible",
+            "attrCapexOp": "add",
+            "attrCapexVal": "50000",
+            "attrHeatRateOp": "",
+            "attrHeatRateVal": "",
+            "attrFixedOmOp": "",
+            "attrFixedOmVal": "",
+            "attrVarOmOp": "",
+            "attrVarOmVal": "",
+            "attrWaccVal": "",
+            "attrFuel": "naturalgas",
+            "attrTagClass": "THERM",
+            "attrResKey": "my_custom_ng",  # duplicate!
+        }
+        
+        mock_raw_el = self._mock_element("")
+        
+        def get_element_by_id(element_id):
+            if element_id == "newResourcesRaw":
+                return mock_raw_el
+            if element_id not in element_values:
+                return None
+            value = element_values[element_id]
+            mock_el = self._mock_element(value)
+            if element_id == "attrCustomizeContent":
+                mock_el.classList.contains.return_value = False
+            return mock_el
+        
+        with patch.object(cluster_app, 'document', MagicMock(getElementById=get_element_by_id)):
+            with patch.object(cluster_app, 'set_status') as mock_status:
+                cluster_app.on_add_new_resource(None)
+        
+        # Should have called set_status with error
+        mock_status.assert_called_once()
+        call_args = mock_status.call_args[0]
+        assert "already exists" in call_args[0]
+        assert call_args[1] == "error"
+        
+        # Should still only have the one original entry
+        assert len(cluster_app.state.modified_new_resources) == 1
+
+    def test_auto_generated_key(self, cluster_app):
+        """Auto-generated key when attrResKey is empty."""
+        element_values = {
+            "newResourcesRaw": "",
+            "atbYearSelect": "2023",
+            "atbTechSelect": "NaturalGas",
+            "atbTechDetailSelect": "CCCCSAvgCF",
+            "atbCostCaseSelect": "Moderate",
+            "atbSizeMw": "500",
+            "attrCustomizeContent": "visible",
+            "attrCapexOp": "mul",
+            "attrCapexVal": "1.2",
+            "attrHeatRateOp": "",
+            "attrHeatRateVal": "",
+            "attrFixedOmOp": "",
+            "attrFixedOmVal": "",
+            "attrVarOmOp": "",
+            "attrVarOmVal": "",
+            "attrWaccVal": "",
+            "attrFuel": "naturalgas",
+            "attrTagClass": "THERM",
+            "attrResKey": "",  # empty, should auto-generate
+        }
+        
+        mock_raw_el = self._mock_element("")
+        
+        def get_element_by_id(element_id):
+            if element_id == "newResourcesRaw":
+                return mock_raw_el
+            if element_id not in element_values:
+                return None
+            value = element_values[element_id]
+            mock_el = self._mock_element(value)
+            if element_id == "attrCustomizeContent":
+                mock_el.classList.contains.return_value = False
+            return mock_el
+        
+        with patch.object(cluster_app, 'document', MagicMock(getElementById=get_element_by_id)):
+            with patch.object(cluster_app, 'render_modified_resources_list'):
+                with patch.object(cluster_app, 'set_status'):
+                    cluster_app.on_add_new_resource(None)
+        
+        # Should have created entry with auto-generated key
+        assert len(cluster_app.state.modified_new_resources) == 1
+        keys = list(cluster_app.state.modified_new_resources.keys())
+        # Key should be sanitized version of tech_detail_case
+        expected_key = "naturalgas_ccccsavgcf_moderate"
+        assert keys[0] == expected_key
+        
+        entry = cluster_app.state.modified_new_resources[expected_key]
+        assert entry["attr_modifiers"] == {"capex_mw": ["mul", 1.2]}
+
+    def test_vre_resource_no_fuel(self, cluster_app):
+        """VRE resource with fuel='none' → fuel_type='none', is_commit=False."""
+        element_values = {
+            "newResourcesRaw": "",
+            "atbYearSelect": "2023",
+            "atbTechSelect": "UtilityPV",
+            "atbTechDetailSelect": "Class1",
+            "atbCostCaseSelect": "Moderate",
+            "atbSizeMw": "100",
+            "attrCustomizeContent": "visible",
+            "attrCapexOp": "add",
+            "attrCapexVal": "10000",
+            "attrHeatRateOp": "",
+            "attrHeatRateVal": "",
+            "attrFixedOmOp": "",
+            "attrFixedOmVal": "",
+            "attrVarOmOp": "",
+            "attrVarOmVal": "",
+            "attrWaccVal": "",
+            "attrFuel": "none",
+            "attrTagClass": "VRE",
+            "attrResKey": "solar_pv",
+        }
+        
+        mock_raw_el = self._mock_element("")
+        
+        def get_element_by_id(element_id):
+            if element_id == "newResourcesRaw":
+                return mock_raw_el
+            if element_id not in element_values:
+                return None
+            value = element_values[element_id]
+            mock_el = self._mock_element(value)
+            if element_id == "attrCustomizeContent":
+                mock_el.classList.contains.return_value = False
+            return mock_el
+        
+        with patch.object(cluster_app, 'document', MagicMock(getElementById=get_element_by_id)):
+            with patch.object(cluster_app, 'render_modified_resources_list'):
+                with patch.object(cluster_app, 'set_status'):
+                    cluster_app.on_add_new_resource(None)
+        
+        assert "solar_pv" in cluster_app.state.modified_new_resources
+        entry = cluster_app.state.modified_new_resources["solar_pv"]
+        assert entry["fuel_type"] == "none"
+        assert entry["standard_fuel"] == ""
+        assert entry["tag_class"] == "VRE"
+        assert entry["is_commit"] is False
+        assert entry["fuel_desc"] == "no fuel"
+
+    def test_missing_atb_fields(self, cluster_app):
+        """Missing ATB fields → calls set_status with error and returns early."""
+        element_values = {
+            "newResourcesRaw": "",
+            "atbYearSelect": "2023",
+            "atbTechSelect": "",  # missing!
+            "atbTechDetailSelect": "CCCCSAvgCF",
+            "atbCostCaseSelect": "Moderate",
+            "atbSizeMw": "500",
+        }
+        
+        mock_raw_el = self._mock_element("")
+        
+        def get_element_by_id(element_id):
+            if element_id == "newResourcesRaw":
+                return mock_raw_el
+            if element_id not in element_values:
+                return None
+            value = element_values[element_id]
+            return self._mock_element(value)
+        
+        with patch.object(cluster_app, 'document', MagicMock(getElementById=get_element_by_id)):
+            with patch.object(cluster_app, 'set_status') as mock_status:
+                cluster_app.on_add_new_resource(None)
+        
+        mock_status.assert_called_once()
+        call_args = mock_status.call_args[0]
+        assert "ATB index not available" in call_args[0]
+        assert call_args[1] == "error"
+        
+        # Should not have added anything
+        assert mock_raw_el.value == ""
+        assert len(cluster_app.state.modified_new_resources) == 0
+

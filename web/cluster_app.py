@@ -4870,6 +4870,58 @@ def render_new_resources_list():
     container.innerHTML = "".join(parts)
 
 
+def _collect_inline_attr_modifiers():
+    """Collect attribute overrides from the inline customize panel.
+
+    Returns a tuple (attr_modifiers, fuel, tag_class) where attr_modifiers is a
+    dict (possibly empty), fuel is a fuel name string or "none", and tag_class is
+    a resource class string.  Returns None for attr_modifiers if there is a
+    validation error (error is already surfaced via set_status).
+    """
+    attr_modifiers = {}
+
+    def _read_op_val(op_id, val_id, attr_name):
+        op_el = document.getElementById(op_id)
+        val_el = document.getElementById(val_id)
+        op = str(_get_select_value(op_el, "")).strip()
+        val_str = str(_get_select_value(val_el, "")).strip()
+        if not op or not val_str:
+            return True  # nothing set, OK
+        try:
+            val = float(val_str)
+        except ValueError:
+            set_status(f"Invalid value for {attr_name}: {val_str!r}", "error")
+            return False
+        attr_modifiers[attr_name] = [op, val]
+        return True
+
+    for op_id, val_id, name in [
+        ("attrCapexOp", "attrCapexVal", "capex_mw"),
+        ("attrHeatRateOp", "attrHeatRateVal", "heat_rate_mmbtu_mwh"),
+        ("attrFixedOmOp", "attrFixedOmVal", "fixed_o_m_mw"),
+        ("attrVarOmOp", "attrVarOmVal", "variable_o_m_mwh"),
+    ]:
+        if not _read_op_val(op_id, val_id, name):
+            return None, None, None
+
+    # wacc_real is a direct float override (no operation)
+    wacc_el = document.getElementById("attrWaccVal")
+    wacc_str = str(_get_select_value(wacc_el, "")).strip()
+    if wacc_str:
+        try:
+            attr_modifiers["wacc_real"] = float(wacc_str)
+        except ValueError:
+            set_status(f"Invalid wacc_real value: {wacc_str!r}", "error")
+            return None, None, None
+
+    fuel_el = document.getElementById("attrFuel")
+    tag_el = document.getElementById("attrTagClass")
+    fuel = str(_get_select_value(fuel_el, "naturalgas")).strip()
+    tag_class = str(_get_select_value(tag_el, "THERM")).strip()
+
+    return attr_modifiers, fuel, tag_class
+
+
 def on_add_new_resource(event):
     raw_el = document.getElementById("newResourcesRaw")
     if not raw_el:
@@ -4892,6 +4944,51 @@ def on_add_new_resource(event):
     if not tech or not detail or not case:
         set_status("ATB index not available; add manually below.", "error")
         return
+
+    # Check if inline attribute customization panel is open
+    attr_panel = document.getElementById("attrCustomizeContent")
+    panel_open = attr_panel is not None and not attr_panel.classList.contains("hidden")
+
+    if panel_open:
+        attr_modifiers, fuel, tag_class = _collect_inline_attr_modifiers()
+        if attr_modifiers is None:
+            return  # error already reported
+        if attr_modifiers:
+            # Determine the resource key
+            key_el = document.getElementById("attrResKey")
+            key = str(_get_select_value(key_el, "")).strip() if key_el else ""
+            if not key:
+                key = re.sub(r"[^a-z0-9]+", "_", f"{tech}_{detail}_{case}".lower()).strip("_")
+            if key in state.modified_new_resources:
+                set_status(
+                    f"Resource key '{key}' already exists in modified resources. "
+                    "Edit the key or remove the existing entry first.",
+                    "error",
+                )
+                return
+            is_commit = tag_class == "THERM"
+            fuel_desc = fuel if fuel != "none" else "no fuel"
+            state.modified_new_resources[key] = {
+                "technology": tech,
+                "tech_detail": detail,
+                "cost_case": case,
+                "size_mw": int(size),
+                "new_technology": tech,
+                "new_tech_detail": detail,
+                "new_cost_case": case,
+                "attr_modifiers": attr_modifiers,
+                "fuel_type": "standard" if fuel != "none" else "none",
+                "standard_fuel": fuel if fuel != "none" else "",
+                "new_fuel_name": "",
+                "new_fuel_price": 0.0,
+                "new_fuel_emission_factor": 0.0,
+                "tag_class": tag_class,
+                "is_commit": is_commit,
+                "fuel_desc": fuel_desc,
+            }
+            render_modified_resources_list()
+            set_status(f"Added resource with attribute overrides: {key}", "success")
+            return
 
     line = f"{tech} | {detail} | {case} | {size}"
     existing = raw_el.value.strip()
@@ -6922,7 +7019,7 @@ def generate_fuels_settings():
             fuel_emission_factors[fuel_name] = float(
                 item.get("new_fuel_emission_factor", 0.0)
             )
-        else:
+        elif item.get("fuel_type") != "none":
             std_fuel = str(item.get("standard_fuel") or "naturalgas")
             tech_fuel_map[prefix] = std_fuel
 

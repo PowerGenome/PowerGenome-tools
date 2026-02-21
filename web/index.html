@@ -1624,6 +1624,90 @@
                     <label style="font-size: 12px; margin-top: 8px;">Size (MW)</label>
                     <input id="atbSizeMw" type="number" value="1" min="1" step="1" />
 
+                    <div class="collapsible-header" onclick="toggleAttrCustomize()" style="margin-top: 10px; font-size: 12px;">
+                        <span>⚙ Customize attributes <span style="font-weight: 400; color: #888;">(optional)</span></span>
+                        <span class="instructions-toggle" id="attrCustomizeToggle">▶ Show</span>
+                    </div>
+                    <div id="attrCustomizeContent" class="collapsible-content hidden" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; margin-bottom: 6px;">
+                        <div style="font-size: 11px; color: #666; margin-bottom: 8px;">
+                            Override ATB default values. Leave operation as "—" to use the ATB default. When any
+                            attribute is set, the resource is added under <code>modified_new_resources</code> instead
+                            of <code>new_resources</code>.
+                        </div>
+                        <label style="font-size: 12px;">Resource key (name)</label>
+                        <input id="attrResKey" type="text" placeholder="auto-generated"
+                            style="font-family: monospace; font-size: 11px;" />
+                        <div style="display: grid; grid-template-columns: 1fr 62px 80px; gap: 4px 6px; align-items: center; margin-top: 8px;">
+                            <span style="font-size: 11px; font-weight: 600; color: #555;">Attribute</span>
+                            <span style="font-size: 11px; font-weight: 600; color: #555; text-align: center;">Op</span>
+                            <span style="font-size: 11px; font-weight: 600; color: #555;">Value</span>
+
+                            <label style="font-size: 11px;">capex_mw ($/MW)</label>
+                            <select id="attrCapexOp" style="font-size: 11px; padding: 2px 0;">
+                                <option value="">—</option>
+                                <option value="add">add</option>
+                                <option value="mul">mul</option>
+                            </select>
+                            <input id="attrCapexVal" type="number" step="any"
+                                style="font-size: 11px; padding: 2px; width: 100%;" />
+
+                            <label style="font-size: 11px;">heat_rate (MMBtu/MWh)</label>
+                            <select id="attrHeatRateOp" style="font-size: 11px; padding: 2px 0;">
+                                <option value="">—</option>
+                                <option value="add">add</option>
+                                <option value="mul">mul</option>
+                            </select>
+                            <input id="attrHeatRateVal" type="number" step="any"
+                                style="font-size: 11px; padding: 2px; width: 100%;" />
+
+                            <label style="font-size: 11px;">wacc_real (direct override)</label>
+                            <span style="font-size: 11px; color: #999; text-align: center;">—</span>
+                            <input id="attrWaccVal" type="number" step="any" min="0" max="1"
+                                style="font-size: 11px; padding: 2px; width: 100%;" placeholder="" />
+
+                            <label style="font-size: 11px;">fixed_o_m_mw ($/MW-yr)</label>
+                            <select id="attrFixedOmOp" style="font-size: 11px; padding: 2px 0;">
+                                <option value="">—</option>
+                                <option value="add">add</option>
+                                <option value="mul">mul</option>
+                            </select>
+                            <input id="attrFixedOmVal" type="number" step="any"
+                                style="font-size: 11px; padding: 2px; width: 100%;" />
+
+                            <label style="font-size: 11px;">variable_o_m_mwh ($/MWh)</label>
+                            <select id="attrVarOmOp" style="font-size: 11px; padding: 2px 0;">
+                                <option value="">—</option>
+                                <option value="add">add</option>
+                                <option value="mul">mul</option>
+                            </select>
+                            <input id="attrVarOmVal" type="number" step="any"
+                                style="font-size: 11px; padding: 2px; width: 100%;" />
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px;">
+                            <div>
+                                <label style="font-size: 11px;">Resource class</label>
+                                <select id="attrTagClass" style="font-size: 11px; padding: 2px; width: 100%;">
+                                    <option value="THERM">THERM</option>
+                                    <option value="VRE">VRE</option>
+                                    <option value="STOR">STOR</option>
+                                    <option value="HYDRO">HYDRO</option>
+                                    <option value="MUST_RUN">MUST_RUN</option>
+                                    <option value="LDS">LDS</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="font-size: 11px;">Fuel</label>
+                                <select id="attrFuel" style="font-size: 11px; padding: 2px; width: 100%;">
+                                    <option value="naturalgas">naturalgas</option>
+                                    <option value="coal">coal</option>
+                                    <option value="distillate">distillate</option>
+                                    <option value="uranium">uranium</option>
+                                    <option value="none">none (no fuel)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
                     <button class="btn btn-secondary" id="addNewResourceBtn" type="button">Add New-build
                         Resource</button>
 
@@ -2176,6 +2260,59 @@ wacc_real: 0.05"></textarea>
             }
         }
 
+        function updateAttrResKey() {
+            const techEl = document.getElementById('atbTechSelect');
+            const detailEl = document.getElementById('atbTechDetailSelect');
+            const caseEl = document.getElementById('atbCostCaseSelect');
+            const keyEl = document.getElementById('attrResKey');
+            if (!keyEl) return;
+            const tech = techEl ? techEl.value : '';
+            const detail = detailEl ? detailEl.value : '';
+            const cas = caseEl ? caseEl.value : '';
+            if (tech || detail) {
+                const raw = (tech + '_' + detail + '_' + cas).toLowerCase()
+                    .replace(/[^a-z0-9]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+                if (!keyEl.dataset.userEdited) keyEl.value = raw;
+            }
+            // Auto-set fuel and tag class based on tech
+            const fuelEl = document.getElementById('attrFuel');
+            const tagEl = document.getElementById('attrTagClass');
+            if (!fuelEl || !tagEl) return;
+            const t = tech.toLowerCase();
+            if (t.includes('wind') || t.includes('solar') || t.includes('pv') || t.includes('distributed')) {
+                fuelEl.value = 'none';
+                tagEl.value = 'VRE';
+            } else if (t.includes('battery') || t.includes('storage')) {
+                fuelEl.value = 'none';
+                tagEl.value = 'STOR';
+            } else if (t.includes('nuclear')) {
+                fuelEl.value = 'uranium';
+                tagEl.value = 'THERM';
+            } else if (t.includes('coal')) {
+                fuelEl.value = 'coal';
+                tagEl.value = 'THERM';
+            } else if (t.includes('hydro') || t.includes('geothermal')) {
+                fuelEl.value = 'none';
+                tagEl.value = t.includes('hydro') ? 'HYDRO' : 'MUST_RUN';
+            } else {
+                fuelEl.value = 'naturalgas';
+                tagEl.value = 'THERM';
+            }
+        }
+
+        function toggleAttrCustomize() {
+            const content = document.getElementById('attrCustomizeContent');
+            const toggle = document.getElementById('attrCustomizeToggle');
+            if (content.classList.contains('hidden')) {
+                content.classList.remove('hidden');
+                toggle.textContent = '▼ Hide';
+                updateAttrResKey();
+            } else {
+                content.classList.add('hidden');
+                toggle.textContent = '▶ Show';
+            }
+        }
+
         function toggleAutoOptimize() {
             const checkbox = document.getElementById('autoOptimize');
             const fixedRow = document.getElementById('fixedTargetRow');
@@ -2312,6 +2449,14 @@ wacc_real: 0.05"></textarea>
             if (cls) cls.addEventListener('change', toggleCommitRow);
             toggleModFuelType();
             toggleCommitRow();
+
+            // Track manual edits to attrResKey so auto-populate stops overwriting
+            const attrResKeyEl = document.getElementById('attrResKey');
+            if (attrResKeyEl) {
+                attrResKeyEl.addEventListener('input', () => {
+                    attrResKeyEl.dataset.userEdited = attrResKeyEl.value ? '1' : '';
+                });
+            }
 
             // Add validation for model years and planning years
             const modelYearsInput = document.getElementById('modelYears');

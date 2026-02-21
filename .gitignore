@@ -19,3 +19,5 @@ site/
 
 # Coverage reports
 .coverage
+nohup.out
+TEST_SUMMARY.md
