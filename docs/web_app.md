@@ -420,6 +420,35 @@ If ATB data is available, use the dropdowns to select:
 * **ATB Data Year** → **Technology** → **Tech Detail** → **Cost Case**
 * Specify **Size (MW)** for each resource
 
+#### Optional: Override Cost/Performance Attributes
+
+Below the Size field, you can expand the **"Optional: Override cost/performance attributes"** panel to modify specific cost and performance parameters for the selected ATB resource:
+
+* **CAPEX ($/MW)** - Capital expenditure per megawatt
+* **Heat Rate (MMBtu/MWh)** - Thermal efficiency for fuel-consuming technologies
+* **Fixed O&M ($/MW-yr)** - Fixed operations and maintenance costs
+* **Variable O&M ($/MWh)** - Variable operations and maintenance costs
+* **WACC real (0–1)** - Weighted average cost of capital (real)
+
+**How to use:**
+
+1. The panel is collapsed by default—click to expand it
+2. Enter values only for the attributes you want to override
+3. Leave fields blank to use the ATB default values
+4. Click **"Add New-build Resource"** to add the resource
+
+**What happens when overrides are provided:**
+
+* If **any** override value is entered, the resource is added as a `modified_new_resource` entry (instead of a standard `new_resource`)
+* The fuel type and resource class are automatically detected from the ATB technology name
+* The resource appears in the `modified_new_resources` section of `resources.yml` with your specified attribute overrides
+* Related settings are automatically updated in `fuels.yml` and `resource_tags.yml`
+
+!!! tip
+    This feature provides a streamlined way to create modified resources without manually filling out all the fields in the "Modified New Resources" section. Use it when you want to adjust specific cost/performance parameters while keeping the resource's base ATB characteristics.
+
+#### Manual Entry
+
 You can also paste resources manually, one per line:
 
     Technology | Tech Detail | Cost Case | Size

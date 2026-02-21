@@ -4893,10 +4893,68 @@ def on_add_new_resource(event):
         set_status("ATB index not available; add manually below.", "error")
         return
 
-    line = f"{tech} | {detail} | {case} | {size}"
-    existing = raw_el.value.strip()
-    raw_el.value = (existing + "\n" + line).strip() if existing else line
-    render_new_resources_list()
+    # Collect optional attribute overrides from the collapsible panel
+    attr_overrides = {}
+    override_fields = [
+        ("capex_mw", "atbOverrideCapex"),
+        ("heat_rate", "atbOverrideHeatRate"),
+        ("fixed_o_m_mw", "atbOverrideFixedOM"),
+        ("variable_o_m_mwh", "atbOverrideVarOM"),
+        ("wacc_real", "atbOverrideWacc"),
+    ]
+    for attr, el_id in override_fields:
+        el = document.getElementById(el_id)
+        if el is not None and str(el.value).strip():
+            try:
+                attr_overrides[attr] = float(str(el.value).strip())
+            except ValueError:
+                set_status(
+                    f"Invalid value for {attr}: '{el.value.strip()}'", "error"
+                )
+                return
+
+    if attr_overrides:
+        # Add as a modified resource so PowerGenome applies the attribute overrides
+        key = _auto_modified_key(tech, detail)
+        defaults = _ATB_TECH_DEFAULTS.get(
+            tech, {"fuel": "naturalgas", "tag_class": "THERM", "is_commit": True}
+        )
+        fuel = defaults.get("fuel")
+        tag_class = defaults.get("tag_class", "THERM")
+        is_commit = defaults.get("is_commit", False)
+        fuel_type = "standard" if fuel else "none"
+        std_fuel = fuel  # None for non-thermal (VRE/STOR/HYDRO) resources
+        fuel_desc = std_fuel if fuel_type == "standard" else "none"
+
+        state.modified_new_resources[key] = {
+            "technology": tech,
+            "tech_detail": detail,
+            "cost_case": case,
+            "size_mw": size,
+            "new_technology": tech,
+            "new_tech_detail": detail,
+            "new_cost_case": case,
+            "attr_modifiers": attr_overrides,
+            "fuel_type": fuel_type,
+            "standard_fuel": std_fuel,
+            "new_fuel_name": "",
+            "new_fuel_price": 0.0,
+            "new_fuel_emission_factor": 0.0,
+            "tag_class": tag_class,
+            "is_commit": is_commit,
+            "fuel_desc": fuel_desc,
+        }
+        render_modified_resources_list()
+        n = len(attr_overrides)
+        set_status(
+            f"Added '{key}' as a modified resource with {n} attribute override(s).",
+            "info",
+        )
+    else:
+        line = f"{tech} | {detail} | {case} | {size}"
+        existing = raw_el.value.strip()
+        raw_el.value = (existing + "\n" + line).strip() if existing else line
+        render_new_resources_list()
 
 
 def render_modified_resources_list():
@@ -4935,6 +4993,55 @@ def _prefix_from_new_technology(new_technology):
     if t.endswith("_"):
         return t
     return f"{t}_"
+
+
+# Defaults for auto-detecting fuel type and resource class when adding inline
+# attribute overrides to standard ATB new-build resources.
+_ATB_TECH_DEFAULTS = {
+    "NaturalGas": {"fuel": "naturalgas", "tag_class": "THERM", "is_commit": True},
+    "Coal": {"fuel": "coal", "tag_class": "THERM", "is_commit": True},
+    "Conventional Steam Coal": {
+        "fuel": "coal",
+        "tag_class": "THERM",
+        "is_commit": True,
+    },
+    "Nuclear": {"fuel": "uranium", "tag_class": "THERM", "is_commit": True},
+    "Petroleum Liquids": {
+        "fuel": "distillate",
+        "tag_class": "THERM",
+        "is_commit": True,
+    },
+    "LandbasedWind": {"fuel": None, "tag_class": "VRE", "is_commit": False},
+    "OffshoreWind": {"fuel": None, "tag_class": "VRE", "is_commit": False},
+    "UtilityPV": {"fuel": None, "tag_class": "VRE", "is_commit": False},
+    "Utility-Scale Battery Storage": {
+        "fuel": None,
+        "tag_class": "STOR",
+        "is_commit": False,
+    },
+    "Hydroelectric Pumped Storage": {
+        "fuel": None,
+        "tag_class": "HYDRO",
+        "is_commit": False,
+    },
+}
+
+
+def _auto_modified_key(tech, detail):
+    """Generate a sanitized, unique key for an inline-override modified resource.
+
+    Consecutive non-alphanumeric characters are collapsed into a single underscore.
+    If the generated key already exists in state.modified_new_resources, a numeric
+    suffix (_1, _2, …) is appended to ensure uniqueness.
+    """
+    raw = f"{tech}_{detail}"
+    base = re.sub(r"[^a-z0-9]+", "_", raw.lower()).strip("_")
+    key = base
+    counter = 1
+    while key in state.modified_new_resources:
+        key = f"{base}_{counter}"
+        counter += 1
+    return key
 
 
 def on_add_modified_resource(event):
@@ -6912,7 +7019,11 @@ def generate_fuels_settings():
         prefix = _prefix_from_new_technology(item.get("new_technology"))
         if not prefix:
             continue
-        if item.get("fuel_type") == "new":
+        fuel_type = item.get("fuel_type", "standard")
+        if fuel_type == "none":
+            # Non-thermal resource (e.g. wind, solar, storage) – no fuel mapping needed
+            continue
+        if fuel_type == "new":
             fuel_name = str(item.get("new_fuel_name") or "").strip()
             if not fuel_name:
                 continue

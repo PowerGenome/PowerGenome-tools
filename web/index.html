@@ -1624,6 +1624,50 @@
                     <label style="font-size: 12px; margin-top: 8px;">Size (MW)</label>
                     <input id="atbSizeMw" type="number" value="1" min="1" step="1" />
 
+                    <details id="atbAttrsOverride" style="margin-top: 8px;">
+                        <summary style="font-size: 12px; cursor: pointer; color: #555; user-select: none;">
+                            Optional: Override cost/performance attributes
+                        </summary>
+                        <div style="padding: 8px 0 4px 12px; border-left: 2px solid #ddd; margin-top: 6px;">
+                            <div style="font-size: 11px; color: #666; margin-bottom: 6px;">
+                                Leave blank to use ATB defaults. If any value is set, the resource will be
+                                added as a modified resource (under <code>modified_new_resources</code>).
+                            </div>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px;">
+                                <div>
+                                    <label style="font-size: 11px; display: block;">CAPEX ($/MW)</label>
+                                    <input id="atbOverrideCapex" type="number" min="0" step="1"
+                                        placeholder="ATB default"
+                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                </div>
+                                <div>
+                                    <label style="font-size: 11px; display: block;">Heat Rate (MMBtu/MWh)</label>
+                                    <input id="atbOverrideHeatRate" type="number" min="0" step="0.01"
+                                        placeholder="ATB default"
+                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                </div>
+                                <div>
+                                    <label style="font-size: 11px; display: block;">Fixed O&amp;M ($/MW-yr)</label>
+                                    <input id="atbOverrideFixedOM" type="number" min="0" step="1"
+                                        placeholder="ATB default"
+                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                </div>
+                                <div>
+                                    <label style="font-size: 11px; display: block;">Variable O&amp;M ($/MWh)</label>
+                                    <input id="atbOverrideVarOM" type="number" min="0" step="0.01"
+                                        placeholder="ATB default"
+                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                </div>
+                                <div>
+                                    <label style="font-size: 11px; display: block;">WACC real (0–1)</label>
+                                    <input id="atbOverrideWacc" type="number" min="0" max="1" step="0.001"
+                                        placeholder="ATB default"
+                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                </div>
+                            </div>
+                        </div>
+                    </details>
+
                     <button class="btn btn-secondary" id="addNewResourceBtn" type="button">Add New-build
                         Resource</button>
 

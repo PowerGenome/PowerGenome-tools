@@ -2312,3 +2312,306 @@ class TestRunClustering:
             assert info == {}
         finally:
             self._restore_state(cluster_app, orig)
+
+
+# ---------------------------------------------------------------------------
+# 14. ATB attribute overrides
+# ---------------------------------------------------------------------------
+
+
+class TestAtbAttributeOverrides:
+    """Tests for _ATB_TECH_DEFAULTS constant, _auto_modified_key function,
+    and generate_fuels_settings behavior with fuel_type == "none"."""
+
+    # --- _ATB_TECH_DEFAULTS structure ---
+
+    def test_atb_defaults_naturalgas_structure(self, cluster_app):
+        """NaturalGas should have fuel=naturalgas, tag_class=THERM, is_commit=True."""
+        defaults = cluster_app._ATB_TECH_DEFAULTS.get("NaturalGas")
+        assert defaults is not None
+        assert defaults["fuel"] == "naturalgas"
+        assert defaults["tag_class"] == "THERM"
+        assert defaults["is_commit"] is True
+
+    def test_atb_defaults_coal_structure(self, cluster_app):
+        """Coal should have fuel=coal, tag_class=THERM, is_commit=True."""
+        defaults = cluster_app._ATB_TECH_DEFAULTS.get("Coal")
+        assert defaults is not None
+        assert defaults["fuel"] == "coal"
+        assert defaults["tag_class"] == "THERM"
+        assert defaults["is_commit"] is True
+
+    def test_atb_defaults_nuclear_structure(self, cluster_app):
+        """Nuclear should have fuel=uranium, tag_class=THERM, is_commit=True."""
+        defaults = cluster_app._ATB_TECH_DEFAULTS.get("Nuclear")
+        assert defaults is not None
+        assert defaults["fuel"] == "uranium"
+        assert defaults["tag_class"] == "THERM"
+        assert defaults["is_commit"] is True
+
+    def test_atb_defaults_petroleum_structure(self, cluster_app):
+        """Petroleum Liquids should have fuel=distillate, tag_class=THERM, is_commit=True."""
+        defaults = cluster_app._ATB_TECH_DEFAULTS.get("Petroleum Liquids")
+        assert defaults is not None
+        assert defaults["fuel"] == "distillate"
+        assert defaults["tag_class"] == "THERM"
+        assert defaults["is_commit"] is True
+
+    def test_atb_defaults_utilitypv_structure(self, cluster_app):
+        """UtilityPV should have fuel=None, tag_class=VRE, is_commit=False."""
+        defaults = cluster_app._ATB_TECH_DEFAULTS.get("UtilityPV")
+        assert defaults is not None
+        assert defaults["fuel"] is None
+        assert defaults["tag_class"] == "VRE"
+        assert defaults["is_commit"] is False
+
+    def test_atb_defaults_landbasedwind_structure(self, cluster_app):
+        """LandbasedWind should have fuel=None, tag_class=VRE, is_commit=False."""
+        defaults = cluster_app._ATB_TECH_DEFAULTS.get("LandbasedWind")
+        assert defaults is not None
+        assert defaults["fuel"] is None
+        assert defaults["tag_class"] == "VRE"
+        assert defaults["is_commit"] is False
+
+    def test_atb_defaults_offshorewind_structure(self, cluster_app):
+        """OffshoreWind should have fuel=None, tag_class=VRE, is_commit=False."""
+        defaults = cluster_app._ATB_TECH_DEFAULTS.get("OffshoreWind")
+        assert defaults is not None
+        assert defaults["fuel"] is None
+        assert defaults["tag_class"] == "VRE"
+        assert defaults["is_commit"] is False
+
+    def test_atb_defaults_battery_storage_structure(self, cluster_app):
+        """Utility-Scale Battery Storage should have fuel=None, tag_class=STOR, is_commit=False."""
+        defaults = cluster_app._ATB_TECH_DEFAULTS.get("Utility-Scale Battery Storage")
+        assert defaults is not None
+        assert defaults["fuel"] is None
+        assert defaults["tag_class"] == "STOR"
+        assert defaults["is_commit"] is False
+
+    def test_atb_defaults_pumped_hydro_structure(self, cluster_app):
+        """Hydroelectric Pumped Storage should have fuel=None, tag_class=HYDRO, is_commit=False."""
+        defaults = cluster_app._ATB_TECH_DEFAULTS.get("Hydroelectric Pumped Storage")
+        assert defaults is not None
+        assert defaults["fuel"] is None
+        assert defaults["tag_class"] == "HYDRO"
+        assert defaults["is_commit"] is False
+
+    def test_atb_defaults_conventional_steam_coal_structure(self, cluster_app):
+        """Conventional Steam Coal should have fuel=coal, tag_class=THERM, is_commit=True."""
+        defaults = cluster_app._ATB_TECH_DEFAULTS.get("Conventional Steam Coal")
+        assert defaults is not None
+        assert defaults["fuel"] == "coal"
+        assert defaults["tag_class"] == "THERM"
+        assert defaults["is_commit"] is True
+
+    # --- _auto_modified_key ---
+
+    def test_auto_modified_key_basic(self, cluster_app):
+        """Basic key generation from tech+detail."""
+        # Save original state
+        orig_modified = cluster_app.state.modified_new_resources.copy()
+        try:
+            cluster_app.state.modified_new_resources = {}
+            key = cluster_app._auto_modified_key("NaturalGas", "Combined Cycle")
+            assert key == "naturalgas_combined_cycle"
+        finally:
+            cluster_app.state.modified_new_resources = orig_modified
+
+    def test_auto_modified_key_sanitization(self, cluster_app):
+        """Spaces and special chars become underscores."""
+        orig_modified = cluster_app.state.modified_new_resources.copy()
+        try:
+            cluster_app.state.modified_new_resources = {}
+            key = cluster_app._auto_modified_key("Natural Gas", "CC-CCS (90%)")
+            # Expected: spaces → _, special chars → _, multiple underscores collapsed
+            # "Natural Gas_CC-CCS (90%)" → "natural_gas_cc_ccs_90_"
+            # The function uses re.sub(r"[^a-z0-9]+", "_", ...).strip("_")
+            # So "Natural Gas_CC-CCS (90%)" → "natural_gas_cc_ccs_90"
+            assert key == "natural_gas_cc_ccs_90"
+        finally:
+            cluster_app.state.modified_new_resources = orig_modified
+
+    def test_auto_modified_key_uniqueness_collision(self, cluster_app):
+        """When key exists, appends _1, _2 etc."""
+        orig_modified = cluster_app.state.modified_new_resources.copy()
+        try:
+            cluster_app.state.modified_new_resources = {
+                "naturalgas_combined_cycle": {"technology": "NaturalGas"}
+            }
+            key = cluster_app._auto_modified_key("NaturalGas", "Combined Cycle")
+            assert key == "naturalgas_combined_cycle_1"
+        finally:
+            cluster_app.state.modified_new_resources = orig_modified
+
+    def test_auto_modified_key_multiple_collisions(self, cluster_app):
+        """Multiple collisions increment counter."""
+        orig_modified = cluster_app.state.modified_new_resources.copy()
+        try:
+            cluster_app.state.modified_new_resources = {
+                "naturalgas_combined_cycle": {"technology": "NaturalGas"},
+                "naturalgas_combined_cycle_1": {"technology": "NaturalGas"},
+                "naturalgas_combined_cycle_2": {"technology": "NaturalGas"},
+            }
+            key = cluster_app._auto_modified_key("NaturalGas", "Combined Cycle")
+            assert key == "naturalgas_combined_cycle_3"
+        finally:
+            cluster_app.state.modified_new_resources = orig_modified
+
+    def test_auto_modified_key_empty_state(self, cluster_app):
+        """When state is empty, no suffix is added."""
+        orig_modified = cluster_app.state.modified_new_resources.copy()
+        try:
+            cluster_app.state.modified_new_resources = {}
+            key = cluster_app._auto_modified_key("OffshoreWind", "Class A")
+            assert key == "offshorewind_class_a"
+            # Verify no uniqueness suffix was added by checking state is still empty
+            # (i.e., the key was not added to state by the function itself)
+            assert len(cluster_app.state.modified_new_resources) == 0
+        finally:
+            cluster_app.state.modified_new_resources = orig_modified
+
+    def test_auto_modified_key_case_insensitive(self, cluster_app):
+        """Key generation is case-insensitive."""
+        orig_modified = cluster_app.state.modified_new_resources.copy()
+        try:
+            cluster_app.state.modified_new_resources = {}
+            key1 = cluster_app._auto_modified_key("NaturalGas", "Combined Cycle")
+            key2 = cluster_app._auto_modified_key("naturalgas", "combined cycle")
+            # Both should produce the same base key
+            assert key1 == key2
+            assert key1 == "naturalgas_combined_cycle"
+        finally:
+            cluster_app.state.modified_new_resources = orig_modified
+
+    # --- generate_fuels_settings with fuel_type == "none" ---
+
+    def test_generate_fuels_settings_skips_vre_fuel_mapping(self, cluster_app):
+        """VRE resources with fuel_type=none should not appear in tech_fuel_map."""
+        orig_modified = cluster_app.state.modified_new_resources.copy()
+        try:
+            # Set up a VRE resource with fuel_type == "none"
+            cluster_app.state.modified_new_resources = {
+                "utilitypv_class_1": {
+                    "technology": "UtilityPV",
+                    "tech_detail": "Class 1",
+                    "cost_case": "moderate",
+                    "size_mw": 100,
+                    "new_technology": "UtilityPV",
+                    "new_tech_detail": "Class 1",
+                    "new_cost_case": "moderate",
+                    "attr_modifiers": {"capex_mw": 1200000.0},
+                    "fuel_type": "none",
+                    "standard_fuel": "naturalgas",
+                    "tag_class": "VRE",
+                    "is_commit": False,
+                }
+            }
+
+            # Mock document.getElementById to return sensible values
+            mock_doc = MagicMock()
+
+            def mock_get_element(element_id):
+                mock_elem = MagicMock()
+                # Fuel scenario selects should return valid values
+                if element_id == "fuelDataYear":
+                    mock_elem.value = "2025"
+                elif element_id in [
+                    "fuelScenarioCoal",
+                    "fuelScenarioNaturalGas",
+                    "fuelScenarioDistillate",
+                    "fuelScenarioUranium",
+                ]:
+                    mock_elem.value = "reference"
+                else:
+                    mock_elem.value = ""
+                return mock_elem
+
+            mock_doc.getElementById = mock_get_element
+            orig_doc = cluster_app.document
+            cluster_app.document = mock_doc
+
+            try:
+                yaml_str = cluster_app.generate_fuels_settings()
+                parsed = yaml.safe_load(yaml_str)
+
+                # Check that tech_fuel_map exists
+                assert "tech_fuel_map" in parsed
+
+                # Check that "UtilityPV_" prefix is NOT in tech_fuel_map
+                tech_fuel_map = parsed["tech_fuel_map"]
+                for tech_key in tech_fuel_map.keys():
+                    assert not tech_key.startswith(
+                        "UtilityPV_"
+                    ), f"Found VRE tech in fuel map: {tech_key}"
+
+            finally:
+                cluster_app.document = orig_doc
+        finally:
+            cluster_app.state.modified_new_resources = orig_modified
+
+    def test_generate_fuels_settings_includes_thermal_fuel_mapping(self, cluster_app):
+        """Thermal resources with fuel_type=standard should appear in tech_fuel_map."""
+        orig_modified = cluster_app.state.modified_new_resources.copy()
+        try:
+            # Set up a thermal resource with fuel_type == "standard"
+            cluster_app.state.modified_new_resources = {
+                "naturalgas_cc_ccs": {
+                    "technology": "NaturalGas",
+                    "tech_detail": "CC-CCS",
+                    "cost_case": "moderate",
+                    "size_mw": 500,
+                    "new_technology": "NaturalGas",
+                    "new_tech_detail": "CC-CCS",
+                    "new_cost_case": "moderate",
+                    "attr_modifiers": {"capex_mw": 2000000.0},
+                    "fuel_type": "standard",
+                    "standard_fuel": "naturalgas",
+                    "tag_class": "THERM",
+                    "is_commit": True,
+                }
+            }
+
+            # Mock document.getElementById to return sensible values
+            mock_doc = MagicMock()
+
+            def mock_get_element(element_id):
+                mock_elem = MagicMock()
+                if element_id == "fuelDataYear":
+                    mock_elem.value = "2025"
+                elif element_id in [
+                    "fuelScenarioCoal",
+                    "fuelScenarioNaturalGas",
+                    "fuelScenarioDistillate",
+                    "fuelScenarioUranium",
+                ]:
+                    mock_elem.value = "reference"
+                else:
+                    mock_elem.value = ""
+                return mock_elem
+
+            mock_doc.getElementById = mock_get_element
+            orig_doc = cluster_app.document
+            cluster_app.document = mock_doc
+
+            try:
+                yaml_str = cluster_app.generate_fuels_settings()
+                parsed = yaml.safe_load(yaml_str)
+
+                # Check that tech_fuel_map exists
+                assert "tech_fuel_map" in parsed
+
+                # Check that "NaturalGas_" prefix IS in tech_fuel_map
+                tech_fuel_map = parsed["tech_fuel_map"]
+                found_naturalgas = any(
+                    tech_key.startswith("NaturalGas_")
+                    for tech_key in tech_fuel_map.keys()
+                )
+                assert (
+                    found_naturalgas
+                ), "Expected NaturalGas_ prefix in tech_fuel_map for thermal resource"
+
+            finally:
+                cluster_app.document = orig_doc
+        finally:
+            cluster_app.state.modified_new_resources = orig_modified
