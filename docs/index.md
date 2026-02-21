@@ -1,6 +1,6 @@
-# PowerGenome Settings Builder
+# PowerGenome System Design
 
-Welcome to the documentation for the PowerGenome Settings Builder. This project provides a comprehensive web-based interface for building complete PowerGenome settings files, guiding users through the entire process of defining model regions, configuring resources, and exporting ready-to-use configuration files for energy system modeling (specifically PowerGenome/GenX).
+Welcome to the documentation for PowerGenome System Design. This project provides a comprehensive web-based interface for building complete PowerGenome settings files, guiding users through the entire process of defining model regions, configuring resources, and exporting ready-to-use configuration files for energy system modeling (specifically PowerGenome/GenX).
 
 ## Overview
 

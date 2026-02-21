@@ -1,6 +1,6 @@
 # Clustering Algorithms
 
-The PowerGenome Settings Builder uses several clustering algorithms in **Step 1 (Regions)** to aggregate Balancing Authorities (BAs) into model regions. The goal is to reduce the computational complexity of transmission modeling while preserving the most critical transmission constraints.
+PowerGenome System Design uses several clustering algorithms in **Step 1 (Regions)** to aggregate Balancing Authorities (BAs) into model regions. The goal is to reduce the computational complexity of transmission modeling while preserving the most critical transmission constraints.
 
 For context on how these algorithms fit into the overall workflow, see the [Web Application documentation](web_app.md).
 
@@ -22,12 +22,12 @@ For context on how these algorithms fit into the overall workflow, see the [Web 
 flowchart TD
     Start([Start]) --> GroupBAs[Group BAs by Grouping Column]
     GroupBAs --> BuildGraph[Build Graph & Remove<br/>Inter-Group Edges]
-    
+
     subgraph Allocation ["Step 1: Allocation"]
         BuildGraph --> AgglomRef["Run Agglomerative Clustering<br/>(Average Linkage)"]
         AgglomRef --> CountClusters[Count Target Clusters<br/>Allocated to Each Group]
     end
-    
+
     subgraph Spectral ["Step 2: Spectral Clustering"]
         CountClusters --> LoopGroups["For Each Group..."]
         LoopGroups --> CheckCount{Allocated > 0?}
@@ -37,7 +37,7 @@ flowchart TD
         Skip --> NextGroup
         NextGroup -- Yes --> LoopGroups
     end
-    
+
     NextGroup -- No --> Combine[Combine All Sub-Clusters]
     Combine --> End([End])
 ```
@@ -63,12 +63,12 @@ flowchart TD
 flowchart TD
     Start([Start]) --> GroupBAs[Group BAs by Grouping Column]
     GroupBAs --> BuildGraph[Build Graph & Remove<br/>Inter-Group Edges]
-    
+
     subgraph Clustering ["Clustering Process"]
         BuildGraph --> RunAgglom["Run Agglomerative Clustering<br/>(Sum, Max, or Average Linkage)"]
         RunAgglom --> Note["Algorithm naturally handles<br/>disconnected components"]
     end
-    
+
     Note --> End([End])
 ```
 
@@ -99,13 +99,13 @@ ESR-compatible clustering affects all algorithms uniformly:
 flowchart TD
     Start([Start]) --> GroupBAs[Group BAs by Grouping Column]
     GroupBAs --> CheckESR{ESR-Compatible<br/>Enabled?}
-    
+
     CheckESR -- No --> BuildGraph[Build Standard Graph]
-    
+
     CheckESR -- Yes --> SplitByTrading[Split Groups into<br/>Trading Subgroups]
     SplitByTrading --> RemoveEdges[Remove Edges Between<br/>Non-Trading States]
     RemoveEdges --> BuildGraph
-    
+
     BuildGraph --> RunAlgorithm[Run Selected<br/>Clustering Algorithm]
     RunAlgorithm --> End([Final Regions])
 ```
