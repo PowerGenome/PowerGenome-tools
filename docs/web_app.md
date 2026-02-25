@@ -420,6 +420,134 @@ If ATB data is available, use the dropdowns to select:
 * **ATB Data Year** → **Technology** → **Tech Detail** → **Cost Case**
 * Specify **Size (MW)** for each resource
 
+#### Optional: Override Cost/Performance Attributes
+
+Below the Size field, you can expand the **"Optional: Override cost/performance attributes"** panel to modify specific cost and performance parameters for the selected ATB resource. This panel allows you to adjust values from NREL's ATB database using either absolute values or relative adjustments.
+
+##### Available Attributes
+
+The following attributes can be modified:
+
+* **CAPEX ($/MW)** - Capital expenditure per megawatt
+* **CAPEX Storage ($/MWh)** - Capital expenditure per megawatt-hour (storage technologies only)
+* **Heat Rate (MMBtu/MWh)** - Thermal efficiency for fuel-consuming technologies
+* **Fixed O&M ($/MW-yr)** - Fixed operations and maintenance costs
+* **Variable O&M ($/MWh)** - Variable operations and maintenance costs
+* **Variable O&M In ($/MWh)** - Variable O&M for charging (storage technologies only)
+* **WACC real (0–1)** - Weighted average cost of capital (real)
+
+!!! note "Storage-Specific Fields"
+    **CAPEX Storage** and **Variable O&M In** are only applicable to battery and other storage technologies. For batteries, CAPEX Storage represents the cost per MWh of energy capacity, while Variable O&M In represents the cost per MWh of charging.
+
+##### Two Types of Modifications
+
+You can modify ATB attributes in two ways:
+
+**1. Absolute Values** - Set a specific value directly:
+
+* Enter a plain number (e.g., `500000` for CAPEX)
+* The resource will use this exact value instead of the ATB default
+* Use this when you know the specific parameter value you want
+
+**2. Relative Changes** - Apply an operation to the ATB default:
+
+* Use the format `operator:value` (e.g., `mul:1.1`, `add:100000`)
+* The operation is applied to the ATB default value for that resource
+* Available operators:
+  * `add` - Add a value (e.g., `add:100000` increases by $100k/MW)
+  * `sub` - Subtract a value (e.g., `sub:50000` decreases by $50k/MW)
+  * `mul` - Multiply by a factor (e.g., `mul:1.1` increases by 10%)
+  * `truediv` - Divide by a factor (e.g., `truediv:2` cuts in half)
+
+##### Examples
+
+**Increasing costs by 10%:**
+
+```
+CAPEX ($/MW): mul:1.1
+Fixed O&M ($/MW-yr): mul:1.1
+```
+
+**Setting absolute CAPEX and adjusting O&M:**
+
+```
+CAPEX ($/MW): 850000
+Variable O&M ($/MWh): add:2.5
+```
+
+**Lowering battery costs:**
+
+```
+CAPEX ($/MW): mul:0.85
+CAPEX Storage ($/MWh): truediv:1.2
+Variable O&M In ($/MWh): 0.10
+```
+
+**Improving heat rate:**
+
+```
+Heat Rate (MMBtu/MWh): mul:0.95
+```
+
+##### How to Use
+
+1. The panel is collapsed by default—click to expand it
+2. Enter values for the attributes you want to override
+3. Use either absolute values or relative operations (with `operator:value` format)
+4. Leave fields blank to use the ATB default values
+5. Click **"Add New-build Resource"** to add the resource
+
+##### Generated Output
+
+When attribute overrides are provided, the web app generates a `resource_modifiers` section in `resources.yml`. This format matches PowerGenome's expected structure for modifying ATB resources:
+
+**Example output in resources.yml:**
+
+```yaml
+resource_modifiers:
+  batteries:
+    technology: Utility-Scale Battery Storage
+    tech_detail: Lithium Ion
+    Var_OM_Cost_per_MWh: [add, 0.15]
+    Var_OM_Cost_per_MWh_In: 0.15
+    wacc_real: 0.0467
+    capex_mwh: [mul, 0.9]
+```
+
+In this example:
+
+* `Var_OM_Cost_per_MWh` uses a relative change (add $0.15/MWh to ATB value)
+* `Var_OM_Cost_per_MWh_In` and `wacc_real` use absolute values
+* `capex_mwh` uses a relative change (multiply ATB value by 0.9)
+
+##### Difference from Modified New Resources
+
+The attribute override feature serves a different purpose than the **Modified New Resources** section:
+
+| Feature | Purpose | Use Case | Output Section |
+|---------|---------|----------|----------------|
+| **Attribute Overrides** | Adjust cost/performance of standard ATB resources | Minor tweaks to ATB values (e.g., regional cost multipliers, optimistic assumptions) | `resource_modifiers` in resources.yml |
+| **Modified New Resources** | Create entirely new resource types | New technologies not in ATB (e.g., Hydrogen CT, Ammonia-fired plants, novel storage) | `modified_new_resources` in resources.yml |
+
+**Use attribute overrides when:**
+
+* You want to use an ATB technology but adjust specific parameters
+* You need regional cost multipliers (e.g., "solar costs 15% more in this region")
+* You want to test sensitivity to specific cost/performance parameters
+* The technology exists in ATB but you have more accurate local data
+
+**Use modified new resources when:**
+
+* You need a completely new fuel type (e.g., hydrogen, ammonia)
+* You're modeling a technology not in ATB
+* You need to change multiple fundamental characteristics at once
+* You want to give the resource a completely different name/classification
+
+!!! tip
+    Resource attribute overrides provide a streamlined way to adjust ATB values without creating entirely new resource definitions. This is especially useful for scenario analysis where you want to test different cost assumptions while maintaining consistency with ATB data structure.
+
+#### Manual Entry
+
 You can also paste resources manually, one per line:
 
     Technology | Tech Detail | Cost Case | Size
@@ -571,7 +699,7 @@ The Export step generates complete PowerGenome settings files based on all previ
 The app generates seven YAML files:
 
 * `model_definition.yml` - Model regions, years, and financial settings
-* `resources.yml` - Existing plant clusters, new resources, and modified resources
+* `resources.yml` - Existing plant clusters, new resources, resource attribute modifiers, and modified resources
 * `fuels.yml` - Fuel prices and emission factors
 * `transmission.yml` - Transmission line definitions
 * `distributed_gen.yml` - Distributed generation settings

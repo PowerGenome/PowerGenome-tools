@@ -3278,6 +3278,8 @@ def reset_region_dependent_state():
     _render_esr = globals().get("render_esr_results")
     if callable(_render_esr):
         _render_esr()
+
+
 def reset_planning_year_dependent_state():
     """Reset all state attributes that depend on planning years.
 
@@ -3317,6 +3319,8 @@ def on_model_years_change(event):
     except NameError:
         # If status messaging is not available, fail silently.
         pass
+
+
 def on_clear_selection(event):
     """Clear all selections."""
     # Reset cluster state
@@ -4852,21 +4856,73 @@ def parse_new_resources_text(text):
 
 
 def render_new_resources_list():
+    """Render both regular and modified (attribute-override) new resources together."""
     container = document.getElementById("newResourcesList")
     raw_el = document.getElementById("newResourcesRaw")
-    if not container or not raw_el:
+    if not container:
         return
 
-    items = parse_new_resources_text(raw_el.value)
-    if not items:
+    # Parse regular resources from textarea
+    regular_items = []
+    if raw_el:
+        regular_items = parse_new_resources_text(raw_el.value)
+
+    # Get resources with attribute modifiers
+    modified_items = []
+    for key in sorted(state.modified_new_resources.keys()):
+        item = state.modified_new_resources[key]
+        # Only include items that are purely attribute modifiers (not custom fuels or identity changes)
+        if (
+            (item.get("fuel_type") == "standard" or item.get("fuel_type") == "none")
+            and item.get("technology") == item.get("new_technology")
+            and item.get("tech_detail") == item.get("new_tech_detail")
+            and item.get("cost_case") == item.get("new_cost_case")
+        ):
+            attr_mods = item.get("attr_modifiers") or {}
+            if attr_mods:  # Only show if it actually has attribute modifiers
+                modified_items.append((key, item, attr_mods))
+
+    if not regular_items and not modified_items:
         container.innerHTML = "<em>No new-build resources selected yet.</em>"
         return
 
     parts = []
-    for tech, detail, case, size in items:
+
+    # Render regular resources with delete buttons
+    for idx, (tech, detail, case, size) in enumerate(regular_items):
         parts.append(
-            f"<div class='candidate-item'><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW</div>"
+            f"<div class='candidate-item' style='display: flex; justify-content: space-between; align-items: center;'>"
+            f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW</span>"
+            f"<button onclick='window.deleteNewResource({idx})' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
+            f"</div>"
         )
+
+    # Render modified resources (with attribute overrides) with delete buttons
+    for key, item, attr_mods in modified_items:
+        tech = item.get("technology")
+        detail = item.get("tech_detail")
+        case = item.get("cost_case")
+        size = item.get("size_mw", 1)
+
+        # Build modifier summary
+        mod_summary = []
+        for attr, val in sorted(attr_mods.items()):
+            if isinstance(val, list) and len(val) == 2:
+                mod_summary.append(f"{attr}=[{val[0]}, {val[1]}]")
+            else:
+                mod_summary.append(f"{attr}={val}")
+        mod_text = "; ".join(mod_summary[:3])  # Show first 3 modifiers
+        if len(mod_summary) > 3:
+            mod_text += f" (+{len(mod_summary)-3} more)"
+
+        parts.append(
+            f"<div class='candidate-item' style='display: flex; justify-content: space-between; align-items: center; background-color: #fff3cd;'>"
+            f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW "
+            f"<span style='color: #856404; font-size: 10px;'>({html.escape(mod_text)})</span></span>"
+            f"<button onclick='window.deleteModifiedNewResource(\"{html.escape(key, quote=True)}\")' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
+            f"</div>"
+        )
+
     container.innerHTML = "".join(parts)
 
 
@@ -4893,32 +4949,218 @@ def on_add_new_resource(event):
         set_status("ATB index not available; add manually below.", "error")
         return
 
-    line = f"{tech} | {detail} | {case} | {size}"
-    existing = raw_el.value.strip()
-    raw_el.value = (existing + "\n" + line).strip() if existing else line
-    render_new_resources_list()
+    # Collect optional attribute overrides from the collapsible panel
+    attr_overrides = {}
+    override_fields = [
+        ("capex_mw", "atbOverrideCapex"),
+        ("capex_mwh", "atbOverrideCapexMwh"),
+        ("heat_rate", "atbOverrideHeatRate"),
+        ("fixed_o_m_mw", "atbOverrideFixedOM"),
+        ("variable_o_m_mwh", "atbOverrideVarOM"),
+        ("variable_o_m_mwh_in", "atbOverrideVarOMIn"),
+        ("wacc_real", "atbOverrideWacc"),
+    ]
+    for attr, el_id in override_fields:
+        el = document.getElementById(el_id)
+        if el is None:
+            continue
+
+        # Get value safely and check if it's actually filled in
+        try:
+            raw_value = el.value
+        except Exception:
+            continue
+
+        if raw_value is None or raw_value == "":
+            continue
+
+        value_str = str(raw_value).strip()
+        if not value_str or value_str.lower() == "none":
+            continue
+
+        try:
+            # Check if value starts with an operator (e.g., "add:100", "mul:1.1")
+            if ":" in value_str:
+                parts = value_str.split(":", 1)
+                if len(parts) == 2:
+                    op, val = parts[0].strip().lower(), parts[1].strip()
+                    if op in ["add", "mul", "truediv", "sub"]:
+                        attr_overrides[attr] = [op, float(val)]
+                    else:
+                        set_status(
+                            f"Invalid operator for {attr}: '{op}'. Must be add, mul, truediv, or sub.",
+                            "error",
+                        )
+                        return
+                else:
+                    raise ValueError("Invalid format")
+            else:
+                # Plain numeric value
+                attr_overrides[attr] = float(value_str)
+        except ValueError:
+            set_status(f"Invalid value for {attr}: '{value_str}'", "error")
+            return
+
+    if attr_overrides:
+        # Add as a modified resource so PowerGenome applies the attribute overrides
+        key = _auto_modified_key(tech, detail)
+        defaults = _ATB_TECH_DEFAULTS.get(
+            tech, {"fuel": "naturalgas", "tag_class": "THERM", "is_commit": True}
+        )
+        fuel = defaults.get("fuel")
+        tag_class = defaults.get("tag_class", "THERM")
+        is_commit = defaults.get("is_commit", False)
+        fuel_type = "standard" if fuel else "none"
+        std_fuel = fuel  # None for non-thermal (VRE/STOR/HYDRO) resources
+        fuel_desc = std_fuel if fuel_type == "standard" else "none"
+
+        state.modified_new_resources[key] = {
+            "technology": tech,
+            "tech_detail": detail,
+            "cost_case": case,
+            "size_mw": size,
+            "new_technology": tech,
+            "new_tech_detail": detail,
+            "new_cost_case": case,
+            "attr_modifiers": attr_overrides,
+            "fuel_type": fuel_type,
+            "standard_fuel": std_fuel,
+            "new_fuel_name": "",
+            "new_fuel_price": 0.0,
+            "new_fuel_emission_factor": 0.0,
+            "tag_class": tag_class,
+            "is_commit": is_commit,
+            "fuel_desc": fuel_desc,
+        }
+        render_modified_resources_list()
+        render_new_resources_list()  # Also update the main list to show this resource
+
+        # Clear override fields for next entry
+        for attr, el_id in override_fields:
+            el = document.getElementById(el_id)
+            if el is not None:
+                try:
+                    el.value = ""
+                except Exception:
+                    pass
+
+        n = len(attr_overrides)
+        set_status(
+            f"Added '{key}' as a modified resource with {n} attribute override(s).",
+            "info",
+        )
+    else:
+        line = f"{tech} | {detail} | {case} | {size}"
+        existing = raw_el.value.strip()
+        raw_el.value = (existing + "\n" + line).strip() if existing else line
+        render_new_resources_list()
+
+
+def delete_new_resource(index):
+    """Delete a regular new resource by index.
+
+    The index refers to the N-th parsed resource line (as shown in the UI).
+    Operates on original textarea contents to preserve comments and any
+    non-conforming lines.
+    """
+    raw_el = document.getElementById("newResourcesRaw")
+    if not raw_el:
+        return
+
+    original_text = raw_el.value or ""
+    lines = original_text.splitlines()
+
+    new_lines = []
+    parsed_idx = 0
+    deleted = False
+
+    for line in lines:
+        parts = [p.strip() for p in line.split("|")]
+        is_resource_line = len(parts) == 4 and all(parts) and not line.strip().startswith("#")
+
+        if is_resource_line:
+            if parsed_idx == index and not deleted:
+                deleted = True
+                parsed_idx += 1
+                continue
+            parsed_idx += 1
+
+        new_lines.append(line)
+
+    if deleted:
+        raw_el.value = "\n".join(new_lines)
+        render_new_resources_list()
+        set_status("Resource deleted.", "success")
+
+
+def delete_modified_new_resource(key):
+    """Delete a modified new resource with attribute overrides by key."""
+    if key in state.modified_new_resources:
+        del state.modified_new_resources[key]
+        render_modified_resources_list()
+        render_new_resources_list()  # Update main list too
+        set_status(f"Deleted modified resource: {key}", "success")
+    else:
+        set_status(f"Resource not found: {key}", "error")
+
+
+# Export delete functions to JavaScript (must be after function definitions)
+window.deleteNewResource = create_proxy(delete_new_resource)
+window.deleteModifiedNewResource = create_proxy(delete_modified_new_resource)
 
 
 def render_modified_resources_list():
+    """Render resources with custom fuels or technology identity changes.
+
+    Resources with ONLY attribute modifiers (no fuel/identity changes) are shown
+    in the main new_resources list instead.
+    """
     container = document.getElementById("modifiedResourcesList")
     if not container:
         return
-    if not state.modified_new_resources:
-        container.innerHTML = "<em>No modified resources added yet.</em>"
+
+    # Filter to only show resources with custom fuels or identity changes
+    to_display = []
+    for key in sorted(state.modified_new_resources.keys()):
+        item = state.modified_new_resources[key]
+        # Show if: custom fuel, OR technology/detail/case changed
+        if (
+            item.get("fuel_type") == "new"
+            or item.get("technology") != item.get("new_technology")
+            or item.get("tech_detail") != item.get("new_tech_detail")
+            or item.get("cost_case") != item.get("new_cost_case")
+        ):
+            to_display.append((key, item))
+
+    if not to_display:
+        container.innerHTML = (
+            "<em>No modified resources with custom fuels or identity changes.</em>"
+        )
         return
 
     parts = []
-    for key in sorted(state.modified_new_resources.keys()):
-        item = state.modified_new_resources[key]
+    for key, item in to_display:
         new_tech = item.get("new_technology")
         fuel_desc = item.get("fuel_desc", "")
         tag_class = item.get("tag_class", "")
-        try:
-            n_mods = len(item.get("attr_modifiers") or {})
-        except Exception:
-            n_mods = 0
+
+        # Build a summary of attribute modifiers
+        attr_mods = item.get("attr_modifiers") or {}
+        mod_summary = []
+        for attr, val in sorted(attr_mods.items()):
+            if isinstance(val, list) and len(val) == 2:
+                # Operator-based modification
+                mod_summary.append(f"{attr}=[{val[0]}, {val[1]}]")
+            else:
+                # Absolute value
+                mod_summary.append(f"{attr}={val}")
+
+        mod_text = "; ".join(mod_summary) if mod_summary else "no attr modifiers"
         parts.append(
-            f"<div class='candidate-item'><strong>{html.escape(key)}</strong> — {html.escape(str(new_tech))} — {html.escape(str(tag_class))} — {html.escape(str(fuel_desc))} — {n_mods} modifiers</div>"
+            f"<div class='candidate-item' style='display: flex; justify-content: space-between; align-items: center;'>"
+            f"<span><strong>{html.escape(key)}</strong> — {html.escape(str(new_tech))} — {html.escape(str(tag_class))} — {html.escape(str(fuel_desc))} — ({html.escape(mod_text)})</span>"
+            f"<button onclick='window.deleteModifiedNewResource(\"{html.escape(key, quote=True)}\")' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
+            f"</div>"
         )
     container.innerHTML = "".join(parts)
 
@@ -4937,6 +5179,65 @@ def _prefix_from_new_technology(new_technology):
     return f"{t}_"
 
 
+# Defaults for auto-detecting fuel type and resource class when adding inline
+# attribute overrides to standard ATB new-build resources.
+_ATB_TECH_DEFAULTS = {
+    "NaturalGas": {"fuel": "naturalgas", "tag_class": "THERM", "is_commit": True},
+    "Coal": {"fuel": "coal", "tag_class": "THERM", "is_commit": True},
+    "Conventional Steam Coal": {
+        "fuel": "coal",
+        "tag_class": "THERM",
+        "is_commit": True,
+    },
+    "Nuclear": {"fuel": "uranium", "tag_class": "THERM", "is_commit": True},
+    "Petroleum Liquids": {
+        "fuel": "distillate",
+        "tag_class": "THERM",
+        "is_commit": True,
+    },
+    "LandbasedWind": {"fuel": None, "tag_class": "VRE", "is_commit": False},
+    "OffshoreWind": {"fuel": None, "tag_class": "VRE", "is_commit": False},
+    "UtilityPV": {"fuel": None, "tag_class": "VRE", "is_commit": False},
+    "Utility-Scale Battery Storage": {
+        "fuel": None,
+        "tag_class": "STOR",
+        "is_commit": False,
+    },
+    "Hydroelectric Pumped Storage": {
+        "fuel": None,
+        "tag_class": "HYDRO",
+        "is_commit": False,
+    },
+}
+
+# Mapping from internal UI snake_case attribute keys to ATB column-style keys used
+# in the resource_modifiers section of resources.yml.  Keys absent from this mapping
+# (capex_mw, capex_mwh, wacc_real) are already valid PowerGenome column names.
+_UI_TO_ATB_KEY = {
+    "heat_rate": "Heat_Rate_MMBTU_per_MWh",
+    "fixed_o_m_mw": "Fixed_OM_Cost_per_MWyr",
+    "variable_o_m_mwh": "Var_OM_Cost_per_MWh",
+    "variable_o_m_mwh_in": "Var_OM_Cost_per_MWh_In",
+}
+
+
+def _auto_modified_key(tech, detail):
+    """Generate a sanitized, unique key for an inline-override modified resource.
+
+    Consecutive non-alphanumeric characters are collapsed into a single underscore.
+    If the generated key already exists in state.modified_new_resources, a numeric
+    suffix (_1, _2, …) is appended to ensure uniqueness.
+    """
+    raw = f"{tech}_{detail}"
+    base = re.sub(r"[^a-z0-9]+", "_", raw.lower()).strip("_")
+    key = base
+    counter = 1
+    while key in state.modified_new_resources:
+        key = f"{base}_{counter}"
+        counter += 1
+    return key
+
+
 def on_add_modified_resource(event):
     name_el = document.getElementById("modResName")
     base_tech_el = document.getElementById("modBaseTech")
@@ -4946,8 +5247,6 @@ def on_add_modified_resource(event):
     new_tech_el = document.getElementById("modNewTech")
     new_detail_el = document.getElementById("modNewTechDetail")
     new_case_el = document.getElementById("modNewCostCase")
-
-    attr_mods_el = document.getElementById("modAttrModifiers")
 
     fuel_type_el = document.getElementById("modFuelType")
     std_fuel_el = document.getElementById("modStandardFuel")
@@ -4975,44 +5274,57 @@ def on_add_modified_resource(event):
     new_detail = str(_get_select_value(new_detail_el, "")).strip()
     new_case = str(_get_select_value(new_case_el, "")).strip()
 
-    # Optional attribute modifiers (YAML mapping)
+    # Collect optional attribute overrides from the collapsible panel
     attr_modifiers = {}
-    if attr_mods_el is not None:
-        raw_mods = str(_get_select_value(attr_mods_el, "") or "").strip()
-        if raw_mods:
-            try:
-                parsed = yaml.safe_load(raw_mods)
-            except Exception as exc:
-                set_status(f"Attribute modifiers YAML error: {exc}", "error")
-                return
+    override_fields = [
+        ("capex_mw", "modOverrideCapexMw"),
+        ("capex_mwh", "modOverrideCapexMwh"),
+        ("heat_rate", "modOverrideHeatRate"),
+        ("fixed_o_m_mw", "modOverrideFixedOM"),
+        ("variable_o_m_mwh", "modOverrideVarOM"),
+        ("variable_o_m_mwh_in", "modOverrideVarOMIn"),
+        ("wacc_real", "modOverrideWacc"),
+    ]
+    for attr, el_id in override_fields:
+        el = document.getElementById(el_id)
+        if el is None:
+            continue
 
-            if not isinstance(parsed, dict):
-                set_status(
-                    "Attribute modifiers must be a YAML mapping (key: value).",
-                    "error",
-                )
-                return
+        # Get value safely and check if it's actually filled in
+        try:
+            raw_value = el.value
+        except Exception:
+            continue
 
-            reserved_keys = {
-                "technology",
-                "tech_detail",
-                "cost_case",
-                "size_mw",
-                "new_technology",
-                "new_tech_detail",
-                "new_cost_case",
-            }
-            overlap = reserved_keys & set(parsed.keys())
-            if overlap:
-                set_status(
-                    "Attribute modifiers cannot change core resource identity fields. "
-                    "These fields are managed automatically by the resource definition; "
-                    "please use different keys for custom attributes.",
-                    "error",
-                )
-                return
+        if raw_value is None or raw_value == "":
+            continue
 
-            attr_modifiers = parsed
+        value_str = str(raw_value).strip()
+        if not value_str or value_str.lower() == "none":
+            continue
+
+        try:
+            # Check if value starts with an operator (e.g., "add:100", "mul:1.1")
+            if ":" in value_str:
+                parts = value_str.split(":", 1)
+                if len(parts) == 2:
+                    op, val = parts[0].strip().lower(), parts[1].strip()
+                    if op in ["add", "mul", "truediv", "sub"]:
+                        attr_modifiers[attr] = [op, float(val)]
+                    else:
+                        set_status(
+                            f"Invalid operator for {attr}: '{op}'. Must be add, mul, truediv, or sub.",
+                            "error",
+                        )
+                        return
+                else:
+                    raise ValueError("Invalid format")
+            else:
+                # Plain numeric value
+                attr_modifiers[attr] = float(value_str)
+        except ValueError:
+            set_status(f"Invalid value for {attr}: '{value_str}'", "error")
+            return
 
     if not (
         base_tech and base_detail and base_case and new_tech and new_detail and new_case
@@ -5079,12 +5391,14 @@ def on_add_modified_resource(event):
         "fuel_desc": fuel_desc,
     }
 
-    # Clear modifiers editor for next entry
-    if attr_mods_el is not None:
-        try:
-            attr_mods_el.value = ""
-        except Exception:
-            pass
+    # Clear attribute override fields for next entry
+    for attr, el_id in override_fields:
+        el = document.getElementById(el_id)
+        if el is not None:
+            try:
+                el.value = ""
+            except Exception:
+                pass
 
     render_modified_resources_list()
     set_status(f"Added modified resource: {key}", "success")
@@ -6821,30 +7135,61 @@ def generate_resources_settings():
             if isinstance(state.renewables_clusters, list) and state.renewables_clusters
             else DEFAULT_RENEWABLES_CLUSTERS
         ),
-        "modified_new_resources": (
-            {
-                k: (
-                    {
-                        "technology": v["technology"],
-                        "tech_detail": v["tech_detail"],
-                        "cost_case": v["cost_case"],
-                        "size_mw": v["size_mw"],
-                        "new_technology": v["new_technology"],
-                        "new_tech_detail": v["new_tech_detail"],
-                        "new_cost_case": v["new_cost_case"],
-                        **(
-                            v.get("attr_modifiers")
-                            if isinstance(v.get("attr_modifiers"), dict)
-                            else {}
-                        ),
-                    }
-                )
-                for k, v in sorted(state.modified_new_resources.items())
-            }
-            if state.modified_new_resources
-            else None
-        ),
     }
+
+    # Build resource_modifiers from modified_new_resources.
+    # Only include attribute-only overrides (no identity or fuel changes) with
+    # a non-empty attr_modifiers dict. Keys are translated from internal UI names
+    # to ATB column-style names (e.g. variable_o_m_mwh → Var_OM_Cost_per_MWh).
+    if state.modified_new_resources:
+        resource_modifiers = {}
+        for k, v in sorted(state.modified_new_resources.items()):
+            attr_mods = v.get("attr_modifiers")
+            if not isinstance(attr_mods, dict) or not attr_mods:
+                continue
+            # Skip entries that change resource identity – those go in modified_new_resources
+            identity_changes = (
+                v.get("new_technology") != v.get("technology")
+                or v.get("new_tech_detail") != v.get("tech_detail")
+                or v.get("new_cost_case") != v.get("cost_case")
+            )
+            if identity_changes:
+                continue
+            # Skip entries that introduce a new fuel type
+            if v.get("fuel_type") == "new":
+                continue
+            modifier_dict = {
+                "technology": v["technology"],
+                "tech_detail": v["tech_detail"],
+            }
+            for ui_key, val in attr_mods.items():
+                atb_key = _UI_TO_ATB_KEY.get(ui_key, ui_key)
+                modifier_dict[atb_key] = val
+            resource_modifiers[k] = modifier_dict
+        if resource_modifiers:
+            out["resource_modifiers"] = resource_modifiers
+
+    # Also output modified_new_resources for custom fuels (if any have new fuel types)
+    modified_with_fuel = {}
+    if state.modified_new_resources:
+        for k, v in sorted(state.modified_new_resources.items()):
+            # Only include in modified_new_resources if it has custom fuel or needs the full structure
+            if v.get("fuel_type") == "new" or (
+                v.get("new_technology") != v.get("technology")
+                or v.get("new_tech_detail") != v.get("tech_detail")
+                or v.get("new_cost_case") != v.get("cost_case")
+            ):
+                modified_with_fuel[k] = {
+                    "technology": v["technology"],
+                    "tech_detail": v["tech_detail"],
+                    "cost_case": v["cost_case"],
+                    "size_mw": v["size_mw"],
+                    "new_technology": v["new_technology"],
+                    "new_tech_detail": v["new_tech_detail"],
+                    "new_cost_case": v["new_cost_case"],
+                }
+    if modified_with_fuel:
+        out["modified_new_resources"] = modified_with_fuel
 
     # Remove nulls to keep YAML clean
     out = {k: v for k, v in out.items() if v is not None}
@@ -6912,7 +7257,11 @@ def generate_fuels_settings():
         prefix = _prefix_from_new_technology(item.get("new_technology"))
         if not prefix:
             continue
-        if item.get("fuel_type") == "new":
+        fuel_type = item.get("fuel_type", "standard")
+        if fuel_type == "none":
+            # Non-thermal resource (e.g. wind, solar, storage) – no fuel mapping needed
+            continue
+        if fuel_type == "new":
             fuel_name = str(item.get("new_fuel_name") or "").strip()
             if not fuel_name:
                 continue
