@@ -32,7 +32,7 @@ import yaml
 # ============================================================================
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture()
 def cluster_app():
     """Load cluster_app module with mocked js/PyScript dependencies."""
     module_names = [
@@ -455,8 +455,8 @@ class TestResourceModifiersGeneration:
         assert "batteries" in result
         assert result["batteries"]["technology"] == "Utility-Scale Battery Storage"
         assert result["batteries"]["tech_detail"] == "Lithium Ion"
-        assert result["batteries"]["variable_o_m_mwh"] == ["add", 0.15]
-        assert result["batteries"]["variable_o_m_mwh_in"] == 0.15
+        assert result["batteries"]["Var_OM_Cost_per_MWh"] == ["add", 0.15]
+        assert result["batteries"]["Var_OM_Cost_per_MWh_In"] == 0.15
         assert result["batteries"]["wacc_real"] == 0.0467
 
     def test_numeric_overrides_as_plain_values(self, cluster_app, mock_app_state):
@@ -486,9 +486,9 @@ class TestResourceModifiersGeneration:
         result = generate_resource_modifiers_dict(mock_app_state)
 
         assert result["custom_ct"]["capex_mw"] == 1000000.0
-        assert result["custom_ct"]["heat_rate"] == 10000.0
+        assert result["custom_ct"]["Heat_Rate_MMBTU_per_MWh"] == 10000.0
         assert isinstance(result["custom_ct"]["capex_mw"], float)
-        assert isinstance(result["custom_ct"]["heat_rate"], float)
+        assert isinstance(result["custom_ct"]["Heat_Rate_MMBTU_per_MWh"], float)
 
     def test_operator_overrides_as_lists(self, cluster_app, mock_app_state):
         """Operator-based overrides should appear as lists in YAML."""
@@ -516,9 +516,9 @@ class TestResourceModifiersGeneration:
         result = generate_resource_modifiers_dict(mock_app_state)
 
         assert result["modified_wind"]["capex_mw"] == ["mul", 1.1]
-        assert result["modified_wind"]["fixed_o_m_mw"] == ["add", 5000]
+        assert result["modified_wind"]["Fixed_OM_Cost_per_MWyr"] == ["add", 5000]
         assert isinstance(result["modified_wind"]["capex_mw"], list)
-        assert isinstance(result["modified_wind"]["fixed_o_m_mw"], list)
+        assert isinstance(result["modified_wind"]["Fixed_OM_Cost_per_MWyr"], list)
 
     def test_no_overrides_empty_dict(self, cluster_app, mock_app_state):
         """resource_modifiers should be empty dict if no overrides exist."""
@@ -628,6 +628,7 @@ def generate_resource_modifiers_dict(state):
     """
     Helper function to generate resource_modifiers dict.
     Extracted from generate_resources_settings for testing.
+    Mirrors the production logic including ATB column key translation.
 
     Args:
         state: AppState instance with modified_new_resources
@@ -635,6 +636,14 @@ def generate_resource_modifiers_dict(state):
     Returns:
         Dict in resource_modifiers format
     """
+    # Mirror of _UI_TO_ATB_KEY in cluster_app.py
+    ui_to_atb_key = {
+        "heat_rate": "Heat_Rate_MMBTU_per_MWh",
+        "fixed_o_m_mw": "Fixed_OM_Cost_per_MWyr",
+        "variable_o_m_mwh": "Var_OM_Cost_per_MWh",
+        "variable_o_m_mwh_in": "Var_OM_Cost_per_MWh_In",
+    }
+
     if not state.modified_new_resources:
         return {}
 
@@ -643,12 +652,22 @@ def generate_resource_modifiers_dict(state):
         attr_mods = v.get("attr_modifiers")
         if not isinstance(attr_mods, dict) or not attr_mods:
             continue
+        # Skip identity changes and new-fuel entries
+        identity_changes = (
+            v.get("new_technology") != v.get("technology")
+            or v.get("new_tech_detail") != v.get("tech_detail")
+            or v.get("new_cost_case") != v.get("cost_case")
+        )
+        if identity_changes or v.get("fuel_type") == "new":
+            continue
 
         modifier_dict = {
             "technology": v["technology"],
             "tech_detail": v["tech_detail"],
         }
-        modifier_dict.update(attr_mods)
+        for ui_key, val in attr_mods.items():
+            atb_key = ui_to_atb_key.get(ui_key, ui_key)
+            modifier_dict[atb_key] = val
         resource_modifiers[k] = modifier_dict
 
     return resource_modifiers
@@ -832,11 +851,11 @@ class TestYAMLOutput:
             == "Utility-Scale Battery Storage"
         )
         assert parsed["resource_modifiers"]["batteries"]["tech_detail"] == "Lithium Ion"
-        assert parsed["resource_modifiers"]["batteries"]["variable_o_m_mwh"] == [
+        assert parsed["resource_modifiers"]["batteries"]["Var_OM_Cost_per_MWh"] == [
             "add",
             0.15,
         ]
-        assert parsed["resource_modifiers"]["batteries"]["variable_o_m_mwh_in"] == 0.15
+        assert parsed["resource_modifiers"]["batteries"]["Var_OM_Cost_per_MWh_In"] == 0.15
         assert parsed["resource_modifiers"]["batteries"]["wacc_real"] == 0.0467
 
     def test_yaml_operator_list_format(self, cluster_app, mock_app_state):
@@ -931,9 +950,9 @@ class TestYAMLOutput:
 
         mod = parsed["resource_modifiers"]["mixed"]
         assert mod["capex_mw"] == 1000000.0
-        assert mod["fixed_o_m_mw"] == ["add", 5000]
+        assert mod["Fixed_OM_Cost_per_MWyr"] == ["add", 5000]
         assert mod["wacc_real"] == 0.05
-        assert mod["variable_o_m_mwh"] == ["mul", 1.1]
+        assert mod["Var_OM_Cost_per_MWh"] == ["mul", 1.1]
 
 
 # ============================================================================
@@ -997,9 +1016,9 @@ class TestEndToEndIntegration:
         assert bat["technology"] == "Utility-Scale Battery Storage"
         assert bat["capex_mw"] == 1200000.0
         assert bat["capex_mwh"] == ["add", 50000]
-        assert bat["fixed_o_m_mw"] == 40000.0
-        assert bat["variable_o_m_mwh"] == ["add", 0.1]
-        assert bat["variable_o_m_mwh_in"] == 0.15
+        assert bat["Fixed_OM_Cost_per_MWyr"] == 40000.0
+        assert bat["Var_OM_Cost_per_MWh"] == ["add", 0.1]
+        assert bat["Var_OM_Cost_per_MWh_In"] == 0.15
         assert bat["wacc_real"] == 0.0467
 
     def test_complete_hydrogen_ct_workflow(self, cluster_app, mock_app_state):
@@ -1043,11 +1062,9 @@ class TestEndToEndIntegration:
         modifiers = generate_resource_modifiers_dict(mock_app_state)
         modified = generate_modified_new_resources_dict(mock_app_state)
 
-        # Verify resource_modifiers has attribute overrides
-        assert "hydrogen_ct" in modifiers
-        assert modifiers["hydrogen_ct"]["technology"] == "NaturalGas"
-        assert modifiers["hydrogen_ct"]["heat_rate"] == ["mul", 0.95]
-        assert modifiers["hydrogen_ct"]["capex_mw"] == 1500000.0
+        # hydrogen_ct has an identity change (new_technology != technology) and
+        # fuel_type == "new", so it goes to modified_new_resources, not resource_modifiers
+        assert "hydrogen_ct" not in modifiers
 
         # Verify modified_new_resources has identity change
         assert "hydrogen_ct" in modified
@@ -1126,10 +1143,10 @@ class TestEndToEndIntegration:
         parsed = yaml.safe_load(yaml_str)
 
         assert len(parsed["resource_modifiers"]) == 3
-        assert parsed["resource_modifiers"]["batteries"]["variable_o_m_mwh"] == [
+        assert parsed["resource_modifiers"]["batteries"]["Var_OM_Cost_per_MWh"] == [
             "add",
             0.15,
         ]
         assert parsed["resource_modifiers"]["wind"]["capex_mw"] == 1600000.0
-        assert parsed["resource_modifiers"]["ct"]["heat_rate"] == ["mul", 1.05]
+        assert parsed["resource_modifiers"]["ct"]["Heat_Rate_MMBTU_per_MWh"] == ["mul", 1.05]
         assert parsed["resource_modifiers"]["ct"]["capex_mw"] == 1000000.0

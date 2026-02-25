@@ -5057,19 +5057,38 @@ def on_add_new_resource(event):
 
 
 def delete_new_resource(index):
-    """Delete a regular new resource by index."""
+    """Delete a regular new resource by index.
+
+    The index refers to the N-th parsed resource line (as shown in the UI).
+    Operates on original textarea contents to preserve comments and any
+    non-conforming lines.
+    """
     raw_el = document.getElementById("newResourcesRaw")
     if not raw_el:
         return
 
-    items = parse_new_resources_text(raw_el.value)
-    if 0 <= index < len(items):
-        items.pop(index)
-        # Rebuild textarea
-        lines = [
-            f"{tech} | {detail} | {case} | {size}" for tech, detail, case, size in items
-        ]
-        raw_el.value = "\n".join(lines)
+    original_text = raw_el.value or ""
+    lines = original_text.splitlines()
+
+    new_lines = []
+    parsed_idx = 0
+    deleted = False
+
+    for line in lines:
+        parts = [p.strip() for p in line.split("|")]
+        is_resource_line = len(parts) == 4 and all(parts) and not line.strip().startswith("#")
+
+        if is_resource_line:
+            if parsed_idx == index and not deleted:
+                deleted = True
+                parsed_idx += 1
+                continue
+            parsed_idx += 1
+
+        new_lines.append(line)
+
+    if deleted:
+        raw_el.value = "\n".join(new_lines)
         render_new_resources_list()
         set_status("Resource deleted.", "success")
 
@@ -5189,6 +5208,16 @@ _ATB_TECH_DEFAULTS = {
         "tag_class": "HYDRO",
         "is_commit": False,
     },
+}
+
+# Mapping from internal UI snake_case attribute keys to ATB column-style keys used
+# in the resource_modifiers section of resources.yml.  Keys absent from this mapping
+# (capex_mw, capex_mwh, wacc_real) are already valid PowerGenome column names.
+_UI_TO_ATB_KEY = {
+    "heat_rate": "Heat_Rate_MMBTU_per_MWh",
+    "fixed_o_m_mw": "Fixed_OM_Cost_per_MWyr",
+    "variable_o_m_mwh": "Var_OM_Cost_per_MWh",
+    "variable_o_m_mwh_in": "Var_OM_Cost_per_MWh_In",
 }
 
 
@@ -7108,20 +7137,37 @@ def generate_resources_settings():
         ),
     }
 
-    # Build resource_modifiers from modified_new_resources
-    # This replaces the old modified_new_resources in the YAML output
+    # Build resource_modifiers from modified_new_resources.
+    # Only include attribute-only overrides (no identity or fuel changes) with
+    # a non-empty attr_modifiers dict. Keys are translated from internal UI names
+    # to ATB column-style names (e.g. variable_o_m_mwh → Var_OM_Cost_per_MWh).
     if state.modified_new_resources:
         resource_modifiers = {}
         for k, v in sorted(state.modified_new_resources.items()):
+            attr_mods = v.get("attr_modifiers")
+            if not isinstance(attr_mods, dict) or not attr_mods:
+                continue
+            # Skip entries that change resource identity – those go in modified_new_resources
+            identity_changes = (
+                v.get("new_technology") != v.get("technology")
+                or v.get("new_tech_detail") != v.get("tech_detail")
+                or v.get("new_cost_case") != v.get("cost_case")
+            )
+            if identity_changes:
+                continue
+            # Skip entries that introduce a new fuel type
+            if v.get("fuel_type") == "new":
+                continue
             modifier_dict = {
                 "technology": v["technology"],
                 "tech_detail": v["tech_detail"],
             }
-            # Add attribute overrides (can be numeric or [operator, value] lists)
-            if isinstance(v.get("attr_modifiers"), dict):
-                modifier_dict.update(v["attr_modifiers"])
+            for ui_key, val in attr_mods.items():
+                atb_key = _UI_TO_ATB_KEY.get(ui_key, ui_key)
+                modifier_dict[atb_key] = val
             resource_modifiers[k] = modifier_dict
-        out["resource_modifiers"] = resource_modifiers
+        if resource_modifiers:
+            out["resource_modifiers"] = resource_modifiers
 
     # Also output modified_new_resources for custom fuels (if any have new fuel types)
     modified_with_fuel = {}
