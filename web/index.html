@@ -1642,6 +1642,14 @@
                     </label>
                     <input id="atbSizeMw" type="number" value="100" min="1" step="1" />
 
+                    <div id="atbCcsCostRow" style="display: none; margin-top: 8px;">
+                        <label style="font-size: 12px;">CCS Disposal Cost ($/metric ton CO2)</label>
+                        <input id="atbCcsDisposalCost" type="number" value="20" min="0" step="0.1" />
+                        <div style="font-size: 11px; color: #666; margin-top: 4px;">
+                            Shown only for CCS technologies. Defaults to 20.
+                        </div>
+                    </div>
+
                     <details id="atbAttrsOverride" style="margin-top: 8px;">
                         <summary style="font-size: 12px; cursor: pointer; color: #555; user-select: none;">
                             Optional: Override cost/performance attributes
