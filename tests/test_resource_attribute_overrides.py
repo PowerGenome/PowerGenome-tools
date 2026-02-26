@@ -902,13 +902,10 @@ def generate_modified_new_resources_dict(state):
     Returns:
         Dict in modified_new_resources format
     """
-    # Mirror of _UI_TO_ATB_KEY in cluster_app.py
-    ui_to_atb_key = {
-        "heat_rate": "Heat_Rate_MMBTU_per_MWh",
-        "fixed_o_m_mw": "Fixed_OM_Cost_per_MWyr",
-        "variable_o_m_mwh": "Var_OM_Cost_per_MWh",
-        "variable_o_m_mwh_in": "Var_OM_Cost_per_MWh_In",
-    }
+    # Use the same mapping as cluster_app._UI_TO_ATB_KEY to avoid drift.
+    app_module_name = type(state).__module__
+    app_module = sys.modules.get(app_module_name)
+    ui_to_atb_key = getattr(app_module, "_UI_TO_ATB_KEY", {}) if app_module is not None else {}
 
     modified_with_fuel = {}
     if not state.modified_new_resources:
