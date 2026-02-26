@@ -5391,7 +5391,6 @@ def on_add_modified_resource(event):
     base_size_el = document.getElementById("modBaseSizeMw")
     new_tech_el = document.getElementById("modNewTech")
     new_detail_el = document.getElementById("modNewTechDetail")
-    new_case_el = document.getElementById("modNewCostCase")
 
     fuel_type_el = document.getElementById("modFuelType")
     std_fuel_el = document.getElementById("modStandardFuel")
@@ -5412,7 +5411,7 @@ def on_add_modified_resource(event):
 
     new_tech = str(_get_select_value(new_tech_el, "")).strip()
     new_detail = str(_get_select_value(new_detail_el, "")).strip()
-    new_case = str(_get_select_value(new_case_el, "")).strip()
+    new_case = base_case  # automatically use the same cost case as the base resource
 
     # Auto-generate the key from the new technology and tech detail
     key = _auto_modified_key(new_tech, new_detail)

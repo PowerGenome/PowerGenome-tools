@@ -561,7 +561,7 @@ You can also paste resources manually, one per line:
 Create custom resources by modifying existing ATB entries:
 
 1. **Base Resource**: Select an ATB technology/detail/cost case/size as the starting point
-2. **New Identity**: Define new technology/detail/cost case names for this modified resource
+2. **New Identity**: Define new technology/detail names for this modified resource (cost case is automatically copied from the base resource)
 3. **Fuel Type**: Choose a standard fuel (coal, natural gas, distillate, uranium) or define a new fuel with price and emissions
 4. **Resource Class Tag**: Select THERM, VRE, STOR, or other resource class
 5. **Commit Tag**: For thermal resources, optionally add to the "Commit" tag
