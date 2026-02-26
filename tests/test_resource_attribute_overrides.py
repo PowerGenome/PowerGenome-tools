@@ -769,6 +769,126 @@ class TestModifiedNewResourcesGeneration:
         result = generate_modified_new_resources_dict(mock_app_state)
 
         assert "renamed_ct" in result
+        assert result["renamed_ct"]["Heat_Rate_MMBTU_per_MWh"] == 8500.0
+
+    def test_custom_fuel_attr_modifiers_included_and_translated(
+        self, cluster_app, mock_app_state
+    ):
+        """Bug fix regression: attr_modifiers on a custom-fuel resource (fuel_type=='new')
+        with identity changes must be translated via _UI_TO_ATB_KEY and included in the
+        modified_new_resources output—not silently dropped."""
+        cluster_app.state = mock_app_state
+        mock_app_state.modified_new_resources = {
+            "hydrogen_ct_v2": {
+                "technology": "NaturalGas",
+                "tech_detail": "Combustion Turbine",
+                "cost_case": "Moderate",
+                "size_mw": 200,
+                "new_technology": "Hydrogen_CT",
+                "new_tech_detail": "Advanced",
+                "new_cost_case": "Moderate",
+                "attr_modifiers": {
+                    "heat_rate": 9500.0,
+                    "variable_o_m_mwh": ["add", 2.5],
+                },
+                "fuel_type": "new",
+                "new_fuel_name": "hydrogen",
+                "new_fuel_price": 45.0,
+                "new_fuel_emission_factor": 0.0,
+                "tag_class": "THERM",
+                "is_commit": True,
+                "fuel_desc": "hydrogen",
+            }
+        }
+
+        result = generate_modified_new_resources_dict(mock_app_state)
+
+        # Resource must be present
+        assert "hydrogen_ct_v2" in result
+        entry = result["hydrogen_ct_v2"]
+
+        # Identity fields must be preserved
+        assert entry["technology"] == "NaturalGas"
+        assert entry["new_technology"] == "Hydrogen_CT"
+
+        # heat_rate → Heat_Rate_MMBTU_per_MWh must be present (not dropped)
+        assert "Heat_Rate_MMBTU_per_MWh" in entry, (
+            "heat_rate attr_modifier was silently dropped for custom-fuel resource"
+        )
+        assert entry["Heat_Rate_MMBTU_per_MWh"] == 9500.0
+
+        # variable_o_m_mwh → Var_OM_Cost_per_MWh must be present (not dropped)
+        assert "Var_OM_Cost_per_MWh" in entry, (
+            "variable_o_m_mwh attr_modifier was silently dropped for custom-fuel resource"
+        )
+        assert entry["Var_OM_Cost_per_MWh"] == ["add", 2.5]
+
+        # Raw UI keys must NOT leak into the output
+        assert "heat_rate" not in entry
+        assert "variable_o_m_mwh" not in entry
+
+    def test_standard_fuel_identity_change_multiple_attr_modifiers_included(
+        self, cluster_app, mock_app_state
+    ):
+        """Bug fix regression: when a standard-fuel resource has an identity change
+        (new_technology differs from technology) AND multiple attr_modifiers, all
+        attr_modifiers must be translated via _UI_TO_ATB_KEY and included—not
+        silently dropped."""
+        cluster_app.state = mock_app_state
+        mock_app_state.modified_new_resources = {
+            "efficient_ct": {
+                "technology": "NaturalGas",
+                "tech_detail": "Combustion Turbine",
+                "cost_case": "Moderate",
+                "size_mw": 150,
+                # Identity change: new_technology differs from technology
+                "new_technology": "AdvancedNaturalGas",
+                "new_tech_detail": "Combustion Turbine",
+                "new_cost_case": "Moderate",
+                "attr_modifiers": {
+                    "heat_rate": 7800.0,
+                    "variable_o_m_mwh": 3.0,
+                    "fixed_o_m_mw": ["mul", 0.9],
+                },
+                "fuel_type": "standard",
+                "standard_fuel": "naturalgas",
+                "tag_class": "THERM",
+                "is_commit": True,
+                "fuel_desc": "naturalgas",
+            }
+        }
+
+        result = generate_modified_new_resources_dict(mock_app_state)
+
+        # Resource must be present because of identity change
+        assert "efficient_ct" in result
+        entry = result["efficient_ct"]
+
+        # All three attr_modifiers must be present with translated ATB keys
+        assert "Heat_Rate_MMBTU_per_MWh" in entry, (
+            "heat_rate attr_modifier was silently dropped for identity-changed resource"
+        )
+        assert entry["Heat_Rate_MMBTU_per_MWh"] == 7800.0
+
+        assert "Var_OM_Cost_per_MWh" in entry, (
+            "variable_o_m_mwh attr_modifier was silently dropped for identity-changed resource"
+        )
+        assert entry["Var_OM_Cost_per_MWh"] == 3.0
+
+        assert "Fixed_OM_Cost_per_MWyr" in entry, (
+            "fixed_o_m_mw attr_modifier was silently dropped for identity-changed resource"
+        )
+        assert entry["Fixed_OM_Cost_per_MWyr"] == ["mul", 0.9]
+
+        # Raw UI keys must NOT leak into the output
+        assert "heat_rate" not in entry
+        assert "variable_o_m_mwh" not in entry
+        assert "fixed_o_m_mw" not in entry
+
+        # Identity and structural fields must still be correct
+        assert entry["technology"] == "NaturalGas"
+        assert entry["new_technology"] == "AdvancedNaturalGas"
+        assert entry["size_mw"] == 150
 
 
 def generate_modified_new_resources_dict(state):
@@ -782,6 +902,14 @@ def generate_modified_new_resources_dict(state):
     Returns:
         Dict in modified_new_resources format
     """
+    # Mirror of _UI_TO_ATB_KEY in cluster_app.py
+    ui_to_atb_key = {
+        "heat_rate": "Heat_Rate_MMBTU_per_MWh",
+        "fixed_o_m_mw": "Fixed_OM_Cost_per_MWyr",
+        "variable_o_m_mwh": "Var_OM_Cost_per_MWh",
+        "variable_o_m_mwh_in": "Var_OM_Cost_per_MWh_In",
+    }
+
     modified_with_fuel = {}
     if not state.modified_new_resources:
         return modified_with_fuel
@@ -793,7 +921,7 @@ def generate_modified_new_resources_dict(state):
             or v.get("new_tech_detail") != v.get("tech_detail")
             or v.get("new_cost_case") != v.get("cost_case")
         ):
-            modified_with_fuel[k] = {
+            entry = {
                 "technology": v["technology"],
                 "tech_detail": v["tech_detail"],
                 "cost_case": v["cost_case"],
@@ -802,6 +930,12 @@ def generate_modified_new_resources_dict(state):
                 "new_tech_detail": v["new_tech_detail"],
                 "new_cost_case": v["new_cost_case"],
             }
+            attr_mods = v.get("attr_modifiers")
+            if isinstance(attr_mods, dict) and attr_mods:
+                for ui_key, val in attr_mods.items():
+                    atb_key = ui_to_atb_key.get(ui_key, ui_key)
+                    entry[atb_key] = val
+            modified_with_fuel[k] = entry
 
     return modified_with_fuel
 
