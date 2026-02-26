@@ -7334,7 +7334,7 @@ def generate_resources_settings():
                 or v.get("new_tech_detail") != v.get("tech_detail")
                 or v.get("new_cost_case") != v.get("cost_case")
             ):
-                modified_with_fuel[k] = {
+                entry = {
                     "technology": v["technology"],
                     "tech_detail": v["tech_detail"],
                     "cost_case": v["cost_case"],
@@ -7343,6 +7343,12 @@ def generate_resources_settings():
                     "new_tech_detail": v["new_tech_detail"],
                     "new_cost_case": v["new_cost_case"],
                 }
+                attr_mods = v.get("attr_modifiers")
+                if isinstance(attr_mods, dict) and attr_mods:
+                    for ui_key, val in attr_mods.items():
+                        atb_key = _UI_TO_ATB_KEY.get(ui_key, ui_key)
+                        entry[atb_key] = val
+                modified_with_fuel[k] = entry
     if modified_with_fuel:
         out["modified_new_resources"] = modified_with_fuel
 
