@@ -4704,6 +4704,15 @@ def populate_fuel_scenario_selects(event=None):
             )
 
 
+def _get_default_cost_case(cases):
+    """Get default cost case, preferring 'Moderate' if available, otherwise first in list."""
+    if not cases:
+        return None
+    if "Moderate" in cases:
+        return "Moderate"
+    return cases[0]
+
+
 def populate_fuel_data_year_select(event=None):
     """Populate the Fuel Data Year dropdown from loaded fuel_prices.csv."""
     year_el = document.getElementById("fuelDataYear")
@@ -4806,9 +4815,9 @@ def populate_atb_picker():
         .get(selected_tech, {})
         .get(selected_detail, [])
     )
-    selected_case = _get_select_value(case_el, cases[0] if cases else None)
+    selected_case = _get_select_value(case_el, _get_default_cost_case(cases))
     if selected_case not in cases and cases:
-        selected_case = cases[0]
+        selected_case = _get_default_cost_case(cases)
     _set_select_options(case_el, cases, selected_value=selected_case)
     update_atb_ccs_cost_visibility()
 
@@ -4854,9 +4863,9 @@ def populate_mod_resource_pickers():
     _set_select_options(detail_el, details, selected_value=selected_detail)
 
     cases = year_data.get(selected_tech, {}).get(selected_detail, [])
-    selected_case = _get_select_value(case_el, cases[0] if cases else None)
+    selected_case = _get_select_value(case_el, _get_default_cost_case(cases))
     if selected_case not in cases and cases:
-        selected_case = cases[0]
+        selected_case = _get_default_cost_case(cases)
     _set_select_options(case_el, cases, selected_value=selected_case)
 
 
