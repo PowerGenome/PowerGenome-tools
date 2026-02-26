@@ -420,6 +420,10 @@ If ATB data is available, use the dropdowns to select:
 * **ATB Data Year** → **Technology** → **Tech Detail** → **Cost Case**
 * Specify **Size (MW)** for each resource
 
+#### CCS Disposal Cost (Conditional)
+
+For CCS technologies, the ATB picker shows a **CCS disposal cost** input. This field only appears for CCS resources and defaults to 20 (USD per tonne). This value should be inflation-adjusted to the desired dollar-year -- it will not be modified by PowerGenome.
+
 #### Optional: Override Cost/Performance Attributes
 
 Below the Size field, you can expand the **"Optional: Override cost/performance attributes"** panel to modify specific cost and performance parameters for the selected ATB resource. This panel allows you to adjust values from NREL's ATB database using either absolute values or relative adjustments.

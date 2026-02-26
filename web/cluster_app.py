@@ -93,6 +93,8 @@ class AppState:
         self.plant_cluster_settings = (
             None  # parsed YAML dict from plant clustering output
         )
+        self.ccs_disposal_cost = 20  # Default CCS disposal cost in $/metric ton
+        self.ccs_disposal_cost_map = {}  # tech_name -> disposal cost override
 
         # Resource groups (Fast interconnection)
         self.fast_interconnection_data = None  # cached parquet/csv dataframes
@@ -4808,6 +4810,7 @@ def populate_atb_picker():
     if selected_case not in cases and cases:
         selected_case = cases[0]
     _set_select_options(case_el, cases, selected_value=selected_case)
+    update_atb_ccs_cost_visibility()
 
 
 def on_atb_picker_change(event=None):
@@ -4859,6 +4862,29 @@ def populate_mod_resource_pickers():
 
 def on_mod_base_picker_change(event=None):
     populate_mod_resource_pickers()
+    update_atb_ccs_cost_visibility()
+
+
+def update_atb_ccs_cost_visibility():
+    """Show CCS disposal cost input only for CCS technologies in ATB picker."""
+    detail_el = document.getElementById("atbTechDetailSelect")
+    row_el = document.getElementById("atbCcsCostRow")
+    cost_el = document.getElementById("atbCcsDisposalCost")
+    if not row_el:
+        return
+    detail = _get_select_value(detail_el, "")
+    ccs_fraction = _extract_ccs_capture_fraction(detail)
+    if ccs_fraction is None:
+        row_el.style.display = "none"
+        return
+    row_el.style.display = "block"
+    if cost_el:
+        try:
+            current = float(cost_el.value)
+        except Exception:
+            current = None
+        if current is None:
+            cost_el.value = str(state.ccs_disposal_cost)
 
 
 def parse_int_list(text):
@@ -4937,9 +4963,21 @@ def render_new_resources_list():
 
     # Render regular resources with delete buttons
     for idx, (tech, detail, case, size) in enumerate(regular_items):
+        ccs_fraction = _extract_ccs_capture_fraction(detail)
+        ccs_note = ""
+        if ccs_fraction is not None:
+            tech_name = f"{tech}_{detail}"
+            ccs_cost = state.ccs_disposal_cost_map.get(
+                tech_name, state.ccs_disposal_cost
+            )
+            ccs_note = (
+                " "
+                f"<span style='color: #3b4a3f; font-size: 10px;'>"
+                f"(CCS disposal ${ccs_cost}/tCO2)</span>"
+            )
         parts.append(
             f"<div class='candidate-item' style='display: flex; justify-content: space-between; align-items: center;'>"
-            f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW</span>"
+            f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW{ccs_note}</span>"
             f"<button onclick='window.deleteNewResource({idx})' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
             f"</div>"
         )
@@ -4962,9 +5000,19 @@ def render_new_resources_list():
         if len(mod_summary) > 3:
             mod_text += f" (+{len(mod_summary)-3} more)"
 
+        ccs_fraction = _extract_ccs_capture_fraction(detail)
+        ccs_note = ""
+        if ccs_fraction is not None:
+            ccs_cost = item.get("ccs_disposal_cost", state.ccs_disposal_cost)
+            ccs_note = (
+                " "
+                f"<span style='color: #3b4a3f; font-size: 10px;'>"
+                f"(CCS disposal ${ccs_cost}/tCO2)</span>"
+            )
+
         parts.append(
             f"<div class='candidate-item' style='display: flex; justify-content: space-between; align-items: center; background-color: #fff3cd;'>"
-            f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW "
+            f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW{ccs_note} "
             f"<span style='color: #856404; font-size: 10px;'>({html.escape(mod_text)})</span></span>"
             f"<button onclick='window.deleteModifiedNewResource(\"{html.escape(key, quote=True)}\")' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
             f"</div>"
@@ -5061,6 +5109,19 @@ def on_add_new_resource(event):
         std_fuel = fuel  # None for non-thermal (VRE/STOR/HYDRO) resources
         fuel_desc = std_fuel if fuel_type == "standard" else "none"
 
+        # Check if this is a CCS technology
+        ccs_fraction = _extract_ccs_capture_fraction(detail)
+        ccs_disposal_cost = None
+        if ccs_fraction is not None:
+            cost_el = document.getElementById("atbCcsDisposalCost")
+            try:
+                ccs_disposal_cost = float(_get_select_value(cost_el, ""))
+            except Exception:
+                ccs_disposal_cost = state.ccs_disposal_cost
+            if ccs_disposal_cost < 0:
+                set_status("CCS disposal cost must be >= 0", "error")
+                return
+
         state.modified_new_resources[key] = {
             "technology": tech,
             "tech_detail": detail,
@@ -5078,6 +5139,8 @@ def on_add_new_resource(event):
             "tag_class": tag_class,
             "is_commit": is_commit,
             "fuel_desc": fuel_desc,
+            "ccs_capture_fraction": ccs_fraction,
+            "ccs_disposal_cost": ccs_disposal_cost,
         }
         render_modified_resources_list()
         render_new_resources_list()  # Also update the main list to show this resource
@@ -5100,6 +5163,18 @@ def on_add_new_resource(event):
         line = f"{tech} | {detail} | {case} | {size}"
         existing = raw_el.value.strip()
         raw_el.value = (existing + "\n" + line).strip() if existing else line
+        ccs_fraction = _extract_ccs_capture_fraction(detail)
+        if ccs_fraction is not None:
+            cost_el = document.getElementById("atbCcsDisposalCost")
+            try:
+                ccs_disposal_cost = float(_get_select_value(cost_el, ""))
+            except Exception:
+                ccs_disposal_cost = state.ccs_disposal_cost
+            if ccs_disposal_cost < 0:
+                set_status("CCS disposal cost must be >= 0", "error")
+                return
+            tech_name = f"{tech}_{detail}"
+            state.ccs_disposal_cost_map[tech_name] = ccs_disposal_cost
         render_new_resources_list()
 
 
@@ -5123,7 +5198,9 @@ def delete_new_resource(index):
 
     for line in lines:
         parts = [p.strip() for p in line.split("|")]
-        is_resource_line = len(parts) == 4 and all(parts) and not line.strip().startswith("#")
+        is_resource_line = (
+            len(parts) == 4 and all(parts) and not line.strip().startswith("#")
+        )
 
         if is_resource_line:
             if parsed_idx == index and not deleted:
@@ -5224,6 +5301,28 @@ def _prefix_from_new_technology(new_technology):
     if t.endswith("_"):
         return t
     return f"{t}_"
+
+
+def _extract_ccs_capture_fraction(tech_detail):
+    """Extract CCS capture fraction from technology detail string.
+
+    Examples:
+        "1-on-1 Combined Cycle (H-Frame) 95% CCS" -> 0.95
+        "F-Frame CC 97% CCS" -> 0.97
+        "Fuel Cell - 98% CCS" -> 0.98
+        "99%-CCS" -> 0.99
+        "Regular Technology" -> None
+    """
+    import re
+
+    if not tech_detail:
+        return None
+    # Match patterns like "95% CCS", "95%-CCS", "95%CCS"
+    match = re.search(r"(\d+)%[-\s]*CCS", str(tech_detail), re.IGNORECASE)
+    if match:
+        percentage = int(match.group(1))
+        return percentage / 100.0
+    return None
 
 
 # Defaults for auto-detecting fuel type and resource class when adding inline
@@ -5412,6 +5511,11 @@ def on_add_modified_resource(event):
         else f"{new_fuel_name} @ ${new_fuel_price}/MMBtu"
     )
 
+    # Check if this is a CCS technology (check both base and new tech_detail)
+    ccs_fraction = _extract_ccs_capture_fraction(
+        new_detail
+    ) or _extract_ccs_capture_fraction(base_detail)
+
     state.modified_new_resources[key] = {
         # resources.yml schema
         "technology": base_tech,
@@ -5431,6 +5535,7 @@ def on_add_modified_resource(event):
         "tag_class": tag_class,
         "is_commit": bool(is_commit),
         "fuel_desc": fuel_desc,
+        "ccs_capture_fraction": ccs_fraction,
     }
 
     # Clear attribute override fields for next entry
@@ -7537,6 +7642,38 @@ def generate_resource_tags_settings():
     for esr_name in esr_tag_names:
         values[esr_name] = {}
 
+    # Collect CCS technologies from modified resources and regular new resources
+    ccs_technologies = {}  # tech_name -> capture_fraction
+    ccs_costs = {}  # tech_name -> disposal cost
+
+    # Check modified resources for CCS
+    for _, item in state.modified_new_resources.items():
+        ccs_fraction = item.get("ccs_capture_fraction")
+        if ccs_fraction is not None:
+            # Use the new technology info to build the name
+            new_tech = item.get("new_technology", "")
+            new_detail = item.get("new_tech_detail", "")
+            if new_tech and new_detail:
+                tech_name = f"{new_tech}_{new_detail}"
+                ccs_technologies[tech_name] = ccs_fraction
+                ccs_costs[tech_name] = item.get(
+                    "ccs_disposal_cost", state.ccs_disposal_cost
+                )
+
+    # Check regular new resources from textarea for CCS
+    raw_el = document.getElementById("newResourcesRaw")
+    if raw_el:
+        new_resources = parse_new_resources_text(raw_el.value if raw_el else "")
+        for tech, detail, case, size in new_resources:
+            ccs_fraction = _extract_ccs_capture_fraction(detail)
+            if ccs_fraction is not None:
+                # Build the full tech name as it appears in PowerGenome: Technology_TechDetail
+                tech_name = f"{tech}_{detail}"
+                ccs_technologies[tech_name] = ccs_fraction
+                ccs_costs[tech_name] = state.ccs_disposal_cost_map.get(
+                    tech_name, state.ccs_disposal_cost
+                )
+
     # Apply modified resource tag choices
     for _, item in state.modified_new_resources.items():
         prefix = _prefix_from_new_technology(item.get("new_technology"))
@@ -7548,6 +7685,28 @@ def generate_resource_tags_settings():
         if tag_class == "THERM" and bool(item.get("is_commit")):
             values.setdefault("Commit", {})[prefix] = 1
         values.setdefault("New_Build", {})[prefix] = 1
+
+    # Add CCS-related tags if any CCS technologies are present
+    if ccs_technologies:
+        # Add CCS tag names to the tag list
+        tag_names.extend(
+            [
+                "CO2_Capture_Fraction",
+                "CO2_Capture_Fraction_Startup",
+                "CCS_Disposal_Cost_per_Metric_Ton",
+            ]
+        )
+
+        values["CO2_Capture_Fraction"] = {}
+        values["CO2_Capture_Fraction_Startup"] = {}
+        values["CCS_Disposal_Cost_per_Metric_Ton"] = {}
+
+        for tech_name, capture_fraction in ccs_technologies.items():
+            values["CO2_Capture_Fraction"][tech_name] = capture_fraction
+            values["CO2_Capture_Fraction_Startup"][tech_name] = capture_fraction
+            values["CCS_Disposal_Cost_per_Metric_Ton"][tech_name] = ccs_costs.get(
+                tech_name, state.ccs_disposal_cost
+            )
 
     out = {
         "model_tag_names": tag_names,

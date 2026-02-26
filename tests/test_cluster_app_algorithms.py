@@ -2615,3 +2615,390 @@ class TestAtbAttributeOverrides:
                 cluster_app.document = orig_doc
         finally:
             cluster_app.state.modified_new_resources = orig_modified
+
+
+# ---------------------------------------------------------------------------
+# 22. CCS capture fraction extraction and resource tags
+# ---------------------------------------------------------------------------
+
+
+class TestCCSFunctionality:
+    """Tests for CCS capture fraction extraction and resource tags generation."""
+
+    @pytest.mark.parametrize(
+        "tech_detail,expected_fraction",
+        [
+            # Standard patterns with spaces
+            ("1-on-1 Combined Cycle (H-Frame) 95% CCS", 0.95),
+            ("F-Frame CC 97% CCS", 0.97),
+            ("Fuel Cell - 98% CCS", 0.98),
+            ("Natural Gas CT 90% CCS", 0.90),
+            # Patterns with hyphens
+            ("99%-CCS", 0.99),
+            ("85%-CCS Technology", 0.85),
+            # Patterns without spaces
+            ("Nuclear 100%CCS", 1.00),
+            ("Coal 80%CCS Advanced", 0.80),
+            # Case insensitivity
+            ("Advanced Tech 95% ccs", 0.95),
+            ("Tech 92% Ccs", 0.92),
+            ("Tech 88% CCS", 0.88),
+            # Non-CCS technologies
+            ("Natural Gas Combined Cycle", None),
+            ("Solar Photovoltaic", None),
+            ("Onshore Wind", None),
+            ("Battery Storage", None),
+            ("Regular Technology", None),
+            # Edge cases
+            ("", None),
+            (None, None),
+            ("CCS without percentage", None),
+            ("100 CCS no percent sign", None),
+            # Single and double digit percentages
+            ("Tech 5% CCS", 0.05),
+            ("Tech 100% CCS", 1.00),
+        ],
+    )
+    def test_extract_ccs_capture_fraction(
+        self, cluster_app, tech_detail, expected_fraction
+    ):
+        """Test CCS capture fraction extraction from various technology detail strings."""
+        result = cluster_app._extract_ccs_capture_fraction(tech_detail)
+        if expected_fraction is None:
+            assert result is None
+        else:
+            assert result == pytest.approx(expected_fraction, abs=1e-6)
+
+    def test_ccs_in_modified_resources(self, cluster_app):
+        """Test that CCS technologies are correctly detected in modified resources."""
+        orig_modified = cluster_app.state.modified_new_resources
+
+        try:
+            # Set up modified resources with and without CCS
+            cluster_app.state.modified_new_resources = {
+                "ng_ccs": {
+                    "new_technology": "NaturalGas",
+                    "new_tech_detail": "F-Frame CC 95% CCS",
+                    "ccs_capture_fraction": 0.95,
+                    "tag_class": "THERM",
+                    "is_commit": True,
+                },
+                "ng_regular": {
+                    "new_technology": "NaturalGas",
+                    "new_tech_detail": "F-Frame CC",
+                    "ccs_capture_fraction": None,
+                    "tag_class": "THERM",
+                    "is_commit": True,
+                },
+                "coal_ccs": {
+                    "new_technology": "Coal",
+                    "new_tech_detail": "Subcritical 90% CCS",
+                    "ccs_capture_fraction": 0.90,
+                    "tag_class": "THERM",
+                    "is_commit": True,
+                },
+            }
+
+            # Set disposal cost
+            cluster_app.state.ccs_disposal_cost = 25
+
+            # Generate resource tags (returns YAML string)
+            result_yaml = cluster_app.generate_resource_tags_settings()
+            result = yaml.safe_load(result_yaml)
+
+            # Check that CCS tags exist
+            assert "model_tag_values" in result
+            values = result["model_tag_values"]
+
+            assert "CO2_Capture_Fraction" in values
+            assert "CO2_Capture_Fraction_Startup" in values
+            assert "CCS_Disposal_Cost_per_Metric_Ton" in values
+
+            # Check CCS technology entries
+            capture_fractions = values["CO2_Capture_Fraction"]
+            assert "NaturalGas_F-Frame CC 95% CCS" in capture_fractions
+            assert capture_fractions["NaturalGas_F-Frame CC 95% CCS"] == pytest.approx(
+                0.95
+            )
+            assert "Coal_Subcritical 90% CCS" in capture_fractions
+            assert capture_fractions["Coal_Subcritical 90% CCS"] == pytest.approx(0.90)
+
+            # Check startup fractions match
+            startup_fractions = values["CO2_Capture_Fraction_Startup"]
+            assert startup_fractions["NaturalGas_F-Frame CC 95% CCS"] == pytest.approx(
+                0.95
+            )
+            assert startup_fractions["Coal_Subcritical 90% CCS"] == pytest.approx(0.90)
+
+            # Check disposal costs
+            disposal_costs = values["CCS_Disposal_Cost_per_Metric_Ton"]
+            assert disposal_costs["NaturalGas_F-Frame CC 95% CCS"] == 25
+            assert disposal_costs["Coal_Subcritical 90% CCS"] == 25
+
+            # Non-CCS technology should not be in CCS tags
+            assert "NaturalGas_F-Frame CC" not in capture_fractions
+
+        finally:
+            cluster_app.state.modified_new_resources = orig_modified
+
+    def test_ccs_in_regular_new_resources(self, cluster_app):
+        """Test that CCS technologies are correctly detected in regular new resources."""
+        orig_modified = cluster_app.state.modified_new_resources
+        orig_doc = cluster_app.document
+
+        try:
+            # Mock document with new resources textarea containing CCS technologies
+            mock_doc = MagicMock()
+            mock_textarea = MagicMock()
+            mock_textarea.value = """
+NaturalGas | F-Frame CC 95% CCS | Mid | 500
+Coal | Supercritical 90% CCS | Mid | 800
+NaturalGas | H-Frame CC | Mid | 600
+"""
+            mock_doc.getElementById.return_value = mock_textarea
+            cluster_app.document = mock_doc
+
+            # Clear modified resources to test only regular resources
+            cluster_app.state.modified_new_resources = {}
+
+            # Set disposal cost
+            cluster_app.state.ccs_disposal_cost = 30
+
+            # Generate resource tags (returns YAML string)
+            result_yaml = cluster_app.generate_resource_tags_settings()
+            result = yaml.safe_load(result_yaml)
+
+            # Check that CCS tags exist
+            assert "model_tag_values" in result
+            values = result["model_tag_values"]
+
+            assert "CO2_Capture_Fraction" in values
+            assert "CO2_Capture_Fraction_Startup" in values
+            assert "CCS_Disposal_Cost_per_Metric_Ton" in values
+
+            # Check CCS technology entries
+            capture_fractions = values["CO2_Capture_Fraction"]
+            assert "NaturalGas_F-Frame CC 95% CCS" in capture_fractions
+            assert capture_fractions["NaturalGas_F-Frame CC 95% CCS"] == pytest.approx(
+                0.95
+            )
+            assert "Coal_Supercritical 90% CCS" in capture_fractions
+            assert capture_fractions["Coal_Supercritical 90% CCS"] == pytest.approx(
+                0.90
+            )
+
+            # Check disposal costs
+            disposal_costs = values["CCS_Disposal_Cost_per_Metric_Ton"]
+            assert disposal_costs["NaturalGas_F-Frame CC 95% CCS"] == 30
+            assert disposal_costs["Coal_Supercritical 90% CCS"] == 30
+
+            # Non-CCS technology should not be in CCS tags
+            assert "NaturalGas_H-Frame CC" not in capture_fractions
+
+        finally:
+            cluster_app.state.modified_new_resources = orig_modified
+            cluster_app.document = orig_doc
+
+    def test_ccs_tags_not_present_without_ccs_technologies(self, cluster_app):
+        """Test that CCS tags are not added when no CCS technologies are present."""
+        orig_modified = cluster_app.state.modified_new_resources
+        orig_doc = cluster_app.document
+
+        try:
+            # Mock document with new resources textarea containing NO CCS technologies
+            mock_doc = MagicMock()
+            mock_textarea = MagicMock()
+            mock_textarea.value = """
+NaturalGas, H-Frame CC, Mid, 500
+UtilityPV, Class1, Mid, 100
+LandbasedWind, Class4, Mid, 200
+"""
+            mock_doc.getElementById.return_value = mock_textarea
+            cluster_app.document = mock_doc
+
+            # No modified resources with CCS
+            cluster_app.state.modified_new_resources = {
+                "solar": {
+                    "new_technology": "UtilityPV",
+                    "new_tech_detail": "Class1",
+                    "ccs_capture_fraction": None,
+                    "tag_class": "VRE",
+                    "is_commit": False,
+                }
+            }
+
+            # Generate resource tags (returns YAML string)
+            result_yaml = cluster_app.generate_resource_tags_settings()
+            result = yaml.safe_load(result_yaml)
+
+            # CCS tags should NOT be in model_tag_values
+            values = result["model_tag_values"]
+            assert "CO2_Capture_Fraction" not in values
+            assert "CO2_Capture_Fraction_Startup" not in values
+            assert "CCS_Disposal_Cost_per_Metric_Ton" not in values
+
+        finally:
+            cluster_app.state.modified_new_resources = orig_modified
+            cluster_app.document = orig_doc
+
+    def test_ccs_mixed_sources(self, cluster_app):
+        """Test CCS detection when technologies come from both modified and regular resources."""
+        orig_modified = cluster_app.state.modified_new_resources
+        orig_doc = cluster_app.document
+
+        try:
+            # Modified resource with CCS
+            cluster_app.state.modified_new_resources = {
+                "hydrogen_ct": {
+                    "new_technology": "NaturalGas",
+                    "new_tech_detail": "H2 CT 98% CCS",
+                    "ccs_capture_fraction": 0.98,
+                    "tag_class": "THERM",
+                    "is_commit": True,
+                }
+            }
+
+            # Regular resources with CCS
+            mock_doc = MagicMock()
+            mock_textarea = MagicMock()
+            mock_textarea.value = "NaturalGas | F-Frame CC 95% CCS | Mid | 500"
+            mock_doc.getElementById.return_value = mock_textarea
+            cluster_app.document = mock_doc
+
+            # Set disposal cost
+            cluster_app.state.ccs_disposal_cost = 22
+
+            # Generate resource tags (returns YAML string)
+            result_yaml = cluster_app.generate_resource_tags_settings()
+            result = yaml.safe_load(result_yaml)
+
+            # Check that both technologies are present
+            values = result["model_tag_values"]
+            capture_fractions = values["CO2_Capture_Fraction"]
+
+            assert "NaturalGas_H2 CT 98% CCS" in capture_fractions
+            assert capture_fractions["NaturalGas_H2 CT 98% CCS"] == pytest.approx(0.98)
+            assert "NaturalGas_F-Frame CC 95% CCS" in capture_fractions
+            assert capture_fractions["NaturalGas_F-Frame CC 95% CCS"] == pytest.approx(
+                0.95
+            )
+
+            # Both should have same disposal cost
+            disposal_costs = values["CCS_Disposal_Cost_per_Metric_Ton"]
+            assert disposal_costs["NaturalGas_H2 CT 98% CCS"] == 22
+            assert disposal_costs["NaturalGas_F-Frame CC 95% CCS"] == 22
+
+        finally:
+            cluster_app.state.modified_new_resources = orig_modified
+            cluster_app.document = orig_doc
+
+    def test_ccs_disposal_cost_default(self, cluster_app):
+        """Test that default CCS disposal cost is applied correctly."""
+        orig_modified = cluster_app.state.modified_new_resources
+        orig_disposal_cost = cluster_app.state.ccs_disposal_cost
+
+        try:
+            # Use default disposal cost (should be 20)
+            default_cost = 20
+            cluster_app.state.ccs_disposal_cost = default_cost
+
+            cluster_app.state.modified_new_resources = {
+                "ccs_tech": {
+                    "new_technology": "Coal",
+                    "new_tech_detail": "Advanced 92% CCS",
+                    "ccs_capture_fraction": 0.92,
+                    "tag_class": "THERM",
+                    "is_commit": True,
+                }
+            }
+
+            result_yaml = cluster_app.generate_resource_tags_settings()
+            result = yaml.safe_load(result_yaml)
+            values = result["model_tag_values"]
+            disposal_costs = values["CCS_Disposal_Cost_per_Metric_Ton"]
+
+            assert disposal_costs["Coal_Advanced 92% CCS"] == default_cost
+
+        finally:
+            cluster_app.state.modified_new_resources = orig_modified
+            cluster_app.state.ccs_disposal_cost = orig_disposal_cost
+
+    def test_ccs_edge_cases_empty_and_whitespace(self, cluster_app):
+        """Test edge cases with empty strings and whitespace in tech details."""
+        # Empty string
+        assert cluster_app._extract_ccs_capture_fraction("") is None
+
+        # Whitespace only
+        assert cluster_app._extract_ccs_capture_fraction("   ") is None
+        assert cluster_app._extract_ccs_capture_fraction("\t\n") is None
+
+        # CCS keyword but no percentage
+        assert cluster_app._extract_ccs_capture_fraction("CCS Technology") is None
+        assert (
+            cluster_app._extract_ccs_capture_fraction("Carbon Capture Storage") is None
+        )
+
+    def test_ccs_various_percentage_formats(self, cluster_app):
+        """Test various percentage format edge cases."""
+        # Valid formats
+        assert cluster_app._extract_ccs_capture_fraction(
+            "Tech 95% CCS"
+        ) == pytest.approx(0.95)
+        assert cluster_app._extract_ccs_capture_fraction(
+            "Tech 95%-CCS"
+        ) == pytest.approx(0.95)
+        assert cluster_app._extract_ccs_capture_fraction(
+            "Tech 95%CCS"
+        ) == pytest.approx(0.95)
+        assert cluster_app._extract_ccs_capture_fraction(
+            "Tech 95% - CCS"
+        ) == pytest.approx(0.95)
+
+        # Invalid formats (missing %)
+        assert cluster_app._extract_ccs_capture_fraction("Tech 95 CCS") is None
+
+        # Multiple occurrences (should match first)
+        result = cluster_app._extract_ccs_capture_fraction("Tech 80% CCS and 90% CCS")
+        assert result == pytest.approx(0.80)
+
+    def test_ccs_with_three_digit_percentages(self, cluster_app):
+        """Test 100% CCS capture (three-digit percentage)."""
+        assert cluster_app._extract_ccs_capture_fraction(
+            "Full Capture 100% CCS"
+        ) == pytest.approx(1.00)
+        assert cluster_app._extract_ccs_capture_fraction("100%-CCS") == pytest.approx(
+            1.00
+        )
+
+    def test_ccs_tags_ordering(self, cluster_app):
+        """Test that CCS tags are added in expected order."""
+        orig_modified = cluster_app.state.modified_new_resources
+
+        try:
+            cluster_app.state.modified_new_resources = {
+                "ccs1": {
+                    "new_technology": "NaturalGas",
+                    "new_tech_detail": "CT 95% CCS",
+                    "ccs_capture_fraction": 0.95,
+                    "tag_class": "THERM",
+                    "is_commit": True,
+                }
+            }
+
+            result_yaml = cluster_app.generate_resource_tags_settings()
+            result = yaml.safe_load(result_yaml)
+            values = result["model_tag_values"]
+
+            # All three CCS tags should exist
+            assert "CO2_Capture_Fraction" in values
+            assert "CO2_Capture_Fraction_Startup" in values
+            assert "CCS_Disposal_Cost_per_Metric_Ton" in values
+
+            # Each should have the same technology keys
+            tech_name = "NaturalGas_CT 95% CCS"
+            assert tech_name in values["CO2_Capture_Fraction"]
+            assert tech_name in values["CO2_Capture_Fraction_Startup"]
+            assert tech_name in values["CCS_Disposal_Cost_per_Metric_Ton"]
+
+        finally:
+            cluster_app.state.modified_new_resources = orig_modified
