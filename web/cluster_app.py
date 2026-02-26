@@ -4815,6 +4815,53 @@ def populate_atb_picker():
 
 def on_atb_picker_change(event=None):
     populate_atb_picker()
+    populate_mod_resource_pickers()
+
+
+def populate_mod_resource_pickers():
+    """Populate the 'Copy from' selects in the Modified Resources form using the ATB index."""
+    tech_el = document.getElementById("modBaseTech")
+    detail_el = document.getElementById("modBaseTechDetail")
+    case_el = document.getElementById("modBaseCostCase")
+
+    if not (tech_el and detail_el and case_el):
+        return
+
+    # Use the same year as the ATB picker
+    year_el = document.getElementById("atbYearSelect")
+    try:
+        selected_year = int(_get_select_value(year_el, None) or 0)
+    except Exception:
+        selected_year = 0
+
+    year_data = state.atb_index.get(selected_year, {})
+    if not year_data:
+        _set_select_options(tech_el, [])
+        _set_select_options(detail_el, [])
+        _set_select_options(case_el, [])
+        return
+
+    techs = sorted(year_data.keys())
+    selected_tech = _get_select_value(tech_el, techs[0] if techs else None)
+    if selected_tech not in techs and techs:
+        selected_tech = techs[0]
+    _set_select_options(tech_el, techs, selected_value=selected_tech)
+
+    details = sorted(year_data.get(selected_tech, {}).keys())
+    selected_detail = _get_select_value(detail_el, details[0] if details else None)
+    if selected_detail not in details and details:
+        selected_detail = details[0]
+    _set_select_options(detail_el, details, selected_value=selected_detail)
+
+    cases = year_data.get(selected_tech, {}).get(selected_detail, [])
+    selected_case = _get_select_value(case_el, cases[0] if cases else None)
+    if selected_case not in cases and cases:
+        selected_case = cases[0]
+    _set_select_options(case_el, cases, selected_value=selected_case)
+
+
+def on_mod_base_picker_change(event=None):
+    populate_mod_resource_pickers()
     update_atb_ccs_cost_visibility()
 
 
@@ -5338,7 +5385,6 @@ def _auto_modified_key(tech, detail):
 
 
 def on_add_modified_resource(event):
-    name_el = document.getElementById("modResName")
     base_tech_el = document.getElementById("modBaseTech")
     base_detail_el = document.getElementById("modBaseTechDetail")
     base_case_el = document.getElementById("modBaseCostCase")
@@ -5356,11 +5402,6 @@ def on_add_modified_resource(event):
     tag_class_el = document.getElementById("modTagClass")
     is_commit_el = document.getElementById("modIsCommit")
 
-    key = str(_get_select_value(name_el, "")).strip()
-    if not key:
-        set_status("Modified resource needs a name/key.", "error")
-        return
-
     base_tech = str(_get_select_value(base_tech_el, "")).strip()
     base_detail = str(_get_select_value(base_detail_el, "")).strip()
     base_case = str(_get_select_value(base_case_el, "")).strip()
@@ -5372,6 +5413,9 @@ def on_add_modified_resource(event):
     new_tech = str(_get_select_value(new_tech_el, "")).strip()
     new_detail = str(_get_select_value(new_detail_el, "")).strip()
     new_case = str(_get_select_value(new_case_el, "")).strip()
+
+    # Auto-generate the key from the new technology and tech detail
+    key = _auto_modified_key(new_tech, new_detail)
 
     # Collect optional attribute overrides from the collapsible panel
     attr_modifiers = {}
@@ -5425,11 +5469,9 @@ def on_add_modified_resource(event):
             set_status(f"Invalid value for {attr}: '{value_str}'", "error")
             return
 
-    if not (
-        base_tech and base_detail and base_case and new_tech and new_detail and new_case
-    ):
+    if not (base_tech and base_detail and base_case and new_tech and new_detail):
         set_status(
-            "Fill out both the base ATB resource and the new resource identity.",
+            "Fill out the base ATB resource and the new technology name and tech detail.",
             "error",
         )
         return
@@ -8558,6 +8600,12 @@ async def main():
         document.getElementById("clearModifiedResourcesBtn").addEventListener(
             "click", create_proxy(on_clear_modified_resources)
         )
+        document.getElementById("modBaseTech").addEventListener(
+            "change", create_proxy(on_mod_base_picker_change)
+        )
+        document.getElementById("modBaseTechDetail").addEventListener(
+            "change", create_proxy(on_mod_base_picker_change)
+        )
         document.getElementById("generateSettingsBtn").addEventListener(
             "click", create_proxy(on_generate_settings)
         )
@@ -8656,6 +8704,7 @@ async def main():
 
         # Initialize Settings tab widgets
         populate_atb_picker()
+        populate_mod_resource_pickers()
         populate_fuel_data_year_select()
         populate_fuel_scenario_selects()
         render_new_resources_list()
