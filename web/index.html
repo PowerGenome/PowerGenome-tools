@@ -1621,8 +1621,11 @@
                     <label style="font-size: 12px; margin-top: 8px;">Cost Case</label>
                     <select id="atbCostCaseSelect"></select>
 
-                    <label style="font-size: 12px; margin-top: 8px;">Size (MW)</label>
-                    <input id="atbSizeMw" type="number" value="1" min="1" step="1" />
+                    <label style="font-size: 12px; margin-top: 8px;">Size (MW)
+                        <span class="info-icon"
+                            data-tooltip="Only used for thermal resources with unit commitment constraints.">?</span>
+                    </label>
+                    <input id="atbSizeMw" type="number" value="100" min="1" step="1" />
 
                     <details id="atbAttrsOverride" style="margin-top: 8px;">
                         <summary style="font-size: 12px; cursor: pointer; color: #555; user-select: none;">
