@@ -52,7 +52,14 @@ def download_csv(url: str) -> str:
 
 
 def validate_and_clean(df: pd.DataFrame) -> pd.DataFrame:
-    """Validate and clean the fuel prices DataFrame."""
+    """Validate and clean the fuel prices DataFrame.
+
+    If a ``year`` and ``price`` column are present, aggregates prices across
+    regions by averaging, returning one row per (data_year, fuel, scenario, year).
+    This keeps multi-year price trends for in-browser charting while staying
+    compact.  Without ``year``/``price`` the output retains one row per
+    (data_year, fuel, scenario).
+    """
     # Check for required columns (case-insensitive)
     required = {"data_year", "fuel", "scenario"}
     lower_cols = {c.lower() for c in df.columns}
@@ -76,8 +83,22 @@ def validate_and_clean(df: pd.DataFrame) -> pd.DataFrame:
     df = df.dropna(subset=["data_year"])
     df = df[(df["fuel"] != "") & (df["scenario"] != "")]
 
-    # Drop duplicate of the required columns
-    df = df.drop_duplicates(subset=["data_year", "fuel", "scenario"])
+    # Aggregate across regions: average price per (data_year, fuel, scenario, year)
+    # when price/year columns are available.
+    if "year" in df.columns and "price" in df.columns:
+        df["year"] = pd.to_numeric(df["year"], errors="coerce")
+        df["price"] = pd.to_numeric(df["price"], errors="coerce")
+        df = df.dropna(subset=["year", "price"])
+        df = (
+            df.groupby(["data_year", "fuel", "scenario", "year"], as_index=False)[
+                "price"
+            ]
+            .mean()
+            .sort_values(["data_year", "fuel", "scenario", "year"])
+            .reset_index(drop=True)
+        )
+    else:
+        df = df.drop_duplicates(subset=["data_year", "fuel", "scenario"])
 
     if df.empty:
         raise ValueError("No valid data rows after cleaning")
