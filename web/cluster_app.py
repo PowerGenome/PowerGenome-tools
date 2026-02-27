@@ -4675,6 +4675,7 @@ def populate_fuel_scenario_selects(event=None):
             help_el.textContent = (
                 "Fuel scenario options not available for this year; using 'reference'."
             )
+        render_fuel_price_charts()
         return
 
     year_map = state.fuel_scenario_index.get(selected_year, {})
@@ -4702,6 +4703,216 @@ def populate_fuel_scenario_selects(event=None):
             help_el.textContent = (
                 "Coal 'no_111d' not available for this year; defaulting to 'reference'."
             )
+
+    render_fuel_price_charts()
+
+
+def _build_fuel_chart_data(data_year: int) -> dict:
+    """Build chart data for a given data_year.
+
+    Expects ``state.fuel_prices_df`` to have columns: data_year, fuel, scenario,
+    year (planning year), price, and optionally region and dollar_year.
+
+    Returns a dict: fuel -> scenario -> list of (year, avg_price) sorted by year,
+    where avg_price is the mean price across regions for that planning year.
+    Returns an empty dict if no data is available.
+    """
+    df = state.fuel_prices_df
+    if df is None or df.empty:
+        return {}
+
+    # Filter to selected data_year
+    mask = df["data_year"] == data_year
+    sub = df[mask].copy()
+    if sub.empty:
+        return {}
+
+    # Need year and price columns
+    if "year" not in sub.columns or "price" not in sub.columns:
+        return {}
+
+    sub["year"] = pd.to_numeric(sub["year"], errors="coerce")
+    sub["price"] = pd.to_numeric(sub["price"], errors="coerce")
+    sub = sub.dropna(subset=["year", "price"])
+    if sub.empty:
+        return {}
+
+    result: dict = {}
+    for (fuel, scenario), grp in sub.groupby(["fuel", "scenario"]):
+        # Average price across regions for each planning year
+        avg_by_year = grp.groupby("year")["price"].mean().reset_index()
+        avg_by_year = avg_by_year.sort_values("year")
+        pts = [(int(row["year"]), float(row["price"])) for _, row in avg_by_year.iterrows()]
+        if pts:
+            result.setdefault(str(fuel), {})[str(scenario)] = pts
+    return result
+
+
+def _render_fuel_price_chart_svg(
+    fuel_data: dict, selected_scenario: str | None
+) -> str:
+    """Render a minimal SVG line chart for a single fuel.
+
+    Args:
+        fuel_data: dict mapping scenario name -> list of (year, price) tuples
+            sorted by year.  All scenarios sharing this chart.
+        selected_scenario: the currently selected scenario name, drawn in blue
+            on top; all others are drawn in light gray.
+
+    Returns:
+        SVG markup string (220×90 px), or empty string if ``fuel_data`` is empty.
+    """
+    if not fuel_data:
+        return ""
+
+    width = 220
+    height = 90
+    ml = 36  # margin left (for y-axis labels)
+    mr = 6   # margin right
+    mt = 6   # margin top
+    mb = 18  # margin bottom (for x-axis labels)
+    pw = width - ml - mr
+    ph = height - mt - mb
+
+    # Collect all points to determine axis ranges
+    all_years = []
+    all_prices = []
+    for pts in fuel_data.values():
+        for yr, pr in pts:
+            all_years.append(yr)
+            all_prices.append(pr)
+
+    if not all_years:
+        return ""
+
+    x_min = min(all_years)
+    x_max = max(all_years)
+    y_min = min(all_prices)
+    y_max = max(all_prices)
+
+    # Pad y-range slightly
+    y_range = y_max - y_min
+    if y_range < 1e-6:
+        y_min = max(0.0, y_min - 1.0)
+        y_max = y_max + 1.0
+        y_range = y_max - y_min
+    else:
+        pad = y_range * 0.08
+        y_min = max(0.0, y_min - pad)
+        y_max = y_max + pad
+        y_range = y_max - y_min
+
+    x_range = max(1, x_max - x_min)
+
+    def to_x(yr):
+        return ml + (yr - x_min) / x_range * pw
+
+    def to_y(pr):
+        return mt + ph - (pr - y_min) / y_range * ph
+
+    svg = [
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="Fuel price scenarios" style="display:block;">',
+        # Axes
+        f'<line x1="{ml}" y1="{mt}" x2="{ml}" y2="{mt + ph}" stroke="#ccc" stroke-width="1"/>',
+        f'<line x1="{ml}" y1="{mt + ph}" x2="{ml + pw}" y2="{mt + ph}" stroke="#ccc" stroke-width="1"/>',
+    ]
+
+    # Y-axis labels (min and max)
+    svg.append(
+        f'<text x="{ml - 3}" y="{mt + ph}" text-anchor="end" font-size="8" fill="#999">'
+        f'{y_min:.1f}</text>'
+    )
+    svg.append(
+        f'<text x="{ml - 3}" y="{mt + 6}" text-anchor="end" font-size="8" fill="#999">'
+        f'{y_max:.1f}</text>'
+    )
+
+    # X-axis labels (first and last year)
+    svg.append(
+        f'<text x="{ml}" y="{mt + ph + 11}" text-anchor="middle" font-size="8" fill="#999">'
+        f'{x_min}</text>'
+    )
+    if x_max != x_min:
+        svg.append(
+            f'<text x="{ml + pw}" y="{mt + ph + 11}" text-anchor="end" font-size="8" fill="#999">'
+            f'{x_max}</text>'
+        )
+
+    # Draw scenario lines — non-selected first (background), selected last (foreground)
+    SELECTED_COLOR = "#1a56c4"  # --blue
+    GRAY = "#c8cdd8"
+    SELECTED_WIDTH = "2"
+    GRAY_WIDTH = "1.25"
+
+    scenarios_sorted = sorted(
+        fuel_data.keys(),
+        key=lambda s: (0 if s == selected_scenario else 1),
+        reverse=True,  # non-selected first
+    )
+    for scenario in scenarios_sorted:
+        pts = fuel_data[scenario]
+        if len(pts) < 1:
+            continue
+        is_sel = scenario == selected_scenario
+        color = SELECTED_COLOR if is_sel else GRAY
+        stroke_w = SELECTED_WIDTH if is_sel else GRAY_WIDTH
+        opacity = "1" if is_sel else "0.85"
+
+        if len(pts) == 1:
+            # Single point: draw a dot
+            cx = to_x(pts[0][0])
+            cy = to_y(pts[0][1])
+            svg.append(
+                f'<circle cx="{cx:.2f}" cy="{cy:.2f}" r="2.5" fill="{color}" opacity="{opacity}"/>'
+            )
+        else:
+            coords = " ".join(f"{to_x(yr):.2f},{to_y(pr):.2f}" for yr, pr in pts)
+            title = html.escape(scenario)
+            svg.append(
+                f'<polyline points="{coords}" fill="none" stroke="{color}" '
+                f'stroke-width="{stroke_w}" stroke-linejoin="round" '
+                f'stroke-linecap="round" opacity="{opacity}">'
+                f'<title>{title}</title></polyline>'
+            )
+
+    svg.append("</svg>")
+    return "".join(svg)
+
+
+def render_fuel_price_charts(event=None):
+    """Update the four fuel price mini-charts based on current state and selections.
+
+    Reads the selected fuel data year and each fuel scenario from the DOM,
+    builds SVG line charts via ``_render_fuel_price_chart_svg``, and injects
+    them into the corresponding chart container elements.
+
+    Safe to call with an optional event argument (e.g., as a DOM event handler).
+    """
+    year_el = document.getElementById("fuelDataYear")
+    try:
+        selected_year = int(_get_select_value(year_el, 0) or 0)
+    except (ValueError, TypeError):
+        selected_year = 0
+
+    chart_data = _build_fuel_chart_data(selected_year)
+
+    fuel_map = [
+        ("coal", "fuelScenarioCoal", "fuelChartCoal"),
+        ("naturalgas", "fuelScenarioNaturalGas", "fuelChartNaturalGas"),
+        ("distillate", "fuelScenarioDistillate", "fuelChartDistillate"),
+        ("uranium", "fuelScenarioUranium", "fuelChartUranium"),
+    ]
+
+    for fuel_key, select_id, chart_id in fuel_map:
+        chart_el = document.getElementById(chart_id)
+        if not chart_el:
+            continue
+        select_el = document.getElementById(select_id)
+        selected_scenario = _get_select_value(select_el, None)
+        fuel_data = chart_data.get(fuel_key, {})
+        svg = _render_fuel_price_chart_svg(fuel_data, selected_scenario)
+        chart_el.innerHTML = svg
 
 
 def _get_default_cost_case(cases):
@@ -8673,6 +8884,15 @@ async def main():
         document.getElementById("fuelDataYear").addEventListener(
             "change", create_proxy(populate_fuel_scenario_selects)
         )
+        for _fuel_sel_id in (
+            "fuelScenarioCoal",
+            "fuelScenarioNaturalGas",
+            "fuelScenarioDistillate",
+            "fuelScenarioUranium",
+        ):
+            document.getElementById(_fuel_sel_id).addEventListener(
+                "change", create_proxy(render_fuel_price_charts)
+            )
 
         # ATB picker change events
         document.getElementById("atbYearSelect").addEventListener(
