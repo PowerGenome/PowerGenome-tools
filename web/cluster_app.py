@@ -8550,9 +8550,6 @@ async def main():
         document.getElementById("copyYamlBtn").addEventListener(
             "click", create_proxy(on_copy_yaml)
         )
-        document.getElementById("downloadYamlBtn").addEventListener(
-            "click", create_proxy(on_download_yaml)
-        )
         document.getElementById("runPlantBtn").addEventListener(
             "click", create_proxy(on_run_plant_clustering)
         )

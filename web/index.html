@@ -1173,7 +1173,20 @@
 
                     <div id="statusBox" class="status info">Click BAs on the map to select them for clustering.</div>
 
-                    <div class="instructions">
+                    <div class="section">
+                        <label>Region Definition Mode</label>
+                        <div class="selection-mode">
+                            <button class="mode-btn active" id="clusteringModeBtn" title="Automatically cluster BAs">🔄
+                                Automatic Clustering</button>
+                            <button class="mode-btn" id="manualModeBtn" title="Manually define regions">✏️
+                                Manual</button>
+                        </div>
+                        <div style="font-size: 11px; color: #666; margin-top: 4px;" id="modeHint">
+                            Automatic clustering uses transmission capacity to group BAs
+                        </div>
+                    </div>
+
+                    <div class="instructions" id="autoInstructions">
                         <div class="instructions-header"
                             onclick="toggleCollapsible('instructionsContent', 'instructionsToggle')">
                             <span>📖 How to Use</span>
@@ -1207,16 +1220,28 @@
                         </div>
                     </div>
 
-                    <div class="section">
-                        <label>Region Definition Mode</label>
-                        <div class="selection-mode">
-                            <button class="mode-btn active" id="clusteringModeBtn" title="Automatically cluster BAs">🔄
-                                Automatic Clustering</button>
-                            <button class="mode-btn" id="manualModeBtn" title="Manually define regions">✏️
-                                Manual</button>
+                    <div class="instructions" id="manualInstructions" style="display: none;">
+                        <div class="instructions-header"
+                            onclick="toggleCollapsible('manualInstructionsContent', 'manualInstructionsToggle')">
+                            <span>📖 How to Use</span>
+                            <span class="instructions-toggle" id="manualInstructionsToggle">▶ Show</span>
                         </div>
-                        <div style="font-size: 11px; color: #666; margin-top: 4px;" id="modeHint">
-                            Automatic clustering uses transmission capacity to group BAs
+                        <div class="instructions-content hidden" id="manualInstructionsContent">
+                            <ol>
+                                <li><strong>Create regions:</strong> Enter a region name and click <em>Add Region</em>
+                                    (or paste YAML and click <em>Load from YAML</em>).</li>
+                                <li><strong>Select BAs:</strong> Use click or box select to choose BAs on the map.</li>
+                                <li><strong>Assign BAs:</strong> Select a region and click <em>Assign Selected BAs</em>
+                                    to add those BAs to that region.</li>
+                                <li><strong>Repeat until complete:</strong> Continue until all BAs are assigned.
+                                    Unassigned BAs are listed in the sidebar.</li>
+                                <li><strong>Finalize:</strong> Click <em>Finalize Manual Regions</em> to lock in your
+                                    manual region definitions.</li>
+                            </ol>
+                            <div class="tip">
+                                💡 <strong>Tip:</strong> You can start from pasted YAML and then refine assignments on
+                                the map before finalizing.
+                            </div>
                         </div>
                     </div>
 
@@ -1288,13 +1313,6 @@
                         </div>
                     </div>
 
-                    <div class="section" id="noClusterSection">
-                        <label>Groups to Keep Unclustered</label>
-                        <div id="noClusterContainer" class="checkbox-group">
-                            <em>Loading...</em>
-                        </div>
-                    </div>
-
                     <!-- Manual Region Definition UI -->
                     <div class="section" id="manualRegionSection" style="display: none;">
                         <label>Manual Region Definition</label>
@@ -1308,7 +1326,7 @@
                             <label style="font-size: 12px; display: flex; align-items: center; gap: 4px;">
                                 Paste YAML Region Definition
                                 <span class="info-icon"
-                                    data-tooltip="Paste YAML with region definitions. Supports multiple formats including region_aggregations and direct region mappings.">?</span>
+                                    data-tooltip="Paste YAML with region definitions. Supports multiple formats including YAML produced by Automatic Clustering.">?</span>
                             </label>
                             <textarea id="yamlRegionInput"
                                 placeholder="Paste YAML region definitions here (see formats below)"
@@ -1369,6 +1387,19 @@
                         </div>
                     </div>
 
+                    <div class="section" id="noClusterSection">
+                        <div class="collapsible-header"
+                            onclick="toggleCollapsible('noClusterContent', 'noClusterToggle')">
+                            <label style="margin: 0; cursor: pointer;">Groups to Keep Unclustered</label>
+                            <span id="noClusterToggle" style="font-size: 12px; color: #666;">▶ Show</span>
+                        </div>
+                        <div id="noClusterContent" class="collapsible-content hidden">
+                            <div id="noClusterContainer" class="checkbox-group">
+                                <em>Loading...</em>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="section" id="clusteringButtons">
                         <button class="btn btn-primary" id="runBtn" disabled>Run Clustering</button>
                         <button class="btn btn-secondary" id="selectAllBtn">Select All</button>
@@ -1389,11 +1420,10 @@
                         </div>
                     </div>
 
-                    <div class="section">
+                    <div class="section" id="yamlOutputSection">
                         <label>YAML Output</label>
                         <textarea id="yamlOut" readonly placeholder="Run clustering to generate YAML..."></textarea>
                         <button class="btn btn-secondary" id="copyYamlBtn">Copy</button>
-                        <button class="btn btn-secondary" id="downloadYamlBtn">Download</button>
                     </div>
 
                     <div class="step-footer">
@@ -2314,15 +2344,24 @@
             const clusteringBtn = document.getElementById('clusteringModeBtn');
             const manualBtn = document.getElementById('manualModeBtn');
             const modeHint = document.getElementById('modeHint');
+            const autoInstructions = document.getElementById('autoInstructions');
+            const manualInstructions = document.getElementById('manualInstructions');
+            const yamlOutputSection = document.getElementById('yamlOutputSection');
 
             if (isManual) {
                 clusteringBtn.classList.remove('active');
                 manualBtn.classList.add('active');
                 modeHint.textContent = 'Manually define regions by assigning selected BAs';
+                if (autoInstructions) autoInstructions.style.display = 'none';
+                if (manualInstructions) manualInstructions.style.display = 'block';
+                if (yamlOutputSection) yamlOutputSection.style.display = 'none';
             } else {
                 clusteringBtn.classList.add('active');
                 manualBtn.classList.remove('active');
                 modeHint.textContent = 'Automatic clustering uses transmission capacity to group BAs';
+                if (autoInstructions) autoInstructions.style.display = 'block';
+                if (manualInstructions) manualInstructions.style.display = 'none';
+                if (yamlOutputSection) yamlOutputSection.style.display = 'block';
             }
 
             // Show/hide relevant sections
