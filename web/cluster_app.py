@@ -4742,15 +4742,15 @@ def _build_fuel_chart_data(data_year: int) -> dict:
         # Average price across regions for each planning year
         avg_by_year = grp.groupby("year")["price"].mean().reset_index()
         avg_by_year = avg_by_year.sort_values("year")
-        pts = [(int(row["year"]), float(row["price"])) for _, row in avg_by_year.iterrows()]
+        pts = [
+            (int(row["year"]), float(row["price"])) for _, row in avg_by_year.iterrows()
+        ]
         if pts:
             result.setdefault(str(fuel), {})[str(scenario)] = pts
     return result
 
 
-def _render_fuel_price_chart_svg(
-    fuel_data: dict, selected_scenario: str | None
-) -> str:
+def _render_fuel_price_chart_svg(fuel_data: dict, selected_scenario: str | None) -> str:
     """Render a minimal SVG line chart for a single fuel.
 
     Args:
@@ -4760,16 +4760,16 @@ def _render_fuel_price_chart_svg(
             on top; all others are drawn in light gray.
 
     Returns:
-        SVG markup string (220×90 px), or empty string if ``fuel_data`` is empty.
+        SVG markup string (280×70 px), or empty string if ``fuel_data`` is empty.
     """
     if not fuel_data:
         return ""
 
-    width = 220
-    height = 90
+    width = 320
+    height = 65
     ml = 36  # margin left (for y-axis labels)
-    mr = 6   # margin right
-    mt = 6   # margin top
+    mr = 6  # margin right
+    mt = 6  # margin top
     mb = 18  # margin bottom (for x-axis labels)
     pw = width - ml - mr
     ph = height - mt - mb
@@ -4820,23 +4820,23 @@ def _render_fuel_price_chart_svg(
 
     # Y-axis labels (min and max)
     svg.append(
-        f'<text x="{ml - 3}" y="{mt + ph}" text-anchor="end" font-size="8" fill="#999">'
-        f'{y_min:.1f}</text>'
+        f'<text x="{ml - 3}" y="{mt + ph}" text-anchor="end" font-size="9" fill="#666">'
+        f"{y_min:.1f}</text>"
     )
     svg.append(
-        f'<text x="{ml - 3}" y="{mt + 6}" text-anchor="end" font-size="8" fill="#999">'
-        f'{y_max:.1f}</text>'
+        f'<text x="{ml - 3}" y="{mt + 6}" text-anchor="end" font-size="9" fill="#666">'
+        f"{y_max:.1f}</text>"
     )
 
     # X-axis labels (first and last year)
     svg.append(
-        f'<text x="{ml}" y="{mt + ph + 11}" text-anchor="middle" font-size="8" fill="#999">'
-        f'{x_min}</text>'
+        f'<text x="{ml}" y="{mt + ph + 11}" text-anchor="middle" font-size="9" fill="#666">'
+        f"{x_min}</text>"
     )
     if x_max != x_min:
         svg.append(
-            f'<text x="{ml + pw}" y="{mt + ph + 11}" text-anchor="end" font-size="8" fill="#999">'
-            f'{x_max}</text>'
+            f'<text x="{ml + pw}" y="{mt + ph + 11}" text-anchor="end" font-size="9" fill="#666">'
+            f"{x_max}</text>"
         )
 
     # Draw scenario lines — non-selected first (background), selected last (foreground)
@@ -4873,7 +4873,7 @@ def _render_fuel_price_chart_svg(
                 f'<polyline points="{coords}" fill="none" stroke="{color}" '
                 f'stroke-width="{stroke_w}" stroke-linejoin="round" '
                 f'stroke-linecap="round" opacity="{opacity}">'
-                f'<title>{title}</title></polyline>'
+                f"<title>{title}</title></polyline>"
             )
 
     svg.append("</svg>")
