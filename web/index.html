@@ -2342,6 +2342,11 @@
                 if (el) el.style.display = isManual ? 'block' : 'none';
             });
 
+            // When switching to automatic mode, update UI based on auto-optimize state
+            if (!isManual) {
+                toggleAutoOptimize();
+            }
+
             // Notify Python side about mode change
             if (window.on_region_mode_change) {
                 window.on_region_mode_change(isManual);
