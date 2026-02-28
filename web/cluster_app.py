@@ -4760,7 +4760,7 @@ def _render_fuel_price_chart_svg(fuel_data: dict, selected_scenario: str | None)
             on top; all others are drawn in light gray.
 
     Returns:
-        SVG markup string (280×70 px), or empty string if ``fuel_data`` is empty.
+        SVG markup string (320×65 px), or empty string if ``fuel_data`` is empty.
     """
     if not fuel_data:
         return ""
