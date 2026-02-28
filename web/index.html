@@ -962,6 +962,35 @@
             text-align: center;
         }
 
+        /* ── Fuel price mini-charts ───────────────────────────── */
+        .fuel-scenario-row {
+            display: flex;
+            align-items: flex-end;
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+
+        .fuel-scenario-control {
+            flex: 0 0 220px;
+            min-width: 0;
+        }
+
+        .fuel-scenario-control select {
+            width: 100%;
+        }
+
+        .fuel-price-chart {
+            flex: 1 1 auto;
+            min-width: 0;
+            display: flex;
+            margin-bottom: -18px;
+        }
+
+        .fuel-price-chart svg {
+            max-width: 100%;
+            height: auto;
+        }
+
         .renewables-advanced-section {
             border: 1px solid var(--border-strong);
             border-radius: var(--radius-md);
@@ -1913,17 +1942,37 @@
                         fuels default to <em>reference</em>.
                     </div>
 
-                    <label style="font-size: 12px;">Coal</label>
-                    <select id="fuelScenarioCoal"></select>
+                    <div class="fuel-scenario-row">
+                        <div class="fuel-scenario-control">
+                            <label style="font-size: 12px;">Coal</label>
+                            <select id="fuelScenarioCoal"></select>
+                        </div>
+                        <div id="fuelChartCoal" class="fuel-price-chart"></div>
+                    </div>
 
-                    <label style="font-size: 12px; margin-top: 8px;">Natural gas</label>
-                    <select id="fuelScenarioNaturalGas"></select>
+                    <div class="fuel-scenario-row">
+                        <div class="fuel-scenario-control">
+                            <label style="font-size: 12px; margin-top: 8px;">Natural gas</label>
+                            <select id="fuelScenarioNaturalGas"></select>
+                        </div>
+                        <div id="fuelChartNaturalGas" class="fuel-price-chart"></div>
+                    </div>
 
-                    <label style="font-size: 12px; margin-top: 8px;">Distillate</label>
-                    <select id="fuelScenarioDistillate"></select>
+                    <div class="fuel-scenario-row">
+                        <div class="fuel-scenario-control">
+                            <label style="font-size: 12px; margin-top: 8px;">Distillate</label>
+                            <select id="fuelScenarioDistillate"></select>
+                        </div>
+                        <div id="fuelChartDistillate" class="fuel-price-chart"></div>
+                    </div>
 
-                    <label style="font-size: 12px; margin-top: 8px;">Uranium</label>
-                    <select id="fuelScenarioUranium"></select>
+                    <div class="fuel-scenario-row">
+                        <div class="fuel-scenario-control">
+                            <label style="font-size: 12px; margin-top: 8px;">Uranium</label>
+                            <select id="fuelScenarioUranium"></select>
+                        </div>
+                        <div id="fuelChartUranium" class="fuel-price-chart"></div>
+                    </div>
 
                     <div id="fuelScenarioHelp" style="font-size: 11px; color: #666; margin-top: 6px;"></div>
                 </div>

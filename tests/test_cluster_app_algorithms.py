@@ -3002,3 +3002,304 @@ LandbasedWind, Class4, Mid, 200
 
         finally:
             cluster_app.state.modified_new_resources = orig_modified
+
+
+# ---------------------------------------------------------------------------
+# TestFuelChartHelpers
+# ---------------------------------------------------------------------------
+
+
+def _make_fuel_df(**overrides):
+    """Return a minimal multi-row DataFrame matching the fuel_prices.csv schema."""
+    base = {
+        "year": [2024, 2026, 2024, 2026, 2024, 2026],
+        "price": [2.0, 2.5, 3.0, 3.5, 2.1, 2.6],
+        "data_year": [2025, 2025, 2025, 2025, 2025, 2025],
+        "scenario": [
+            "reference",
+            "reference",
+            "high",
+            "high",
+            "reference",
+            "reference",
+        ],
+        "fuel": ["coal", "coal", "coal", "coal", "coal", "coal"],
+        "region": ["p1", "p1", "p1", "p1", "p2", "p2"],
+        "dollar_year": [2024, 2024, 2024, 2024, 2024, 2024],
+    }
+    base.update(overrides)
+    return pd.DataFrame(base)
+
+
+class TestFuelChartHelpers:
+    """Tests for _build_fuel_chart_data and _render_fuel_price_chart_svg."""
+
+    # ------------------------------------------------------------------
+    # _build_fuel_chart_data
+    # ------------------------------------------------------------------
+
+    def test_returns_empty_when_state_df_is_none(self, cluster_app):
+        orig = cluster_app.state.fuel_prices_df
+        try:
+            cluster_app.state.fuel_prices_df = None
+            result = cluster_app._build_fuel_chart_data(2025)
+            assert result == {}
+        finally:
+            cluster_app.state.fuel_prices_df = orig
+
+    def test_returns_empty_when_state_df_is_empty(self, cluster_app):
+        orig = cluster_app.state.fuel_prices_df
+        try:
+            cluster_app.state.fuel_prices_df = pd.DataFrame(
+                columns=["year", "price", "data_year", "scenario", "fuel", "region", "dollar_year"]
+            )
+            result = cluster_app._build_fuel_chart_data(2025)
+            assert result == {}
+        finally:
+            cluster_app.state.fuel_prices_df = orig
+
+    def test_returns_empty_for_missing_data_year(self, cluster_app):
+        orig = cluster_app.state.fuel_prices_df
+        try:
+            cluster_app.state.fuel_prices_df = _make_fuel_df()
+            result = cluster_app._build_fuel_chart_data(9999)
+            assert result == {}
+        finally:
+            cluster_app.state.fuel_prices_df = orig
+
+    def test_returns_empty_when_year_column_missing(self, cluster_app):
+        orig = cluster_app.state.fuel_prices_df
+        try:
+            df = _make_fuel_df()
+            df = df.drop(columns=["year"])
+            cluster_app.state.fuel_prices_df = df
+            result = cluster_app._build_fuel_chart_data(2025)
+            assert result == {}
+        finally:
+            cluster_app.state.fuel_prices_df = orig
+
+    def test_returns_empty_when_price_column_missing(self, cluster_app):
+        orig = cluster_app.state.fuel_prices_df
+        try:
+            df = _make_fuel_df()
+            df = df.drop(columns=["price"])
+            cluster_app.state.fuel_prices_df = df
+            result = cluster_app._build_fuel_chart_data(2025)
+            assert result == {}
+        finally:
+            cluster_app.state.fuel_prices_df = orig
+
+    def test_averages_price_across_regions(self, cluster_app):
+        """For coal/reference/2024: regions p1 (2.0) and p2 (2.1) -> avg 2.05."""
+        orig = cluster_app.state.fuel_prices_df
+        try:
+            cluster_app.state.fuel_prices_df = _make_fuel_df()
+            result = cluster_app._build_fuel_chart_data(2025)
+
+            assert "coal" in result
+            assert "reference" in result["coal"]
+
+            pts_by_year = dict(result["coal"]["reference"])
+            assert pts_by_year[2024] == pytest.approx(2.05)
+            assert pts_by_year[2026] == pytest.approx(2.55)
+        finally:
+            cluster_app.state.fuel_prices_df = orig
+
+    def test_points_sorted_by_year(self, cluster_app):
+        """Years in each scenario list must be in ascending order."""
+        orig = cluster_app.state.fuel_prices_df
+        try:
+            # Insert rows in reverse year order to make sure sorting is applied
+            df = _make_fuel_df()
+            df = df.iloc[::-1].reset_index(drop=True)
+            cluster_app.state.fuel_prices_df = df
+            result = cluster_app._build_fuel_chart_data(2025)
+
+            for fuel_scenarios in result.values():
+                for pts in fuel_scenarios.values():
+                    years = [yr for yr, _ in pts]
+                    assert years == sorted(years)
+        finally:
+            cluster_app.state.fuel_prices_df = orig
+
+    def test_multiple_fuels_and_scenarios(self, cluster_app):
+        """Ensure distinct fuels and scenarios all appear in the result."""
+        orig = cluster_app.state.fuel_prices_df
+        try:
+            df = pd.DataFrame(
+                {
+                    "year": [2024, 2024, 2024, 2024],
+                    "price": [1.0, 2.0, 5.0, 6.0],
+                    "data_year": [2025, 2025, 2025, 2025],
+                    "scenario": ["ref", "high", "ref", "high"],
+                    "fuel": ["coal", "coal", "naturalgas", "naturalgas"],
+                    "region": ["r1", "r1", "r1", "r1"],
+                    "dollar_year": [2024, 2024, 2024, 2024],
+                }
+            )
+            cluster_app.state.fuel_prices_df = df
+            result = cluster_app._build_fuel_chart_data(2025)
+
+            assert "coal" in result
+            assert "naturalgas" in result
+            assert "ref" in result["coal"]
+            assert "high" in result["coal"]
+        finally:
+            cluster_app.state.fuel_prices_df = orig
+
+    def test_non_numeric_price_rows_dropped(self, cluster_app):
+        """Rows with non-numeric prices should be silently dropped."""
+        orig = cluster_app.state.fuel_prices_df
+        try:
+            df = pd.DataFrame(
+                {
+                    "year": [2024, 2026],
+                    "price": ["bad", 3.0],
+                    "data_year": [2025, 2025],
+                    "scenario": ["ref", "ref"],
+                    "fuel": ["coal", "coal"],
+                    "region": ["r1", "r1"],
+                    "dollar_year": [2024, 2024],
+                }
+            )
+            cluster_app.state.fuel_prices_df = df
+            result = cluster_app._build_fuel_chart_data(2025)
+
+            # Only the valid row (2026) should survive
+            assert "coal" in result
+            pts_by_year = dict(result["coal"]["ref"])
+            assert 2024 not in pts_by_year
+            assert pts_by_year[2026] == pytest.approx(3.0)
+        finally:
+            cluster_app.state.fuel_prices_df = orig
+
+    def test_single_data_point_included(self, cluster_app):
+        """A fuel/scenario with only a single year should still appear in the result."""
+        orig = cluster_app.state.fuel_prices_df
+        try:
+            df = pd.DataFrame(
+                {
+                    "year": [2030],
+                    "price": [4.5],
+                    "data_year": [2025],
+                    "scenario": ["reference"],
+                    "fuel": ["uranium"],
+                    "region": ["r1"],
+                    "dollar_year": [2024],
+                }
+            )
+            cluster_app.state.fuel_prices_df = df
+            result = cluster_app._build_fuel_chart_data(2025)
+
+            assert "uranium" in result
+            assert result["uranium"]["reference"] == [(2030, pytest.approx(4.5))]
+        finally:
+            cluster_app.state.fuel_prices_df = orig
+
+    def test_all_non_numeric_prices_returns_empty(self, cluster_app):
+        """If every price is non-numeric, the result should be empty."""
+        orig = cluster_app.state.fuel_prices_df
+        try:
+            df = pd.DataFrame(
+                {
+                    "year": [2024],
+                    "price": ["n/a"],
+                    "data_year": [2025],
+                    "scenario": ["ref"],
+                    "fuel": ["coal"],
+                    "region": ["r1"],
+                    "dollar_year": [2024],
+                }
+            )
+            cluster_app.state.fuel_prices_df = df
+            result = cluster_app._build_fuel_chart_data(2025)
+            assert result == {}
+        finally:
+            cluster_app.state.fuel_prices_df = orig
+
+    # ------------------------------------------------------------------
+    # _render_fuel_price_chart_svg
+    # ------------------------------------------------------------------
+
+    def test_returns_empty_string_for_empty_fuel_data(self, cluster_app):
+        result = cluster_app._render_fuel_price_chart_svg({}, "reference")
+        assert result == ""
+
+    def test_returns_empty_string_for_none_selected_and_empty_data(self, cluster_app):
+        result = cluster_app._render_fuel_price_chart_svg({}, None)
+        assert result == ""
+
+    def test_svg_tag_present_for_valid_data(self, cluster_app):
+        fuel_data = {"reference": [(2024, 2.0), (2026, 2.5)]}
+        result = cluster_app._render_fuel_price_chart_svg(fuel_data, "reference")
+        assert "<svg" in result
+
+    def test_polyline_rendered_for_multi_point_scenario(self, cluster_app):
+        fuel_data = {"reference": [(2024, 2.0), (2026, 2.5)]}
+        result = cluster_app._render_fuel_price_chart_svg(fuel_data, "reference")
+        assert "<polyline" in result
+
+    def test_circle_rendered_for_single_point_scenario(self, cluster_app):
+        fuel_data = {"reference": [(2024, 2.0)]}
+        result = cluster_app._render_fuel_price_chart_svg(fuel_data, "reference")
+        assert "<circle" in result
+        assert "<polyline" not in result
+
+    def test_selected_scenario_gets_blue_color(self, cluster_app):
+        fuel_data = {
+            "reference": [(2024, 2.0), (2026, 2.5)],
+            "high": [(2024, 3.0), (2026, 3.5)],
+        }
+        result = cluster_app._render_fuel_price_chart_svg(fuel_data, "reference")
+        assert "#1a56c4" in result
+
+    def test_selected_scenario_gets_stroke_width_2(self, cluster_app):
+        fuel_data = {"reference": [(2024, 2.0), (2026, 2.5)]}
+        result = cluster_app._render_fuel_price_chart_svg(fuel_data, "reference")
+        assert 'stroke-width="2"' in result
+
+    def test_non_selected_scenario_gets_gray_color(self, cluster_app):
+        fuel_data = {
+            "reference": [(2024, 2.0), (2026, 2.5)],
+            "high": [(2024, 3.0), (2026, 3.5)],
+        }
+        result = cluster_app._render_fuel_price_chart_svg(fuel_data, "reference")
+        assert "#c8cdd8" in result
+
+    def test_non_selected_scenario_gets_stroke_width_1_25(self, cluster_app):
+        fuel_data = {
+            "reference": [(2024, 2.0), (2026, 2.5)],
+            "high": [(2024, 3.0), (2026, 3.5)],
+        }
+        result = cluster_app._render_fuel_price_chart_svg(fuel_data, "reference")
+        assert 'stroke-width="1.25"' in result
+
+    def test_none_selected_scenario_all_gray(self, cluster_app):
+        """When selected_scenario is None, no line should be blue."""
+        fuel_data = {
+            "reference": [(2024, 2.0), (2026, 2.5)],
+            "high": [(2024, 3.0), (2026, 3.5)],
+        }
+        result = cluster_app._render_fuel_price_chart_svg(fuel_data, None)
+        assert "#1a56c4" not in result
+        assert "#c8cdd8" in result
+
+    def test_single_scenario_single_point_renders_circle(self, cluster_app):
+        """Single fuel/scenario with one point -> circle, no polyline."""
+        fuel_data = {"low": [(2030, 1.5)]}
+        result = cluster_app._render_fuel_price_chart_svg(fuel_data, "low")
+        assert "<circle" in result
+        assert "<polyline" not in result
+        assert "#1a56c4" in result  # selected colour on the dot
+
+    def test_scenario_title_in_polyline(self, cluster_app):
+        """Scenario name should appear as a <title> inside each <polyline>."""
+        fuel_data = {"my-scenario": [(2024, 1.0), (2026, 1.5)]}
+        result = cluster_app._render_fuel_price_chart_svg(fuel_data, "my-scenario")
+        assert "my-scenario" in result
+
+    def test_svg_is_well_formed_closes_tag(self, cluster_app):
+        """SVG output must end with </svg>."""
+        fuel_data = {"reference": [(2024, 2.0), (2026, 2.5)]}
+        result = cluster_app._render_fuel_price_chart_svg(fuel_data, "reference")
+        assert result.rstrip().endswith("</svg>")
