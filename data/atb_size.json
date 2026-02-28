@@ -200,8 +200,44 @@
         {
             "data_year": 2024,
             "technology": "NaturalGas",
+            "tech_detail": "2-on-1 Combined Cycle (F-Frame) 97% CCS",
+            "size": 637
+        },
+        {
+            "data_year": 2024,
+            "technology": "NaturalGas",
             "tech_detail": "2-on-1 Combined Cycle (H-Frame) 95% CCS",
-            "size": 640
+            "size": 877
+        },
+        {
+            "data_year": 2024,
+            "technology": "NaturalGas",
+            "tech_detail": "2-on-1 Combined Cycle (H-Frame) 97% CCS",
+            "size": 873
+        },
+        {
+            "data_year": 2024,
+            "technology": "NaturalGas",
+            "tech_detail": "1-on-1 Combined Cycle (H-Frame) 95% CCS",
+            "size": 572
+        },
+        {
+            "data_year": 2024,
+            "technology": "NaturalGas",
+            "tech_detail": "1-on-1 Combined Cycle (H-Frame) 97% CCS",
+            "size": 575
+        },
+        {
+            "data_year": 2024,
+            "technology": "NaturalGas",
+            "tech_detail": "Fuel Cell",
+            "size": 650
+        },
+        {
+            "data_year": 2024,
+            "technology": "NaturalGas",
+            "tech_detail": "Fuel Cell 98% CCS",
+            "size": 650
         },
         {
             "data_year": 2024,
