@@ -4945,7 +4945,12 @@ def update_size_field_from_atb_size():
 
     # If found, update the field; otherwise default to 100
     if size_mw is not None:
-        size_el.value = str(int(size_mw))
+        # For sub-1 MW sizes, preserve the decimal value instead of truncating to 0.
+        # For >=1 MW, use a rounded integer representation.
+        if size_mw < 1:
+            size_el.value = str(size_mw)
+        else:
+            size_el.value = str(int(round(size_mw)))
     else:
         size_el.value = "100"
 
