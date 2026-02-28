@@ -162,6 +162,7 @@ def build_index(parquet_path: Path) -> list[dict]:
     df = pd.read_parquet(parquet_path).query(
         "parameter == 'capex_mw' and parameter_value > 0"
     )
+    df["parameter_value"] = df["parameter_value"].astype(int)
 
     col_year = _pick_column(df, ["data_year", "atb_data_year", "atb_year", "year"])
     col_tech = _pick_column(df, ["technology", "tech", "atb_technology"])
@@ -171,7 +172,7 @@ def build_index(parquet_path: Path) -> list[dict]:
     col_case = _pick_column(df, ["cost_case", "case", "atb_cost_case"])
 
     out = (
-        df[[col_year, col_tech, col_detail, col_case]]
+        df[[col_year, col_tech, col_detail, col_case, "parameter_value"]]
         .dropna()
         .drop_duplicates()
         .rename(
@@ -180,6 +181,7 @@ def build_index(parquet_path: Path) -> list[dict]:
                 col_tech: "technology",
                 col_detail: "tech_detail",
                 col_case: "cost_case",
+                "parameter_value": "capex_mw",
             }
         )
     )
@@ -203,6 +205,7 @@ def build_index(parquet_path: Path) -> list[dict]:
             r["technology"],
             r["tech_detail"],
             r["cost_case"],
+            r["capex_mw"],
         )
     )
     return records
