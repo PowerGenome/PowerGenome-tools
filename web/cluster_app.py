@@ -92,7 +92,7 @@ class AppState:
         self.atb_years = []  # sorted list of years
         self.atb_size_map = (
             {}
-        )  # (tech, tech_detail) -> size_mw, with (tech, None) as fallback
+        )  # year -> {(tech, tech_detail): size_mw}, with (tech, None) as fallback key
         self.plant_cluster_settings = (
             None  # parsed YAML dict from plant clustering output
         )
@@ -4488,8 +4488,8 @@ async def load_atb_options():
 async def load_atb_size():
     """Load ATB technology sizes (if present).
 
-    Expected to live at web/data/atb_size.json. Maps (technology, tech_detail) pairs
-    to representative plant sizes in MW.
+    Expected to live at web/data/atb_size.json. Maps data_year to a dict of
+    (technology, tech_detail) pairs to representative plant sizes in MW.
     """
     try:
         response = await fetch("./data/atb_size.json")
@@ -4513,15 +4513,18 @@ async def load_atb_size():
             if size_mw is None:
                 continue
 
+            data_year = row.get("data_year")
+            year_map = size_map.setdefault(data_year, {})
+
             tech_detail = row.get("tech_detail")
             if tech_detail:
                 # Store with tech_detail
                 key = (tech, str(tech_detail).strip())
-                size_map[key] = float(size_mw)
+                year_map[key] = float(size_mw)
             else:
                 # Store fallback without tech_detail
                 key = (tech, None)
-                size_map[key] = float(size_mw)
+                year_map[key] = float(size_mw)
 
         state.atb_size_map = size_map
     except Exception:
@@ -4926,6 +4929,7 @@ def update_size_field_from_atb_size():
     size_el = document.getElementById("atbSizeMw")
     tech_el = document.getElementById("atbTechSelect")
     detail_el = document.getElementById("atbTechDetailSelect")
+    year_el = document.getElementById("atbYearSelect")
 
     if not (size_el and tech_el and detail_el):
         return
@@ -4936,12 +4940,23 @@ def update_size_field_from_atb_size():
     if not tech:
         return
 
+    # Resolve the year-specific size map; fall back to the first available year
+    try:
+        selected_year = int(_get_select_value(year_el, None) or 0)
+    except Exception:
+        selected_year = 0
+    year_size_map = state.atb_size_map.get(selected_year)
+    if year_size_map is None and state.atb_size_map:
+        year_size_map = next(iter(state.atb_size_map.values()))
+    if year_size_map is None:
+        year_size_map = {}
+
     # Try to find size: first with (tech, detail), then with (tech, None)
     size_mw = None
     if detail:
-        size_mw = state.atb_size_map.get((tech, detail))
+        size_mw = year_size_map.get((tech, detail))
     if size_mw is None:
-        size_mw = state.atb_size_map.get((tech, None))
+        size_mw = year_size_map.get((tech, None))
 
     # If found, update the field; otherwise default to 100
     if size_mw is not None:
