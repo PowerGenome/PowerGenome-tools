@@ -54,7 +54,9 @@ class AppState:
         self.plant_region_map = None  # plant_id -> BA mapping
         self.plant_candidates = []  # cache of last candidate list
         self.plant_groups = []  # full groups list from last suggest_plant_clusters call
-        self.plant_candidate_overrides = {}  # (model_region, tech_group) -> num_clusters
+        self.plant_candidate_overrides = (
+            {}
+        )  # (model_region, tech_group) -> num_clusters
         self.selected_bas = set()
         self.ba_layers = {}  # ba_id -> layer
         self.all_bas = set()
@@ -4105,10 +4107,10 @@ def render_plant_candidates():
             f'style="width:55px;font-size:12px;" '
             f'aria-label="Number of clusters for {html.escape(g["model_region"])} {html.escape(g["tech_group"])}" '
             f'oninput="window.onCandidateClusterChange(event,{i})">'
-            f'</div>'
-            f'</div>'
+            f"</div>"
+            f"</div>"
             f'<div id="candidateChart{i}" style="flex-shrink:0;">{svg}</div>'
-            f'</div>'
+            f"</div>"
         )
         parts.append(row)
 
