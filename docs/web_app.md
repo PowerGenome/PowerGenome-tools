@@ -639,6 +639,21 @@ The Resource Groups step lets you define resource group inputs for each model re
 
 Downloads from this tab are provided as a single ZIP archive.
 
+### Upload Pre-calculated LCOE Files
+
+If you have LCOE files from a previous session, you can upload them directly instead of re-running the resource-group generation. This lets you skip the expensive CPA interconnection calculation when the underlying data has not changed.
+
+**When to use this:** You ran Step 7 in a prior session, downloaded the parquet outputs, and now want to proceed to Step 8 (Renewables Clustering) without regenerating those files.
+
+**Supported formats:** `.parquet` or `.csv`
+
+**Required columns:** `region`, `cpa_mw`, `cf`, `lcoe`
+
+Upload separate files for wind and solar as needed. The resource group JSON files are **not** required for this workflow — only the LCOE parquet/CSV files are needed.
+
+!!! note
+    If you generate new files in the current session using the **Generate Resource Group Files** button, those in-session results take priority over any uploaded files.
+
 ## Step 8: Renewables Clustering
 
 The Renewables Clustering step builds `renewables_clusters` settings for wind and solar using regional demand shares and the resource group LCOE tables generated in Step 7.
@@ -670,7 +685,7 @@ When expanded, the app shows side-by-side wind and solar model-region maps. Regi
 
 ### How Renewables Clusters Are Computed
 
-1. **Prerequisites**: Requires region aggregations from Step 1 and the in-memory resource group assignments/LCOE tables from Step 7 (onshore wind + solar) in the current browser session. Step 7 must be completed in this session; downloaded parquet/ZIP outputs alone are not sufficient after a page refresh.
+1. **Prerequisites**: Requires region aggregations from Step 1 and LCOE tables for onshore wind and solar. These can come from either generating resource group files in Step 7 during the current session, or from LCOE files uploaded via the **Upload Pre-calculated LCOE Files** section in Step 7.
 2. **Regional demand target**: For each region, compute target energy as $\text{region demand} \times \text{share}$.
 3. **Low-cost resource selection**: Within each region, sort candidates by LCOE and select enough capacity to meet the target energy (using $\text{annual MWh} = \text{capacity} \times \text{CF} \times 8760$). The highest selected LCOE becomes the region's filter threshold.
 4. **Capacity totals**: For each region, include all resources with LCOE below the threshold and sum their capacity to build a regional capacity total and LCOE range.
