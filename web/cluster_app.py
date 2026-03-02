@@ -4049,9 +4049,11 @@ def _candidate_svg(plant_data, k):
         cy = H / 2
         r = max(3.0, math.sqrt(cap / max_cap) * max_r)
         color = _BUBBLE_COLORS[lbl % len(_BUBBLE_COLORS)]
+        tooltip = f"{cap:.0f} MW, {hr:.2f} MMBtu/MWh"
         circles.append(
             f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r:.1f}" fill="{color}" '
-            f'fill-opacity="0.75" stroke="white" stroke-width="0.8"/>'
+            f'fill-opacity="0.75" stroke="white" stroke-width="0.8">'
+            f"<title>{tooltip}</title></circle>"
         )
 
     return (

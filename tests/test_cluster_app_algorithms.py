@@ -1544,6 +1544,19 @@ class TestPlantClusteringHelpers:
         result = cluster_app._candidate_svg(plant_data, 1)
         assert result.endswith("</svg>")
 
+    def test_candidate_svg_circles_have_title_tooltips(self, cluster_app):
+        """Each circle element has a <title> child with capacity and heat rate."""
+        plant_data = [
+            {"heat_rate": 6.5, "capacity": 500.0},
+            {"heat_rate": 10.0, "capacity": 300.0},
+        ]
+        result = cluster_app._candidate_svg(plant_data, 2)
+        assert result.count("<title>") == 2
+        assert "500 MW" in result
+        assert "300 MW" in result
+        assert "6.50 MMBtu/MWh" in result
+        assert "10.00 MMBtu/MWh" in result
+
     # -----------------------------------------------------------------------
     # regenerate_plant_yaml_with_overrides
     # -----------------------------------------------------------------------
