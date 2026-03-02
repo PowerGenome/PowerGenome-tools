@@ -8338,29 +8338,45 @@ async def _fetch_parquet_df(url):
         raise Exception(f"Failed to load parquet: {url} ({response.status})")
     buffer = await response.arrayBuffer()
     data = bytes(Uint8Array.new(buffer).to_py())
+
+    # First, try with any available parquet engine (pyarrow, fastparquet, duckdb)
     try:
         return pd.read_parquet(BytesIO(data))
-    except Exception:
-        import os
-        import uuid
+    except Exception as e:
+        initial_error = str(e)
 
-        import duckdb
-
-        tmp_dir = "/tmp"
+    # If that fails, try loading parquet engines from Pyodide
+    parquet_ready = False
+    for pkg in ["pyarrow", "fastparquet"]:
         try:
-            os.makedirs(tmp_dir, exist_ok=True)
+            __import__(pkg)
+            parquet_ready = True
+            break
         except Exception:
             pass
-        tmp_path = f"{tmp_dir}/pg_parquet_{uuid.uuid4().hex}.parquet"
-        with open(tmp_path, "wb") as f:
-            f.write(data)
-        try:
-            return duckdb.read_parquet(tmp_path).df()
-        finally:
+
+    if not parquet_ready:
+        # Try loading from Pyodide
+        for pkg in ["pyarrow", "fastparquet"]:
             try:
-                os.remove(tmp_path)
+                loaded = await _load_pyodide_package(pkg)
+                if loaded:
+                    __import__(pkg)
+                    parquet_ready = True
+                    break
             except Exception:
                 pass
+
+    if parquet_ready:
+        try:
+            return pd.read_parquet(BytesIO(data))
+        except Exception:
+            pass
+
+    raise ImportError(
+        f"pyarrow or fastparquet is required to read .parquet files. "
+        f"Initial error: {initial_error}"
+    )
 
 
 async def _fetch_csv_df(url, **kwargs):
@@ -8697,26 +8713,46 @@ async def _read_uploaded_lcoe_file(event, tech):
 
         lower = filename.lower()
         if lower.endswith(".parquet"):
+            # Try reading with any available engine first
             try:
                 df = pd.read_parquet(BytesIO(data))
-            except Exception:
-                import os
-                import uuid
-
-                import duckdb
-
-                tmp_dir = "/tmp"
-                os.makedirs(tmp_dir, exist_ok=True)
-                tmp_path = f"{tmp_dir}/upload_lcoe_{uuid.uuid4().hex}.parquet"
-                with open(tmp_path, "wb") as fh:
-                    fh.write(data)
-                try:
-                    df = duckdb.read_parquet(tmp_path).df()
-                finally:
+            except Exception as initial_error:
+                # If that fails, try to load parquet engines from Pyodide
+                parquet_ready = False
+                for pkg in ["pyarrow", "fastparquet"]:
                     try:
-                        os.remove(tmp_path)
+                        __import__(pkg)
+                        parquet_ready = True
+                        break
                     except Exception:
                         pass
+
+                if not parquet_ready:
+                    # Try loading from Pyodide
+                    for pkg in ["pyarrow", "fastparquet"]:
+                        try:
+                            loaded = await _load_pyodide_package(pkg)
+                            if loaded:
+                                __import__(pkg)
+                                parquet_ready = True
+                                break
+                        except Exception:
+                            pass
+
+                if parquet_ready:
+                    try:
+                        df = pd.read_parquet(BytesIO(data))
+                    except Exception:
+                        raise ImportError(
+                            f"Failed to read .parquet file after loading parquet engines. "
+                            f"Initial error: {initial_error}"
+                        )
+                else:
+                    raise ImportError(
+                        f"pyarrow or fastparquet is required to read .parquet files, "
+                        f"but neither could be loaded. Please convert your file to CSV format. "
+                        f"Initial error: {initial_error}"
+                    )
         elif lower.endswith(".csv"):
             df = pd.read_csv(BytesIO(data))
         else:
@@ -8748,9 +8784,7 @@ async def _read_uploaded_lcoe_file(event, tech):
             f"columns={list(df.columns)}"
         )
     except Exception as exc:
-        set_resource_group_status(
-            f"Error reading {label} LCOE file: {exc}", "error"
-        )
+        set_resource_group_status(f"Error reading {label} LCOE file: {exc}", "error")
 
 
 def on_upload_lcoe_wind(event):
