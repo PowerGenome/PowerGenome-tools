@@ -53,6 +53,8 @@ class AppState:
         self.plants_df = None  # generator-level data
         self.plant_region_map = None  # plant_id -> BA mapping
         self.plant_candidates = []  # cache of last candidate list
+        self.plant_groups = []  # full groups list from last suggest_plant_clusters call
+        self.plant_candidate_overrides = {}  # (model_region, tech_group) -> num_clusters
         self.selected_bas = set()
         self.ba_layers = {}  # ba_id -> layer
         self.all_bas = set()
@@ -2796,6 +2798,10 @@ def suggest_plant_clusters(
                 "improvement2": improvement2,
                 "desired": desired,
                 "priority": priority,
+                "plant_data": [
+                    {"heat_rate": float(hr), "capacity": float(cap)}
+                    for hr, cap in zip(hr_filled.tolist(), weights.tolist())
+                ],
             }
         )
 
@@ -2869,6 +2875,8 @@ def suggest_plant_clusters(
     candidates = sorted(candidates, key=lambda x: x["priority"], reverse=True)[:10]
 
     state.plant_candidates = candidates
+    state.plant_groups = groups
+    state.plant_candidate_overrides = {}
 
     if group_enabled:
         active_map = group_map if group_map is not None else DEFAULT_TECH_GROUPS
@@ -3999,6 +4007,60 @@ def on_download_yaml(event):
     set_status("YAML downloaded!", "success")
 
 
+# Cluster assignment colors for bubble charts (up to 5 clusters)
+_BUBBLE_COLORS = ["#4472c4", "#ed7d31", "#a9d18e", "#e85f5f", "#ffd966"]
+
+
+def _candidate_svg(plant_data, k):
+    """Generate an inline SVG bubble chart for a plant candidate group.
+
+    X-axis is heat rate; all bubbles share the same y-position; bubble radius is
+    proportional to sqrt(capacity); color indicates k-means cluster assignment.
+    """
+    if not plant_data:
+        return ""
+
+    heat_rates = [p["heat_rate"] for p in plant_data]
+    capacities = [p["capacity"] for p in plant_data]
+    n = len(plant_data)
+
+    k_eff = min(k, n)
+    if k_eff <= 1 or len(set(heat_rates)) <= 1:
+        labels = [0] * n
+    else:
+        features = np.array([[hr] for hr in heat_rates], dtype=float)
+        weights = np.array([max(c, 1e-6) for c in capacities], dtype=float)
+        _, _, raw_labels = run_kmeans_simple(features, k_eff, weights=weights)
+        labels = list(raw_labels) if raw_labels is not None else [0] * n
+
+    W, H = 240, 50
+    pad = 15
+
+    hr_min = min(heat_rates)
+    hr_max = max(heat_rates)
+    hr_range = hr_max - hr_min if hr_max > hr_min else 1.0
+
+    max_cap = max(capacities) if max(capacities) > 0 else 1.0
+    max_r = 12
+
+    circles = []
+    for hr, cap, lbl in zip(heat_rates, capacities, labels):
+        cx = pad + (hr - hr_min) / hr_range * (W - 2 * pad)
+        cy = H / 2
+        r = max(3.0, math.sqrt(cap / max_cap) * max_r)
+        color = _BUBBLE_COLORS[lbl % len(_BUBBLE_COLORS)]
+        circles.append(
+            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r:.1f}" fill="{color}" '
+            f'fill-opacity="0.75" stroke="white" stroke-width="0.8"/>'
+        )
+
+    return (
+        f'<svg width="{W}" height="{H}" style="display:block;overflow:visible">'
+        + "".join(circles)
+        + "</svg>"
+    )
+
+
 def render_plant_candidates():
     """Render the top plant split candidates list."""
     container = document.getElementById("plantCandidateList")
@@ -4012,11 +4074,122 @@ def render_plant_candidates():
         return
 
     parts = []
-    for g in state.plant_candidates:
-        parts.append(
-            f"<div class='candidate-item'><strong>{g['model_region']}</strong> — {g['tech_group']} (desired {g['desired']}, assigned {g['num_clusters']}; {g['total_capacity']:.0f} MW, HR IQR {g['hr_iqr']:.2f})</div>"
+    for i, g in enumerate(state.plant_candidates):
+        key = (g["model_region"], g["tech_group"])
+        current_k = state.plant_candidate_overrides.get(key, g["num_clusters"])
+        max_k = g["n_units"]
+        svg = _candidate_svg(g.get("plant_data", []), current_k)
+        row = (
+            f'<div class="candidate-item" '
+            f'style="display:flex;align-items:center;gap:10px;padding:8px 10px;">'
+            f'<div style="flex:1;min-width:0;">'
+            f'<div><strong>{html.escape(g["model_region"])}</strong> &mdash; '
+            f'{html.escape(g["tech_group"])}'
+            f'<span style="color:#888;font-size:11px;"> (desired {g["desired"]}; '
+            f'{g["total_capacity"]:.0f}\u202fMW, HR IQR {g["hr_iqr"]:.2f})</span></div>'
+            f'<div style="display:flex;align-items:center;gap:5px;margin-top:5px;">'
+            f'<label style="font-size:12px;white-space:nowrap;" for="candidateK{i}">Clusters:</label>'
+            f'<input id="candidateK{i}" type="number" min="1" max="{max_k}" value="{current_k}" '
+            f'style="width:55px;font-size:12px;" '
+            f'aria-label="Number of clusters for {html.escape(g["model_region"])} {html.escape(g["tech_group"])}" '
+            f'oninput="window.onCandidateClusterChange(event,{i})">'
+            f'</div>'
+            f'</div>'
+            f'<div id="candidateChart{i}" style="flex-shrink:0;">{svg}</div>'
+            f'</div>'
         )
+        parts.append(row)
+
     container.innerHTML = "".join(parts)
+
+
+def on_candidate_cluster_change(event, idx):
+    """Update bubble chart and YAML when a candidate's cluster count changes."""
+    if not state.plant_candidates:
+        return
+    try:
+        idx = int(idx)
+        new_k = int(float(event.target.value))
+    except (ValueError, TypeError):
+        return
+    if idx < 0 or idx >= len(state.plant_candidates) or new_k < 1:
+        return
+
+    g = state.plant_candidates[idx]
+    new_k = min(new_k, g["n_units"])
+    key = (g["model_region"], g["tech_group"])
+    state.plant_candidate_overrides[key] = new_k
+
+    # Update the bubble chart for this candidate
+    chart_el = document.getElementById(f"candidateChart{idx}")
+    if chart_el:
+        chart_el.innerHTML = _candidate_svg(g.get("plant_data", []), new_k)
+
+    regenerate_plant_yaml_with_overrides()
+
+
+def regenerate_plant_yaml_with_overrides():
+    """Rebuild plant YAML applying any per-candidate cluster count overrides."""
+    if not state.plant_groups or state.plant_cluster_settings is None:
+        return
+
+    # Apply overrides to a working copy of the groups
+    groups = [dict(g) for g in state.plant_groups]
+    for (model_region, tech_group), new_k in state.plant_candidate_overrides.items():
+        for g in groups:
+            if g["model_region"] == model_region and g["tech_group"] == tech_group:
+                g["num_clusters"] = new_k
+                break
+
+    # Recompute tech-level defaults (minimum assigned count per tech across regions)
+    tech_to_counts = {}
+    for g in groups:
+        tech_to_counts.setdefault(g["tech_group"], []).append(g["num_clusters"])
+
+    defaults = {}
+    for tech, counts in tech_to_counts.items():
+        min_count = min(counts) if counts else 1
+        defaults[tech] = int(min_count if min_count > 1 else 1)
+
+    # Region-specific overrides are entries that differ from the tech default
+    overrides = {}
+    for g in groups:
+        d = defaults[g["tech_group"]]
+        if g["num_clusters"] != d:
+            overrides.setdefault(g["model_region"], {})[g["tech_group"]] = int(
+                g["num_clusters"]
+            )
+
+    overrides_sorted = {
+        region: {tech: int(val) for tech, val in sorted(tech_map.items())}
+        for region, tech_map in sorted(overrides.items())
+    }
+
+    # Preserve group_technologies and tech_groups from the original run
+    group_flag = state.plant_cluster_settings.get("group_technologies", True)
+    tech_groups = state.plant_cluster_settings.get("tech_groups", {})
+
+    output = {
+        "num_clusters": {tech: int(val) for tech, val in sorted(defaults.items())},
+        "group_technologies": bool(group_flag),
+        "tech_groups": tech_groups,
+        "alt_num_clusters": overrides_sorted,
+    }
+
+    yaml_str = yaml.dump(output, default_flow_style=False, sort_keys=False)
+
+    yaml_el = document.getElementById("plantYamlOut")
+    if yaml_el is not None:
+        yaml_el.value = yaml_str
+
+    try:
+        state.plant_cluster_settings = yaml.safe_load(yaml_str)
+    except Exception:
+        pass
+
+
+# Export candidate cluster change handler to JavaScript
+window.onCandidateClusterChange = create_proxy(on_candidate_cluster_change)
 
 
 # --------------------------------------------------------------------------

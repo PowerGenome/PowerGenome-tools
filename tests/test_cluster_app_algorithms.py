@@ -1402,6 +1402,312 @@ class TestPlantClusteringHelpers:
         finally:
             self._teardown_plant_state(cluster_app)
 
+    # -----------------------------------------------------------------------
+    # suggest_plant_clusters – state side-effects
+    # -----------------------------------------------------------------------
+
+    def test_suggest_plant_clusters_stores_plant_groups(self, cluster_app):
+        """state.plant_groups is a non-empty list after suggest_plant_clusters()."""
+        self._setup_plant_state(cluster_app)
+        try:
+            cluster_app.suggest_plant_clusters()
+            assert isinstance(cluster_app.state.plant_groups, list)
+            assert len(cluster_app.state.plant_groups) > 0
+        finally:
+            self._teardown_plant_state(cluster_app)
+
+    def test_suggest_plant_clusters_plant_data_field_present(self, cluster_app):
+        """Every group in state.plant_groups has a 'plant_data' key that is a list
+        of dicts containing 'heat_rate' and 'capacity'."""
+        self._setup_plant_state(cluster_app)
+        try:
+            cluster_app.suggest_plant_clusters()
+            for g in cluster_app.state.plant_groups:
+                assert "plant_data" in g, f"Missing 'plant_data' in group {g}"
+                assert isinstance(g["plant_data"], list)
+                for entry in g["plant_data"]:
+                    assert "heat_rate" in entry, f"Missing 'heat_rate' in {entry}"
+                    assert "capacity" in entry, f"Missing 'capacity' in {entry}"
+        finally:
+            self._teardown_plant_state(cluster_app)
+
+    def test_suggest_plant_clusters_plant_data_matches_group_n_units(self, cluster_app):
+        """len(g['plant_data']) == g['n_units'] for every group."""
+        self._setup_plant_state(cluster_app)
+        try:
+            cluster_app.suggest_plant_clusters()
+            for g in cluster_app.state.plant_groups:
+                assert len(g["plant_data"]) == g["n_units"], (
+                    f"plant_data length {len(g['plant_data'])} != "
+                    f"n_units {g['n_units']} for group {g['tech_group']}"
+                )
+        finally:
+            self._teardown_plant_state(cluster_app)
+
+    def test_suggest_plant_clusters_resets_candidate_overrides(self, cluster_app):
+        """Pre-existing plant_candidate_overrides are cleared on each call."""
+        self._setup_plant_state(cluster_app)
+        try:
+            cluster_app.state.plant_candidate_overrides = {("X", "Y"): 3}
+            cluster_app.suggest_plant_clusters()
+            assert cluster_app.state.plant_candidate_overrides == {}
+        finally:
+            self._teardown_plant_state(cluster_app)
+
+    def test_suggest_plant_clusters_resets_overrides_on_rerun(self, cluster_app):
+        """Overrides set between two calls are cleared on the second call."""
+        self._setup_plant_state(cluster_app)
+        try:
+            cluster_app.suggest_plant_clusters()
+            cluster_app.state.plant_candidate_overrides = {("RegA", "NGCC"): 5}
+            cluster_app.suggest_plant_clusters()
+            assert cluster_app.state.plant_candidate_overrides == {}
+        finally:
+            self._teardown_plant_state(cluster_app)
+
+    # -----------------------------------------------------------------------
+    # _candidate_svg
+    # -----------------------------------------------------------------------
+
+    def test_candidate_svg_empty_returns_empty_string(self, cluster_app):
+        """_candidate_svg with empty plant_data returns ''."""
+        assert cluster_app._candidate_svg([], 1) == ""
+
+    def test_candidate_svg_returns_svg_element(self, cluster_app):
+        """Two-plant list with k=2 returns an SVG string with circle elements."""
+        plant_data = [
+            {"heat_rate": 6.5, "capacity": 500.0},
+            {"heat_rate": 10.0, "capacity": 300.0},
+        ]
+        result = cluster_app._candidate_svg(plant_data, 2)
+        assert result.startswith("<svg"), f"Expected SVG, got: {result[:50]}"
+        assert "<circle" in result
+
+    def test_candidate_svg_single_point(self, cluster_app):
+        """A single-element list produces SVG with exactly one <circle element."""
+        plant_data = [{"heat_rate": 7.0, "capacity": 400.0}]
+        result = cluster_app._candidate_svg(plant_data, 1)
+        assert result.count("<circle") == 1
+
+    def test_candidate_svg_k1_all_same_color(self, cluster_app):
+        """With k=1 and two different heat rates, all bubbles use only _BUBBLE_COLORS[0]."""
+        bubble_colors = cluster_app._BUBBLE_COLORS
+        plant_data = [
+            {"heat_rate": 6.5, "capacity": 500.0},
+            {"heat_rate": 10.0, "capacity": 300.0},
+        ]
+        result = cluster_app._candidate_svg(plant_data, 1)
+        assert bubble_colors[0] in result
+        # None of the other bubble colors should appear
+        for color in bubble_colors[1:]:
+            assert color not in result, f"Unexpected color {color} found with k=1"
+
+    def test_candidate_svg_k_exceeds_n_clamped(self, cluster_app):
+        """k larger than n_units is clamped to n; result is still valid SVG."""
+        plant_data = [
+            {"heat_rate": 6.5, "capacity": 500.0},
+            {"heat_rate": 10.0, "capacity": 300.0},
+        ]
+        result = cluster_app._candidate_svg(plant_data, 10)
+        assert result.startswith("<svg")
+        assert "<circle" in result
+
+    def test_candidate_svg_identical_heat_rates_all_same_color(self, cluster_app):
+        """Two entries with the same heat_rate get label 0 regardless of k."""
+        bubble_colors = cluster_app._BUBBLE_COLORS
+        plant_data = [
+            {"heat_rate": 7.0, "capacity": 200.0},
+            {"heat_rate": 7.0, "capacity": 300.0},
+        ]
+        result = cluster_app._candidate_svg(plant_data, 2)
+        assert bubble_colors[0] in result
+        assert bubble_colors[1] not in result
+
+    def test_candidate_svg_multicluster_has_multiple_colors(self, cluster_app):
+        """4 plants with two clearly separated heat-rate clusters → ≥2 fill colors."""
+        bubble_colors = cluster_app._BUBBLE_COLORS
+        plant_data = [
+            {"heat_rate": 4.0, "capacity": 200.0},
+            {"heat_rate": 4.1, "capacity": 210.0},
+            {"heat_rate": 12.0, "capacity": 180.0},
+            {"heat_rate": 12.1, "capacity": 195.0},
+        ]
+        result = cluster_app._candidate_svg(plant_data, 2)
+        colors_present = [c for c in bubble_colors if c in result]
+        assert len(colors_present) >= 2, (
+            f"Expected ≥2 distinct colors for 2-cluster SVG, found: {colors_present}"
+        )
+
+    def test_candidate_svg_ends_with_svg_close_tag(self, cluster_app):
+        """The returned SVG string ends with </svg>."""
+        plant_data = [{"heat_rate": 6.5, "capacity": 500.0}]
+        result = cluster_app._candidate_svg(plant_data, 1)
+        assert result.endswith("</svg>")
+
+    # -----------------------------------------------------------------------
+    # regenerate_plant_yaml_with_overrides
+    # -----------------------------------------------------------------------
+
+    def test_regenerate_plant_yaml_noop_when_no_groups(self, cluster_app):
+        """Returns early without error when state.plant_groups is empty."""
+        orig_groups = cluster_app.state.plant_groups
+        orig_settings = cluster_app.state.plant_cluster_settings
+        try:
+            cluster_app.state.plant_groups = []
+            cluster_app.state.plant_cluster_settings = {"num_clusters": {"NGCC": 1}}
+            # Should not raise
+            cluster_app.regenerate_plant_yaml_with_overrides()
+            # Settings must be unchanged (early return)
+            assert cluster_app.state.plant_cluster_settings == {
+                "num_clusters": {"NGCC": 1}
+            }
+        finally:
+            cluster_app.state.plant_groups = orig_groups
+            cluster_app.state.plant_cluster_settings = orig_settings
+
+    def test_regenerate_plant_yaml_noop_when_no_settings(self, cluster_app):
+        """Returns early without error when state.plant_cluster_settings is None."""
+        self._setup_plant_state(cluster_app)
+        orig_settings = cluster_app.state.plant_cluster_settings
+        try:
+            cluster_app.suggest_plant_clusters()
+            cluster_app.state.plant_cluster_settings = None
+            # Should not raise
+            cluster_app.regenerate_plant_yaml_with_overrides()
+            assert cluster_app.state.plant_cluster_settings is None
+        finally:
+            cluster_app.state.plant_cluster_settings = orig_settings
+            self._teardown_plant_state(cluster_app)
+
+    def test_regenerate_plant_yaml_no_overrides_preserves_num_clusters(
+        self, cluster_app
+    ):
+        """With no overrides, regenerate preserves the original num_clusters values."""
+        self._setup_plant_state(cluster_app)
+        orig_settings = cluster_app.state.plant_cluster_settings
+        try:
+            yaml_str, _total, _budget = cluster_app.suggest_plant_clusters()
+            original_parsed = yaml.safe_load(yaml_str)
+            cluster_app.state.plant_cluster_settings = original_parsed
+            original_num_clusters = dict(original_parsed["num_clusters"])
+
+            cluster_app.regenerate_plant_yaml_with_overrides()
+
+            assert cluster_app.state.plant_cluster_settings is not None
+            assert "num_clusters" in cluster_app.state.plant_cluster_settings
+            assert (
+                cluster_app.state.plant_cluster_settings["num_clusters"]
+                == original_num_clusters
+            )
+        finally:
+            cluster_app.state.plant_cluster_settings = orig_settings
+            self._teardown_plant_state(cluster_app)
+
+    def test_regenerate_plant_yaml_with_override_updates_settings(self, cluster_app):
+        """Applying an override causes plant_cluster_settings to be re-parsed as dict."""
+        self._setup_plant_state(cluster_app)
+        orig_settings = cluster_app.state.plant_cluster_settings
+        orig_overrides = cluster_app.state.plant_candidate_overrides
+        try:
+            yaml_str, _total, _budget = cluster_app.suggest_plant_clusters()
+            cluster_app.state.plant_cluster_settings = yaml.safe_load(yaml_str)
+
+            g = cluster_app.state.plant_groups[0]
+            cluster_app.state.plant_candidate_overrides[
+                (g["model_region"], g["tech_group"])
+            ] = 2
+
+            cluster_app.regenerate_plant_yaml_with_overrides()
+
+            result = cluster_app.state.plant_cluster_settings
+            assert isinstance(result, dict), "plant_cluster_settings should be a dict"
+            assert "num_clusters" in result
+        finally:
+            cluster_app.state.plant_cluster_settings = orig_settings
+            cluster_app.state.plant_candidate_overrides = orig_overrides
+            self._teardown_plant_state(cluster_app)
+
+    def test_regenerate_plant_yaml_override_in_alt_num_clusters(self, cluster_app):
+        """An override differing from the tech default appears in alt_num_clusters.
+
+        Uses a custom 2-plant state where both plants share the same tech_group but
+        live in different model regions.  Overriding one region to 2 while the other
+        stays at 1 keeps the tech default at 1, so the overridden region must appear
+        in alt_num_clusters.
+        """
+        state = cluster_app.state
+        # Save everything we'll touch so teardown is safe.
+        orig_plants_df = state.plants_df
+        orig_plant_region_map = state.plant_region_map
+        orig_region_agg = state.region_aggregations
+        orig_selected_bas = state.selected_bas
+        orig_all_bas = state.all_bas
+        orig_settings = state.plant_cluster_settings
+        orig_overrides = state.plant_candidate_overrides
+
+        try:
+            # Two NGCC plants, one per model region, so we get two groups that share
+            # the same tech_group.
+            state.plants_df = pd.DataFrame(
+                {
+                    "plant_id": [1, 2],
+                    "technology": [
+                        "Natural Gas Fired Combined Cycle",
+                        "Natural Gas Fired Combined Cycle",
+                    ],
+                    "capacity_mw": [500.0, 400.0],
+                    "heat_rate_mmbtu_mwh": [6.5, 6.8],
+                    "fom_per_mwyr": [20.0, 21.0],
+                }
+            )
+            state.plant_region_map = pd.DataFrame(
+                {"plant_id": [1, 2], "region": ["ba1", "ba2"]}
+            )
+            state.region_aggregations = {"RegA": ["ba1"], "RegB": ["ba2"]}
+            state.selected_bas = {"ba1", "ba2"}
+            state.all_bas = {"ba1", "ba2"}
+
+            yaml_str, _total, _budget = cluster_app.suggest_plant_clusters()
+            state.plant_cluster_settings = yaml.safe_load(yaml_str)
+
+            assert len(state.plant_groups) == 2, (
+                f"Expected 2 groups (one per region), got {len(state.plant_groups)}"
+            )
+
+            # Force both to num_clusters=1 so the tech default is 1.
+            for grp in state.plant_groups:
+                grp["num_clusters"] = 1
+
+            # Override the first region's group to 2 — the second stays at 1, so the
+            # tech default remains 1 and this region must appear in alt_num_clusters.
+            target = state.plant_groups[0]
+            state.plant_candidate_overrides[
+                (target["model_region"], target["tech_group"])
+            ] = 2
+
+            cluster_app.regenerate_plant_yaml_with_overrides()
+
+            result = state.plant_cluster_settings
+            assert "alt_num_clusters" in result
+            alt = result["alt_num_clusters"]
+            region = target["model_region"]
+            tech = target["tech_group"]
+            assert region in alt, (
+                f"Expected region '{region}' in alt_num_clusters, got: {alt}"
+            )
+            assert alt[region].get(tech) == 2, (
+                f"Expected override value 2 for tech '{tech}' in region '{region}', "
+                f"got: {alt[region]}"
+            )
+        finally:
+            state.plants_df = orig_plants_df
+            state.plant_region_map = orig_plant_region_map
+            state.region_aggregations = orig_region_agg
+            state.selected_bas = orig_selected_bas
+            state.all_bas = orig_all_bas
+            state.plant_cluster_settings = orig_settings
+            state.plant_candidate_overrides = orig_overrides
+
 
 # ---------------------------------------------------------------------------
 # 13. Settings helpers
