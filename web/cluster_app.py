@@ -2800,7 +2800,10 @@ def suggest_plant_clusters(
                 "priority": priority,
                 "plant_data": [
                     {"heat_rate": float(hr), "capacity": float(cap)}
-                    for hr, cap in zip(hr_filled.tolist(), weights.tolist())
+                    for hr, cap in zip(
+                        hr_filled.tolist(),
+                        sub["capacity_mw"].fillna(0).tolist(),
+                    )
                 ],
             }
         )
@@ -3245,6 +3248,9 @@ def reset_region_dependent_state():
     """
     # Plant clustering settings depend on region mapping
     state.plant_cluster_settings = None
+    state.plant_candidates = []
+    state.plant_groups = []
+    state.plant_candidate_overrides = {}
 
     # Resource groups depend on region aggregations
     state.resource_group_files = {}
@@ -3288,6 +3294,10 @@ def reset_region_dependent_state():
     _render_esr = globals().get("render_esr_results")
     if callable(_render_esr):
         _render_esr()
+
+    _render_candidates = globals().get("render_plant_candidates")
+    if callable(_render_candidates):
+        _render_candidates()
 
 
 def reset_planning_year_dependent_state():
@@ -4119,6 +4129,7 @@ def on_candidate_cluster_change(event, idx):
 
     g = state.plant_candidates[idx]
     new_k = min(new_k, g["n_units"])
+    event.target.value = str(new_k)
     key = (g["model_region"], g["tech_group"])
     state.plant_candidate_overrides[key] = new_k
 
