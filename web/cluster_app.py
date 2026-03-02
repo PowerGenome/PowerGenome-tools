@@ -6737,11 +6737,11 @@ def _render_selected_renewables_region_panel():
     title_el.textContent = f"{region_name} ({tech_label})"
     label_el.textContent = f"{tech_label} included capacity (MW)"
     value_el.textContent = f"{int(round(included_capacity)):,} MW"
-    meta_el.textContent = (
+    meta_el.innerHTML = (
         f"Baseline {int(round(baseline_capacity)):,} MW; "
         f"available total {int(round(available_capacity)):,} MW "
-        f"(additional above baseline: {int(round(extra_available)):,} MW); "
-        f"current max included LCOE {lcoe_max:.2f}."
+        f"({int(round(extra_available)):,} MW not included); "
+        f"<strong>current max LCOE is ${lcoe_max:.2f}</strong>."
     )
 
     full_svg = _render_region_supply_curve_svg(region_name, tech, compact=False)
