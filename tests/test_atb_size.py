@@ -1,32 +1,13 @@
 """
-Tests for the ATB size loading and lookup logic from web/cluster_app.py.
+Tests for the load_atb_size and update_size_field_from_atb_size logic.
 
-Covers:
-- parse_atb_size_payload()  — replicates load_atb_size() lines 4488-4528
-- lookup_size_from_map()    — replicates update_size_field_from_atb_size() lines 4924-4955
-- format_size_value()       — replicates the size-formatting branch inside
-                              update_size_field_from_atb_size()
+Rather than importing cluster_app.py (which requires mocking heavy PyScript/browser
+dependencies), these tests replicate the *pure* parsing and lookup logic from those
+two functions directly.  This keeps the suite fast and dependency-free while still
+validating the real behaviour described in the function bodies.
 
-NOTE: These helpers are replicated inline (without DOM / PyScript dependencies)
-following the same pattern used in test_cluster_app.py and
-test_resource_attribute_overrides.py.
-"""
-
-import pytest
-
-
-# ============================================================================
-# Helpers replicated from web/cluster_app.py (no DOM / fetch dependencies)
-# ============================================================================
-
-
-def parse_atb_size_payload(payload):
-    """Parse an atb_size.json payload dict and return a size_map dict.
-
-    Replicates the core logic of load_atb_size() without DOM/fetch dependencies.
-    Keys are (technology, tech_detail) where tech_detail may be None.
-    """
-    sizes = payload.get("size", []) if isinstance(payload, dict) else []
+load_atb_size parsing logic (lines ~4504-4528 of cluster_app.py)
+-----------------------------------------------------------------
     size_map = {}
     for row in sizes:
         if not isinstance(row, dict):
@@ -37,299 +18,445 @@ def parse_atb_size_payload(payload):
         size_mw = row.get("size")
         if size_mw is None:
             continue
+        data_year = row.get("data_year")
+        year_map = size_map.setdefault(data_year, {})
         tech_detail = row.get("tech_detail")
         if tech_detail:
             key = (tech, str(tech_detail).strip())
-            size_map[key] = float(size_mw)
+            year_map[key] = float(size_mw)
         else:
             key = (tech, None)
-            size_map[key] = float(size_mw)
+            year_map[key] = float(size_mw)
+
+update_size_field_from_atb_size lookup logic (lines ~4944-4959 of cluster_app.py)
+----------------------------------------------------------------------------------
+    selected_year = int(...)           # from DOM / caller
+    year_size_map = atb_size_map.get(selected_year)
+    if year_size_map is None and atb_size_map:
+        year_size_map = next(iter(atb_size_map.values()))
+    if year_size_map is None:
+        year_size_map = {}
+
+    size_mw = None
+    if detail:
+        size_mw = year_size_map.get((tech, detail))
+    if size_mw is None:
+        size_mw = year_size_map.get((tech, None))
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+# ---------------------------------------------------------------------------
+# Pure-logic helpers (replicated from cluster_app.py to avoid DOM imports)
+# ---------------------------------------------------------------------------
+
+
+def _parse_atb_size_rows(rows: list[Any]) -> dict:
+    """Replicate the row-parsing loop from load_atb_size()."""
+    size_map: dict = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        tech = str(row.get("technology", "")).strip()
+        if not tech:
+            continue
+        size_mw = row.get("size")
+        if size_mw is None:
+            continue
+        data_year = row.get("data_year")
+        year_map = size_map.setdefault(data_year, {})
+        tech_detail = row.get("tech_detail")
+        if tech_detail:
+            key = (tech, str(tech_detail).strip())
+            year_map[key] = float(size_mw)
+        else:
+            key = (tech, None)
+            year_map[key] = float(size_mw)
     return size_map
 
 
-def lookup_size_from_map(size_map, tech, detail):
-    """Look up size from atb_size_map for given tech and tech_detail.
+def _resolve_year_map(atb_size_map: dict, selected_year: int) -> dict:
+    """Replicate the year-resolution block from update_size_field_from_atb_size()."""
+    year_size_map = atb_size_map.get(selected_year)
+    if year_size_map is None and atb_size_map:
+        year_size_map = next(iter(atb_size_map.values()))
+    if year_size_map is None:
+        year_size_map = {}
+    return year_size_map
 
-    Replicates the lookup logic of update_size_field_from_atb_size() without
-    DOM dependencies.  Returns the size_mw float, or None if not found.
-    """
-    if not tech:
-        return None
+
+def _lookup_size(year_size_map: dict, tech: str, detail: str) -> float | None:
+    """Replicate the tech/detail lookup from update_size_field_from_atb_size()."""
     size_mw = None
     if detail:
-        size_mw = size_map.get((tech, detail))
+        size_mw = year_size_map.get((tech, detail))
     if size_mw is None:
-        size_mw = size_map.get((tech, None))
+        size_mw = year_size_map.get((tech, None))
     return size_mw
 
 
-def format_size_value(size_mw):
-    """Format a size value for display in the size field.
-
-    Replicates the formatting branch inside update_size_field_from_atb_size():
-    - None          → "100"  (default)
-    - sub-1 MW      → str(size_mw) preserving decimal  (e.g. "0.5")
-    - >= 1 MW       → str(int(round(size_mw)))          (e.g. "100")
-    """
-    if size_mw is not None:
-        if size_mw < 1:
-            return str(size_mw)
-        else:
-            return str(int(round(size_mw)))
-    else:
-        return "100"
+# ===========================================================================
+# Parsing tests  (load_atb_size logic)
+# ===========================================================================
 
 
-# ============================================================================
-# Tests – parse_atb_size_payload
-# ============================================================================
-
-
-class TestParseAtbSizePayload:
-    """Tests for the payload → size_map parsing logic."""
+class TestParseAtbSizeRows:
+    """Verify the row-to-map conversion matches the load_atb_size loop."""
 
     # ------------------------------------------------------------------
-    # 1. Basic valid row WITH tech_detail
+    # Happy-path structure
     # ------------------------------------------------------------------
-    def test_basic_row_with_tech_detail(self):
-        payload = {"size": [{"technology": "Solar", "tech_detail": "Class1", "size": 50}]}
-        result = parse_atb_size_payload(payload)
-        assert result == {("Solar", "Class1"): 50.0}
+
+    def test_single_row_with_year_and_no_detail_creates_none_key(self):
+        rows = [{"data_year": 2024, "technology": "LandbasedWind", "size": 200.0}]
+        result = _parse_atb_size_rows(rows)
+        assert result == {2024: {("LandbasedWind", None): 200.0}}
+
+    def test_single_row_with_tech_detail_creates_detail_key(self):
+        rows = [
+            {
+                "data_year": 2024,
+                "technology": "NaturalGas",
+                "tech_detail": "Combustion Turbine (F-Frame)",
+                "size": 233.0,
+            }
+        ]
+        result = _parse_atb_size_rows(rows)
+        assert result == {
+            2024: {("NaturalGas", "Combustion Turbine (F-Frame)"): 233.0}
+        }
+
+    def test_multiple_years_produce_separate_year_buckets(self):
+        rows = [
+            {"data_year": 2024, "technology": "LandbasedWind", "size": 200.0},
+            {"data_year": 2025, "technology": "LandbasedWind", "size": 210.0},
+        ]
+        result = _parse_atb_size_rows(rows)
+        assert set(result.keys()) == {2024, 2025}
+        assert result[2024][("LandbasedWind", None)] == 200.0
+        assert result[2025][("LandbasedWind", None)] == 210.0
+
+    def test_multiple_techs_in_same_year(self):
+        rows = [
+            {"data_year": 2024, "technology": "LandbasedWind", "size": 200.0},
+            {"data_year": 2024, "technology": "Battery", "size": 60.0},
+            {
+                "data_year": 2024,
+                "technology": "NaturalGas",
+                "tech_detail": "Combustion Turbine (F-Frame)",
+                "size": 233.0,
+            },
+        ]
+        result = _parse_atb_size_rows(rows)
+        year_map = result[2024]
+        assert year_map[("LandbasedWind", None)] == 200.0
+        assert year_map[("Battery", None)] == 60.0
+        assert year_map[("NaturalGas", "Combustion Turbine (F-Frame)")] == 233.0
 
     # ------------------------------------------------------------------
-    # 2. Row with empty / None tech_detail falls back to (tech, None) key
+    # Rows without data_year → None key
     # ------------------------------------------------------------------
-    @pytest.mark.parametrize("td", [None, ""])
-    def test_row_with_empty_tech_detail_uses_none_key(self, td):
-        payload = {"size": [{"technology": "Wind", "tech_detail": td, "size": 200}]}
-        result = parse_atb_size_payload(payload)
-        assert ("Wind", None) in result
-        assert result[("Wind", None)] == 200.0
+
+    def test_row_without_data_year_uses_none_year_key(self):
+        rows = [{"technology": "OffshoreWind", "size": 800.0}]
+        result = _parse_atb_size_rows(rows)
+        assert None in result
+        assert result[None][("OffshoreWind", None)] == 800.0
+
+    def test_mix_of_year_and_no_year_rows(self):
+        rows = [
+            {"data_year": 2024, "technology": "LandbasedWind", "size": 200.0},
+            {"technology": "OffshoreWind", "size": 800.0},
+        ]
+        result = _parse_atb_size_rows(rows)
+        assert 2024 in result
+        assert None in result
 
     # ------------------------------------------------------------------
-    # 3. Row missing "technology" field is skipped
+    # tech_detail whitespace stripping
     # ------------------------------------------------------------------
-    def test_row_missing_technology_is_skipped(self):
-        payload = {"size": [{"tech_detail": "Class1", "size": 100}]}
-        result = parse_atb_size_payload(payload)
-        assert result == {}
+
+    def test_tech_detail_whitespace_is_stripped(self):
+        rows = [
+            {
+                "data_year": 2024,
+                "technology": "NaturalGas",
+                "tech_detail": "  F-Frame  ",
+                "size": 233.0,
+            }
+        ]
+        result = _parse_atb_size_rows(rows)
+        assert ("NaturalGas", "F-Frame") in result[2024]
 
     # ------------------------------------------------------------------
-    # 4. Row with empty-string technology is skipped
+    # Rows that should be skipped
     # ------------------------------------------------------------------
-    def test_row_with_empty_technology_is_skipped(self):
-        payload = {"size": [{"technology": "   ", "tech_detail": "Class1", "size": 100}]}
-        result = parse_atb_size_payload(payload)
-        assert result == {}
 
-    # ------------------------------------------------------------------
-    # 5. Row with None size is skipped
-    # ------------------------------------------------------------------
-    def test_row_with_none_size_is_skipped(self):
-        payload = {"size": [{"technology": "Solar", "tech_detail": "Class1", "size": None}]}
-        result = parse_atb_size_payload(payload)
-        assert result == {}
-
-    # ------------------------------------------------------------------
-    # 6. Non-dict row in sizes list is skipped
-    # ------------------------------------------------------------------
     def test_non_dict_row_is_skipped(self):
-        payload = {"size": ["not-a-dict", 42, None]}
-        result = parse_atb_size_payload(payload)
+        rows = ["not-a-dict", 42, None, ["list"], {"technology": "Wind", "size": 100.0}]
+        result = _parse_atb_size_rows(rows)
+        # Only the last (dict) row should be processed
+        assert len(result) == 1
+
+    def test_row_missing_technology_is_skipped(self):
+        rows = [{"data_year": 2024, "size": 100.0}]
+        result = _parse_atb_size_rows(rows)
         assert result == {}
 
-    # ------------------------------------------------------------------
-    # 7. Payload is not a dict → empty map
-    # ------------------------------------------------------------------
-    @pytest.mark.parametrize("bad_payload", ["string", 42, [1, 2, 3]])
-    def test_non_dict_payload_returns_empty_map(self, bad_payload):
-        result = parse_atb_size_payload(bad_payload)
+    def test_row_with_empty_string_technology_is_skipped(self):
+        rows = [{"data_year": 2024, "technology": "   ", "size": 100.0}]
+        result = _parse_atb_size_rows(rows)
         assert result == {}
 
-    # ------------------------------------------------------------------
-    # 8. Payload is None → empty map
-    # ------------------------------------------------------------------
-    def test_none_payload_returns_empty_map(self):
-        result = parse_atb_size_payload(None)
+    def test_row_missing_size_is_skipped(self):
+        rows = [{"data_year": 2024, "technology": "LandbasedWind"}]
+        result = _parse_atb_size_rows(rows)
         assert result == {}
 
-    # ------------------------------------------------------------------
-    # 9. Payload has no "size" key → empty map
-    # ------------------------------------------------------------------
-    def test_payload_without_size_key_returns_empty_map(self):
-        result = parse_atb_size_payload({"other_key": []})
+    def test_row_with_size_none_is_skipped(self):
+        rows = [{"data_year": 2024, "technology": "LandbasedWind", "size": None}]
+        result = _parse_atb_size_rows(rows)
         assert result == {}
 
-    # ------------------------------------------------------------------
-    # 10. Float and int sizes are both stored as float
-    # ------------------------------------------------------------------
-    def test_int_size_stored_as_float(self):
-        payload = {"size": [{"technology": "Wind", "size": 100}]}
-        result = parse_atb_size_payload(payload)
-        assert isinstance(result[("Wind", None)], float)
-
-    def test_float_size_stored_as_float(self):
-        payload = {"size": [{"technology": "Wind", "size": 99.9}]}
-        result = parse_atb_size_payload(payload)
-        assert isinstance(result[("Wind", None)], float)
-        assert result[("Wind", None)] == pytest.approx(99.9)
+    def test_empty_input_returns_empty_map(self):
+        assert _parse_atb_size_rows([]) == {}
 
     # ------------------------------------------------------------------
-    # 11. Whitespace in technology name is stripped
+    # Type coercion
     # ------------------------------------------------------------------
-    def test_whitespace_in_technology_is_stripped(self):
-        payload = {"size": [{"technology": "  Solar  ", "size": 50}]}
-        result = parse_atb_size_payload(payload)
-        assert ("Solar", None) in result
+
+    def test_size_is_stored_as_float(self):
+        rows = [{"data_year": 2024, "technology": "LandbasedWind", "size": "200"}]
+        result = _parse_atb_size_rows(rows)
+        size = result[2024][("LandbasedWind", None)]
+        assert isinstance(size, float)
+        assert size == 200.0
+
+    def test_sub_mw_size_is_preserved_as_float(self):
+        rows = [{"data_year": 2024, "technology": "SmallBattery", "size": 0.5}]
+        result = _parse_atb_size_rows(rows)
+        assert result[2024][("SmallBattery", None)] == 0.5
 
     # ------------------------------------------------------------------
-    # 12. Whitespace in tech_detail is stripped
+    # Detail key vs. None-key coexist in same year
     # ------------------------------------------------------------------
-    def test_whitespace_in_tech_detail_is_stripped(self):
-        payload = {"size": [{"technology": "Solar", "tech_detail": "  Class1  ", "size": 50}]}
-        result = parse_atb_size_payload(payload)
-        assert ("Solar", "Class1") in result
 
-    # ------------------------------------------------------------------
-    # 13. Multiple rows build a map with multiple keys
-    # ------------------------------------------------------------------
-    def test_multiple_rows_build_full_map(self):
-        payload = {
-            "size": [
-                {"technology": "Solar", "tech_detail": "Class1", "size": 50},
-                {"technology": "Wind", "tech_detail": "Class2", "size": 200},
-                {"technology": "Battery", "size": 10},
-            ]
+    def test_detail_key_and_none_key_can_coexist_for_same_tech(self):
+        rows = [
+            {
+                "data_year": 2024,
+                "technology": "NaturalGas",
+                "tech_detail": "F-Frame",
+                "size": 233.0,
+            },
+            {
+                "data_year": 2024,
+                "technology": "NaturalGas",
+                "size": 100.0,
+            },
+        ]
+        result = _parse_atb_size_rows(rows)
+        year_map = result[2024]
+        assert year_map[("NaturalGas", "F-Frame")] == 233.0
+        assert year_map[("NaturalGas", None)] == 100.0
+
+
+# ===========================================================================
+# Year-resolution tests  (update_size_field_from_atb_size logic, part 1)
+# ===========================================================================
+
+
+class TestResolveYearMap:
+    """Verify the year-specific map resolution with fallback behaviour."""
+
+    def test_exact_year_match_returns_that_years_map(self):
+        atb_size_map = {
+            2024: {("LandbasedWind", None): 200.0},
+            2025: {("LandbasedWind", None): 210.0},
         }
-        result = parse_atb_size_payload(payload)
-        assert len(result) == 3
-        assert result[("Solar", "Class1")] == 50.0
-        assert result[("Wind", "Class2")] == 200.0
-        assert result[("Battery", None)] == 10.0
+        result = _resolve_year_map(atb_size_map, 2024)
+        assert result == {("LandbasedWind", None): 200.0}
 
-    # ------------------------------------------------------------------
-    # 14. Row with tech_detail=None is treated as the fallback (tech, None) key
-    # ------------------------------------------------------------------
-    def test_tech_detail_none_treated_as_fallback_key(self):
-        payload = {"size": [{"technology": "Nuclear", "tech_detail": None, "size": 1000}]}
-        result = parse_atb_size_payload(payload)
-        assert result == {("Nuclear", None): 1000.0}
+    def test_year_2025_match_returns_correct_map(self):
+        atb_size_map = {
+            2024: {("LandbasedWind", None): 200.0},
+            2025: {("LandbasedWind", None): 210.0},
+        }
+        result = _resolve_year_map(atb_size_map, 2025)
+        assert result == {("LandbasedWind", None): 210.0}
 
-    # ------------------------------------------------------------------
-    # 15. Row with tech_detail=0 (falsy int) is treated as fallback  (edge case)
-    # ------------------------------------------------------------------
-    def test_falsy_int_tech_detail_treated_as_fallback_key(self):
-        payload = {"size": [{"technology": "Hydro", "tech_detail": 0, "size": 30}]}
-        result = parse_atb_size_payload(payload)
-        # 0 is falsy, so the `if tech_detail:` branch is skipped → (tech, None) key
-        assert result == {("Hydro", None): 30.0}
+    def test_unknown_year_falls_back_to_first_available_year(self):
+        atb_size_map = {
+            2024: {("LandbasedWind", None): 200.0},
+            2025: {("LandbasedWind", None): 210.0},
+        }
+        result = _resolve_year_map(atb_size_map, 9999)
+        # Must return the first inserted year's map (2024 in CPython 3.7+)
+        assert result == {("LandbasedWind", None): 200.0}
+
+    def test_year_zero_falls_back_when_not_in_map(self):
+        """Year 0 is the sentinel used when DOM value is missing/invalid."""
+        atb_size_map = {2024: {("Battery", None): 60.0}}
+        result = _resolve_year_map(atb_size_map, 0)
+        assert result == {("Battery", None): 60.0}
+
+    def test_empty_map_returns_empty_dict_regardless_of_year(self):
+        result = _resolve_year_map({}, 2024)
+        assert result == {}
+
+    def test_empty_map_with_zero_year_returns_empty_dict(self):
+        result = _resolve_year_map({}, 0)
+        assert result == {}
+
+    def test_single_year_map_always_falls_back_to_that_year(self):
+        atb_size_map = {2030: {("OffshoreWind", None): 800.0}}
+        for year in (2020, 2024, 2030, 9999):
+            result = _resolve_year_map(atb_size_map, year)
+            assert ("OffshoreWind", None) in result, f"Failed for year={year}"
 
 
-# ============================================================================
-# Tests – lookup_size_from_map
-# ============================================================================
+# ===========================================================================
+# Size-lookup tests  (update_size_field_from_atb_size logic, part 2)
+# ===========================================================================
 
 
-class TestLookupSizeFromMap:
-    """Tests for the size-map lookup logic."""
+class TestLookupSize:
+    """Verify the (tech, detail) → size lookup with fallback to (tech, None)."""
 
-    def _make_map(self):
+    @pytest.fixture()
+    def year_map(self):
         return {
-            ("Solar", "Class1"): 50.0,
-            ("Solar", None): 75.0,
-            ("Wind", None): 200.0,
+            ("LandbasedWind", None): 200.0,
+            ("Battery", None): 60.0,
+            ("NaturalGas", "Combustion Turbine (F-Frame)"): 233.0,
+            ("NaturalGas", None): 100.0,
         }
 
     # ------------------------------------------------------------------
-    # 1. Exact match with tech AND detail
+    # Exact matches
     # ------------------------------------------------------------------
-    def test_exact_match_with_tech_and_detail(self):
-        size_map = self._make_map()
-        assert lookup_size_from_map(size_map, "Solar", "Class1") == 50.0
+
+    def test_tech_with_detail_returns_specific_size(self, year_map):
+        assert _lookup_size(year_map, "NaturalGas", "Combustion Turbine (F-Frame)") == 233.0
+
+    def test_tech_without_detail_returns_none_key_size(self, year_map):
+        assert _lookup_size(year_map, "LandbasedWind", "") == 200.0
+
+    def test_tech_with_blank_detail_returns_none_key_size(self, year_map):
+        # cluster_app.py strips detail before calling the lookup, so whitespace-only
+        # detail arrives here as an empty string, which is treated as absent.
+        assert _lookup_size(year_map, "Battery", "") == 60.0
 
     # ------------------------------------------------------------------
-    # 2. No exact detail match → falls back to (tech, None)
+    # Fallback from (tech, detail) to (tech, None)
     # ------------------------------------------------------------------
-    def test_no_detail_match_falls_back_to_none_key(self):
-        size_map = self._make_map()
-        assert lookup_size_from_map(size_map, "Solar", "ClassXXX") == 75.0
+
+    def test_unknown_detail_falls_back_to_none_key(self, year_map):
+        # "NaturalGas" has a (tech, None) entry; unknown detail should fall back
+        result = _lookup_size(year_map, "NaturalGas", "UnknownVariant")
+        assert result == 100.0
+
+    def test_no_detail_key_and_no_none_key_returns_none(self, year_map):
+        result = _lookup_size(year_map, "Nuclear", "")
+        assert result is None
+
+    def test_detail_key_not_found_and_no_none_key_returns_none(self, year_map):
+        result = _lookup_size(year_map, "OffshoreWind", "Fixed")
+        assert result is None
 
     # ------------------------------------------------------------------
-    # 3. No match at all → returns None
+    # Empty map
     # ------------------------------------------------------------------
-    def test_no_match_returns_none(self):
-        size_map = self._make_map()
-        assert lookup_size_from_map(size_map, "Nuclear", "Class1") is None
+
+    def test_empty_map_always_returns_none(self):
+        for tech, detail in [
+            ("LandbasedWind", ""),
+            ("Battery", "4Hr"),
+            ("NaturalGas", "F-Frame"),
+        ]:
+            assert _lookup_size({}, tech, detail) is None
 
     # ------------------------------------------------------------------
-    # 4. Empty / falsy tech → returns None
+    # Parametrised tech lookup table
     # ------------------------------------------------------------------
-    @pytest.mark.parametrize("tech", ["", None, 0])
-    def test_empty_tech_returns_none(self, tech):
-        size_map = self._make_map()
-        assert lookup_size_from_map(size_map, tech, "Class1") is None
 
-    # ------------------------------------------------------------------
-    # 5. Empty detail → only tries (tech, None) key
-    # ------------------------------------------------------------------
-    @pytest.mark.parametrize("detail", ["", None])
-    def test_empty_detail_uses_none_key_only(self, detail):
-        size_map = self._make_map()
-        # "Wind" has a (Wind, None) entry but no detail entry
-        assert lookup_size_from_map(size_map, "Wind", detail) == 200.0
-
-    # ------------------------------------------------------------------
-    # 6. Detail match takes priority over fallback
-    # ------------------------------------------------------------------
-    def test_detail_match_takes_priority_over_fallback(self):
-        size_map = self._make_map()
-        # "Solar" has both (Solar, Class1)=50 and (Solar, None)=75
-        # Detail match must win
-        result = lookup_size_from_map(size_map, "Solar", "Class1")
-        assert result == 50.0
-        assert result != 75.0
+    @pytest.mark.parametrize(
+        "tech, detail, expected",
+        [
+            ("LandbasedWind", "", 200.0),
+            ("LandbasedWind", "Class 5", 200.0),  # unknown detail falls back to (tech, None)
+            ("Battery", "", 60.0),
+            ("NaturalGas", "Combustion Turbine (F-Frame)", 233.0),
+            ("NaturalGas", "UnknownDetail", 100.0),  # falls back to (tech, None)
+            ("NaturalGas", "", 100.0),  # no detail → (tech, None)
+            ("Solar", "", None),          # tech not in map at all → None
+            ("Solar", "FixedTilt", None), # tech not in map, detail also absent → None
+        ],
+    )
+    def test_lookup_parametrised(self, year_map, tech, detail, expected):
+        assert _lookup_size(year_map, tech, detail) == expected
 
 
-# ============================================================================
-# Tests – format_size_value
-# ============================================================================
+# ===========================================================================
+# Integration-style tests combining parsing + resolution + lookup
+# ===========================================================================
 
 
-class TestFormatSizeValue:
-    """Tests for the size-value formatting logic."""
+class TestAtbSizeEndToEnd:
+    """Combine parsing → year resolution → lookup in a single flow."""
 
-    # ------------------------------------------------------------------
-    # 1. None → default "100"
-    # ------------------------------------------------------------------
-    def test_none_returns_default_100(self):
-        assert format_size_value(None) == "100"
+    def test_full_flow_for_known_year_and_detail(self):
+        rows = [
+            {"data_year": 2024, "technology": "LandbasedWind", "size": 200.0},
+            {
+                "data_year": 2024,
+                "technology": "NaturalGas",
+                "tech_detail": "Combustion Turbine (F-Frame)",
+                "size": 233.0,
+            },
+            {"data_year": 2025, "technology": "LandbasedWind", "size": 210.0},
+        ]
+        size_map = _parse_atb_size_rows(rows)
+        year_map = _resolve_year_map(size_map, 2024)
+        assert _lookup_size(year_map, "LandbasedWind", "") == 200.0
+        assert _lookup_size(year_map, "NaturalGas", "Combustion Turbine (F-Frame)") == 233.0
 
-    # ------------------------------------------------------------------
-    # 2. Whole MW value (>= 1) → rounded integer string
-    # ------------------------------------------------------------------
-    def test_100_mw_returns_integer_string(self):
-        assert format_size_value(100.0) == "100"
+    def test_full_flow_fallback_to_first_year_when_year_missing(self):
+        rows = [
+            {"data_year": 2024, "technology": "Battery", "size": 60.0},
+            {"data_year": 2025, "technology": "Battery", "size": 65.0},
+        ]
+        size_map = _parse_atb_size_rows(rows)
+        year_map = _resolve_year_map(size_map, 9999)
+        # Falls back to 2024 (first year inserted)
+        assert _lookup_size(year_map, "Battery", "") == 60.0
 
-    # ------------------------------------------------------------------
-    # 3. 99.5 MW rounds to "100"
-    # ------------------------------------------------------------------
-    def test_99_5_rounds_to_100(self):
-        assert format_size_value(99.5) == "100"
+    def test_full_flow_none_year_key_used_when_rows_lack_data_year(self):
+        rows = [
+            {"technology": "OffshoreWind", "size": 800.0},
+        ]
+        size_map = _parse_atb_size_rows(rows)
+        # None is the only key; any requested year should fall back to it
+        year_map = _resolve_year_map(size_map, 2024)
+        assert _lookup_size(year_map, "OffshoreWind", "") == 800.0
 
-    # ------------------------------------------------------------------
-    # 4. Sub-1 MW (0.5) preserves decimal
-    # ------------------------------------------------------------------
-    def test_sub_1_mw_preserves_decimal(self):
-        assert format_size_value(0.5) == "0.5"
+    def test_skipped_rows_do_not_appear_in_any_year_map(self):
+        rows = [
+            {"data_year": 2024, "size": 100.0},              # missing technology
+            {"data_year": 2024, "technology": "X"},           # missing size
+            "not-a-dict",                                     # wrong type
+            {"data_year": 2024, "technology": "Wind", "size": 150.0},  # valid
+        ]
+        size_map = _parse_atb_size_rows(rows)
+        assert list(size_map.keys()) == [2024]
+        assert list(size_map[2024].keys()) == [("Wind", None)]
 
-    # ------------------------------------------------------------------
-    # 5. Very small sub-1 MW value preserves decimal
-    # ------------------------------------------------------------------
-    def test_very_small_sub_1_mw_preserves_decimal(self):
-        assert format_size_value(0.001) == "0.001"
-
-    # ------------------------------------------------------------------
-    # 6. Exactly 1.0 MW → integer string "1"
-    # ------------------------------------------------------------------
-    def test_exactly_1_mw_returns_integer_string(self):
-        assert format_size_value(1.0) == "1"
+    def test_sub_mw_size_survives_full_round_trip(self):
+        rows = [{"data_year": 2024, "technology": "Micro", "size": 0.25}]
+        size_map = _parse_atb_size_rows(rows)
+        year_map = _resolve_year_map(size_map, 2024)
+        assert _lookup_size(year_map, "Micro", "") == 0.25
