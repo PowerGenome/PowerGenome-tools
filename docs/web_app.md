@@ -4,6 +4,39 @@ PowerGenome System Design is a comprehensive web-based interface for building co
 
 [Launch Web App](https://gschivley.github.io/PowerGenome-tools/web/){ .md-button .md-button--primary }
 
+## Understanding Capacity Expansion Models
+
+Before diving into the workflow, it's helpful to understand what capacity expansion models do and what data they need. Capacity expansion models answer questions like "What's the least-cost way to meet future electricity demand while achieving policy goals?" or "How much wind and solar should we build by 2035?"
+
+These models require several key types of data:
+
+**Geographic Zones**: Model regions define the geographic boundaries for your analysis. Each region has:
+
+* **Hourly load profiles** - How much electricity is needed each hour of the year
+* **Transmission constraints** - How much power can flow between regions
+* **Existing resources** - What power plants already exist in each region
+* **Renewable potential** - Where wind and solar resources can be built and at what cost
+
+Why this matters: The way you define regions affects model complexity, run time, and how well the model captures real transmission constraints and policy boundaries.
+
+**Cost Alignment**: Technology costs, fuel prices, and financial parameters must all be expressed in the same dollar-year (e.g., all costs in 2024 dollars). This ensures that when the model compares the cost of building solar in 2030 versus natural gas in 2040, it's making an apples-to-apples comparison.
+
+**Timeseries Data**: All hourly data (demand, solar generation, wind generation) are stored in UTC (Coordinated Universal Time). This ensures consistency across regions and data sources. Shifting to local timezones is only done for visualization purposes (e.g., to show that peak solar generation occurs at local noon, not UTC noon).
+
+**Planning Periods**: Each planning period has a start year and an end year. The model uses:
+
+* **Final year** - For selecting demand forecasts and fuel prices (representing conditions at the end of the period)
+* **Averaged capital costs** - Technology costs are averaged across all years in the period to represent the "average" cost of building during that timeframe
+
+**Policy Constraints**: Policies like Renewable Portfolio Standards (RPS) or Clean Energy Standards (CES) are modeled as Energy Share Requirements (ESR). These specify that a certain fraction of electricity demand must be met by qualifying resources (e.g., "50% of demand from renewable energy by 2030").
+
+**Resource Selection**: There is far more potential wind and solar capacity in the US than would ever be needed (especially in the western US). Including all possible sites would either:
+
+* Make resources very large with high average costs (lumping expensive and cheap sites together), or
+* Create too many resources (increasing model size and run time)
+
+The solution is to filter to the cheapest sites needed to meet some multiple of regional demand. This gives the model a good selection of low-cost options without overwhelming it with every possible site.
+
 ## Overview
 
 The guided workflow ensures you configure all necessary settings in the correct order:
@@ -23,6 +56,24 @@ Each step builds on the previous ones, with the Regions step being the foundatio
 ## Step 1: Regions
 
 The Regions step allows you to define model regions using two different approaches: **Automatic Clustering** (algorithm-driven) or **Manual Definition** (user-controlled). This is the foundation of your PowerGenome model configuration, determining how plants are aggregated and how model boundaries are defined.
+
+### Why Regions Matter
+
+Model regions are the fundamental geographic units in capacity expansion models. Each region defines:
+
+* **Nodal demand** - The hourly electricity load that must be met in that region
+* **Transmission constraints** - How much power can flow between this region and neighboring regions
+* **Resource aggregation** - Which existing power plants are grouped together within the region
+* **Renewable potential** - What wind and solar resources are available for new construction
+
+The number and boundaries of regions create important trade-offs:
+
+* **Fewer regions** (e.g., 5-10) = Faster model solve times, but less spatial detail and potentially oversimplified transmission constraints
+* **More regions** (e.g., 30-50) = Better representation of transmission bottlenecks and policy boundaries, but longer solve times
+* **Aligned with policy boundaries** = Easier to model state-level policies, but may not reflect transmission network structure
+* **Aligned with transmission** = Better representation of grid operations, but may cross policy jurisdictions
+
+There's no single "correct" number of regions—it depends on your analysis goals, computational resources, and whether you care more about policy boundaries or grid operations.
 
 ### Choosing Your Approach
 
@@ -388,6 +439,47 @@ The Model Setup step allows you to configure the temporal and financial paramete
 * **Model Years**: Comma-separated list of years to model (e.g., 2030, 2035, 2040)
 * **First Planning Years**: Comma-separated list of first planning years corresponding to each model year
 
+### Understanding These Parameters
+
+**Target USD Year (Dollar-Year Alignment)**
+
+All costs in capacity expansion models must be expressed in the same dollar-year to ensure fair comparisons. For example, if you're comparing a solar plant that costs $1,000/kW in 2024 dollars versus a battery that costs $300/kWh in 2020 dollars, you need to adjust one of them to account for inflation.
+
+PowerGenome handles this by:
+
+* Converting all ATB technology costs to your target dollar-year
+* Adjusting fuel price forecasts to the target dollar-year
+* Ensuring that when the model compares options, it's truly comparing costs on an equal basis
+
+Choose a recent year (e.g., 2024) to minimize the need for inflation adjustments.
+
+**UTC Offset (Timezone Considerations)**
+
+All timeseries data (hourly demand, solar generation profiles, wind generation profiles) are stored in UTC (Coordinated Universal Time). This ensures consistency across data sources and prevents timezone confusion when combining data from different regions.
+
+The UTC offset is used primarily for visualization and debugging:
+
+* It shifts timestamps when plotting results so that "noon" appears at local solar noon
+* It helps you verify that peak solar generation aligns with expected local times
+* It does **not** change how the model solves—the optimization always uses UTC timestamps
+
+**Model Years and Planning Periods**
+
+Planning periods define the time windows your model will optimize. Each period has:
+
+* **First Planning Year** - The start of the investment period
+* **Model Year** - The end of the period (the "target" year)
+
+For example, with First Planning Year = 2025 and Model Year = 2030, you're modeling the 2025-2030 period.
+
+How PowerGenome uses these:
+
+* **Demand and fuel prices** - Selected based on the Model Year (representing conditions at the end of the period)
+* **Capital costs** - Averaged across all years in the period (2025-2030 in the example) to represent the "typical" cost of building during that timeframe
+* **Investment decisions** - The model decides what to build in each period to meet demand and policy goals
+
+Multiple planning periods (e.g., 2030, 2035, 2040) allow the model to make sequential decisions, building infrastructure over time rather than all at once.
+
 !!! note
     Model Years and First Planning Years must be lists of the same length. These define the temporal scope of your capacity expansion analysis.
 
@@ -592,6 +684,34 @@ For each fuel (coal, natural gas, distillate, uranium), choose a price scenario:
 
 The ESR Policies step allows you to configure Energy Share Requirements for state-level policies like Renewable Portfolio Standards (RPS) and Clean Energy Standards (CES). This step is optional—uncheck "Include ESR policies" if your analysis doesn't require policy constraints.
 
+### What is ESR?
+
+**ESR (Energy Share Requirement)** is a generalized framework for modeling state-level clean energy policies. It encompasses:
+
+* **RPS (Renewable Portfolio Standard)** - Policies that require a certain percentage of electricity to come from renewable sources (wind, solar, hydro, geothermal, biomass)
+* **CES (Clean Energy Standard)** - Policies that require a certain percentage of electricity to come from low-carbon sources (renewables plus nuclear, CCS-equipped plants, etc.)
+
+For example, a state might have:
+
+* An RPS requiring 50% renewable energy by 2030
+* A CES requiring 80% clean energy by 2040
+
+These policies create constraints in the capacity expansion model: the model must select enough qualifying resources to meet the policy requirements, even if slightly more expensive options would otherwise be preferred.
+
+### Why Use ESR Instead of Separate RPS/CES?
+
+Different states have different policy designs, eligibility rules, and trading arrangements. Some states:
+
+* Can trade renewable energy credits (RECs) with neighboring states
+* Have policies that overlap or transition from RPS to CES over time
+* Apply different multipliers or carve-outs for specific technologies
+
+The ESR framework provides a flexible way to model all these variations using a consistent structure. Instead of hardcoding specific policy types, it allows you to define:
+
+* Which states share trading zones
+* What fraction of demand must be met by qualifying resources
+* Which technologies qualify for each policy type
+
 For detailed technical information about how ESR zones are created and calculated, see the [ESR Policies documentation](esr_policies.md).
 
 ### How ESR Zones Work
@@ -658,10 +778,37 @@ Upload separate files for wind and solar as needed. The resource group JSON file
 
 The Renewables Clustering step builds `renewables_clusters` settings for wind and solar using regional demand shares and the resource group LCOE tables generated in Step 7.
 
+### Why Filter Renewable Resources?
+
+The United States has far more potential wind and solar capacity than would ever be needed in any realistic scenario, especially in the western states. If you included every possible wind and solar site in a capacity expansion model, you would face a dilemma:
+
+**Option 1: Few large resources with high average costs**
+
+* Lump all sites in a region into a handful of large resources (e.g., one "West Texas Wind" resource with 500 GW)
+* Each resource has high average cost because it mixes cheap and expensive sites
+* The model can't selectively choose the best sites—it's all or nothing
+
+**Option 2: Many small resources with accurate costs**
+
+* Represent each site individually (e.g., thousands of 100 MW wind resources)
+* Costs are accurate, but the model becomes too large to solve efficiently
+* Computational time becomes prohibitive for iterative analysis
+
+**The Solution: Smart Filtering**
+
+PowerGenome filters to include only the cheapest sites needed to meet some multiple of regional demand (e.g., 100% or 200% of annual demand). This approach:
+
+* Gives the model a good selection of low-cost options in each region
+* Keeps the number of resources manageable
+* Ensures the model has more capacity available than it would likely select, so it's not artificially constrained
+* Filters out very expensive sites that would never be cost-competitive anyway
+
+The result is a model that can make realistic decisions about which wind and solar resources to build, without being overwhelmed by thousands of unnecessary options.
+
 ### Inputs
 
 * **Annual demand CSV**: The app loads `web/data/reeds_annual_demand_2050.csv` at startup. It must contain `region`, `weather_year`, and `annual_demand_mwh` columns. The `region` values are BA IDs (lowercase). The app averages demand across weather years for each BA, then sums BA demand within each model region.
-* **Wind share (%)** and **Solar share (%)**: Percent of each region's annual demand used to select wind and solar resources. Shares apply to every model region.
+* **Wind share (%)** and **Solar share (%)**: Percent of each region's annual demand used to select wind and solar resources. Shares apply to every model region. For example, 100% means "include enough wind capacity to generate 100% of annual regional demand at average capacity factor."
 * **Average resource size (MW/resource)**: Used to convert selected wind/solar capacity into suggested budget counts. Defaults are 2,000 MW/resource for wind and 5,000 MW/resource for solar. These values are editable, and suggested budgets refresh from the updated inputs.
 * **Wind/Solar budget counts**: Users can edit wind and solar budget totals directly. Leaving a budget blank uses the suggested value.
 
