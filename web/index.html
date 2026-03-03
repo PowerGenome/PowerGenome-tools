@@ -1370,11 +1370,19 @@
     </div>
 
     <!-- Welcome Overlay -->
-    <div id="welcomeOverlay" class="hidden" onclick="closeWelcomeOnBackdrop(event)">
+    <div id="welcomeOverlay"
+         class="hidden"
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="welcomeDialogTitle"
+         onclick="closeWelcomeOnBackdrop(event)">
         <div class="welcome-dialog" onclick="event.stopPropagation()">
             <div class="welcome-header">
-                <div class="welcome-close-x" onclick="closeWelcome()" title="Close">&times;</div>
-                <h2>Welcome to PowerGenome System Design</h2>
+                <button type="button"
+                        class="welcome-close-x"
+                        onclick="closeWelcome()"
+                        aria-label="Close welcome dialog">&times;</button>
+                <h2 id="welcomeDialogTitle">Welcome to PowerGenome System Design</h2>
                 <p>Create complete settings files for capacity expansion modeling</p>
             </div>
             <div class="welcome-body">
