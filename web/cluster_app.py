@@ -1038,10 +1038,17 @@ def update_loading_text(text):
 
 
 def hide_loading():
-    """Hide the loading overlay."""
+    """Hide the loading overlay and show welcome overlay."""
     el = document.getElementById("loading")
     if el:
         el.classList.add("hidden")
+
+    # Show welcome overlay on first load
+    welcome_el = document.getElementById("welcomeOverlay")
+    if welcome_el:
+        welcome_el.classList.remove("hidden")
+
+
 def set_status(message, status_type="info"):
     """Update the status box."""
     el = document.getElementById("statusBox")
