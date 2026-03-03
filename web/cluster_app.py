@@ -7814,9 +7814,13 @@ def generate_resources_settings():
     # Keep resource_data_year separate from target_usd_year for future; default to targetUsdYear for MVP
     resource_financial_case = "Market"
     resource_cap_recovery_years = 20
-    interconnect_capex_mw = int(
-        _get_input_value(document.getElementById("interconnectCapexMw"), 100000)
-    )
+
+    # Read interconnection cost from input field, defaulting to 100000 if not set
+    interconnect_el = document.getElementById("interconnectCapexMw")
+    try:
+        interconnect_capex_mw = int(interconnect_el.value) if interconnect_el and interconnect_el.value else 100000
+    except (ValueError, AttributeError):
+        interconnect_capex_mw = 100000
 
     out = {
         "cluster_with_retired_gens": True,
