@@ -1,0 +1,248 @@
+{
+    "size": [
+        {
+            "data_year": 2024,
+            "technology": "LandbasedWind",
+            "size": 200
+        },
+        {
+            "data_year": 2024,
+            "technology": "OffShoreWind",
+            "size": 500
+        },
+        {
+            "data_year": 2024,
+            "technology": "UtilityPV",
+            "size": 100
+        },
+        {
+            "data_year": 2024,
+            "technology": "CommPV",
+            "size": 0.2
+        },
+        {
+            "data_year": 2024,
+            "technology": "ResPV",
+            "size": 0.0079
+        },
+        {
+            "data_year": 2024,
+            "technology": "CSP",
+            "size": 102
+        },
+        {
+            "data_year": 2024,
+            "technology": "DistributedWind",
+            "size": 2
+        },
+        {
+            "data_year": 2024,
+            "technology": "Biopower",
+            "tech_detail": "Dedicated",
+            "size": 50
+        },
+        {
+            "data_year": 2024,
+            "technology": "Geothermal",
+            "tech_detail": "Hydrothermal Binary",
+            "size": 30
+        },
+        {
+            "data_year": 2024,
+            "technology": "Geothermal",
+            "tech_detail": "Hydrothermal Flash",
+            "size": 40
+        },
+        {
+            "data_year": 2024,
+            "technology": "Geothermal",
+            "tech_detail": "NF-EGS Binary",
+            "size": 30
+        },
+        {
+            "data_year": 2024,
+            "technology": "Geothermal",
+            "tech_detail": "NF-EGS Flash",
+            "size": 40
+        },
+        {
+            "data_year": 2024,
+            "technology": "Geothermal",
+            "tech_detail": "Deep EGS Binary",
+            "size": 30
+        },
+        {
+            "data_year": 2024,
+            "technology": "Geothermal",
+            "tech_detail": "Deep EGS Flash",
+            "size": 40
+        },
+        {
+            "data_year": 2024,
+            "technology": "Hydropower",
+            "tech_detail": "NPD1",
+            "size": 9.85
+        },
+        {
+            "data_year": 2024,
+            "technology": "Hydropower",
+            "tech_detail": "NPD2",
+            "size": 9.51
+        },
+        {
+            "data_year": 2024,
+            "technology": "Hydropower",
+            "tech_detail": "NPD3",
+            "size": 6.31
+        },
+        {
+            "data_year": 2024,
+            "technology": "Hydropower",
+            "tech_detail": "NPD4",
+            "size": 2.03
+        },
+        {
+            "data_year": 2024,
+            "technology": "Hydropower",
+            "tech_detail": "NPD5",
+            "size": 86.19
+        },
+        {
+            "data_year": 2024,
+            "technology": "Hydropower",
+            "tech_detail": "NPD6",
+            "size": 66.52
+        },
+        {
+            "data_year": 2024,
+            "technology": "Hydropower",
+            "tech_detail": "NPD7",
+            "size": 20.11
+        },
+        {
+            "data_year": 2024,
+            "technology": "Hydropower",
+            "tech_detail": "NPD8",
+            "size": 1.70
+        },
+        {
+            "data_year": 2024,
+            "technology": "Hydropower",
+            "tech_detail": "NSD1",
+            "size": 3.72
+        },
+        {
+            "data_year": 2024,
+            "technology": "Hydropower",
+            "tech_detail": "NSD2",
+            "size": 44.12
+        },
+        {
+            "data_year": 2024,
+            "technology": "Hydropower",
+            "tech_detail": "NSD3",
+            "size": 4.25
+        },
+        {
+            "data_year": 2024,
+            "technology": "Hydropower",
+            "tech_detail": "NSD4",
+            "size": 94.04
+        },
+        {
+            "data_year": 2024,
+            "technology": "Coal",
+            "tech_detail": "Pulverized Coal",
+            "size": 650
+        },
+        {
+            "data_year": 2024,
+            "technology": "Coal",
+            "tech_detail": "IGCC",
+            "size": 641
+        },
+        {
+            "data_year": 2024,
+            "technology": "Coal",
+            "tech_detail": "IGCC with 90% CCS",
+            "size": 499
+        },
+        {
+            "data_year": 2024,
+            "technology": "NaturalGas",
+            "tech_detail": "Combustion Turbine (F-Frame)",
+            "size": 233
+        },
+        {
+            "data_year": 2024,
+            "technology": "NaturalGas",
+            "tech_detail": "2-on-1 Combined Cycle (F-Frame)",
+            "size": 727
+        },
+        {
+            "data_year": 2024,
+            "technology": "NaturalGas",
+            "tech_detail": "2-on-1 Combined Cycle (H-Frame)",
+            "size": 992
+        },
+        {
+            "data_year": 2024,
+            "technology": "NaturalGas",
+            "tech_detail": "1-on-1 Combined Cycle (H-Frame)",
+            "size": 694
+        },
+        {
+            "data_year": 2024,
+            "technology": "NaturalGas",
+            "tech_detail": "2-on-1 Combined Cycle (F-Frame) 95% CCS",
+            "size": 640
+        },
+        {
+            "data_year": 2024,
+            "technology": "NaturalGas",
+            "tech_detail": "2-on-1 Combined Cycle (F-Frame) 97% CCS",
+            "size": 637
+        },
+        {
+            "data_year": 2024,
+            "technology": "NaturalGas",
+            "tech_detail": "2-on-1 Combined Cycle (H-Frame) 95% CCS",
+            "size": 877
+        },
+        {
+            "data_year": 2024,
+            "technology": "NaturalGas",
+            "tech_detail": "2-on-1 Combined Cycle (H-Frame) 97% CCS",
+            "size": 873
+        },
+        {
+            "data_year": 2024,
+            "technology": "NaturalGas",
+            "tech_detail": "1-on-1 Combined Cycle (H-Frame) 95% CCS",
+            "size": 572
+        },
+        {
+            "data_year": 2024,
+            "technology": "NaturalGas",
+            "tech_detail": "1-on-1 Combined Cycle (H-Frame) 97% CCS",
+            "size": 575
+        },
+        {
+            "data_year": 2024,
+            "technology": "NaturalGas",
+            "tech_detail": "Fuel Cell",
+            "size": 650
+        },
+        {
+            "data_year": 2024,
+            "technology": "NaturalGas",
+            "tech_detail": "Fuel Cell 98% CCS",
+            "size": 650
+        },
+        {
+            "data_year": 2024,
+            "technology": "Battery",
+            "size": 60
+        }
+    ]
+}
