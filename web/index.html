@@ -831,6 +831,7 @@
             color: white;
             padding: 28px 32px;
             border-radius: var(--radius-md) var(--radius-md) 0 0;
+            position: relative;
         }
 
         .welcome-header h2 {
@@ -838,6 +839,7 @@
             font-size: 24px;
             font-weight: 700;
             letter-spacing: -0.02em;
+            padding-right: 30px;
         }
 
         .welcome-header p {
@@ -845,6 +847,32 @@
             font-size: 14px;
             opacity: 0.9;
             line-height: 1.5;
+        }
+
+        .welcome-close-x {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 32px;
+            height: 32px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 18px;
+            color: rgba(255, 255, 255, 0.9);
+            transition: all 0.15s;
+            font-weight: 400;
+            line-height: 1;
+        }
+
+        .welcome-close-x:hover {
+            background: rgba(255, 255, 255, 0.2);
+            border-color: rgba(255, 255, 255, 0.4);
+            color: white;
         }
 
         .welcome-body {
@@ -1341,9 +1369,10 @@
     </div>
 
     <!-- Welcome Overlay -->
-    <div id="welcomeOverlay" class="hidden">
-        <div class="welcome-dialog">
+    <div id="welcomeOverlay" class="hidden" onclick="closeWelcomeOnBackdrop(event)">
+        <div class="welcome-dialog" onclick="event.stopPropagation()">
             <div class="welcome-header">
+                <div class="welcome-close-x" onclick="closeWelcome()" title="Close">&times;</div>
                 <h2>Welcome to PowerGenome System Design</h2>
                 <p>Create complete settings files for capacity expansion modeling</p>
             </div>
@@ -2699,6 +2728,13 @@
 
         function closeWelcome() {
             document.getElementById('welcomeOverlay').classList.add('hidden');
+        }
+
+        function closeWelcomeOnBackdrop(event) {
+            // Only close if clicking directly on the overlay (not the dialog)
+            if (event.target.id === 'welcomeOverlay') {
+                closeWelcome();
+            }
         }
 
         function toggleCommitRow() {
