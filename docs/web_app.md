@@ -496,8 +496,8 @@ The Existing Plants step allows you to cluster existing generators within each m
 5. **Adjust thresholds (optional)**: Modify *Capacity Threshold* (MW) and *Heat-rate IQR Threshold* to control when generators are suggested for splitting.
 6. **Run clustering**: Click *Run Plant Clustering* to generate cluster assignments.
 7. **Review suggestions**: Above the Plant YAML output, click **Show** next to "Top candidates for more splits" to expand the section (it is hidden by default). Each row shows a tech/region group that could benefit from additional clusters, along with:
-    - A **bubble chart** (to the right of each row) showing individual generators in the group. The x-axis is heat rate (MMBtu/MWh), all bubbles share the same vertical position, bubble size reflects plant capacity, and bubble color indicates cluster assignment.
-    - A **Clusters** number input pre-filled with the current cluster count for that group. Change this value to immediately re-assign clusters — both the bubble chart and the Plant YAML update in real time.
+    * A **bubble chart** (to the right of each row) showing individual generators in the group. The x-axis is heat rate (MMBtu/MWh), all bubbles share the same vertical position, bubble size reflects plant capacity, and bubble color indicates cluster assignment.
+    * A **Clusters** number input pre-filled with the current cluster count for that group. Change this value to immediately re-assign clusters — both the bubble chart and the Plant YAML update in real time.
 8. **Export**: Copy or download the Plant YAML output.
 
 !!! tip
@@ -763,6 +763,7 @@ The results are saved in parquet files that include:
 
 * **Interconnection costs** - Estimated cost to connect each site to the grid
 * **LCOE (Levelized Cost of Energy)** - Approximate total cost based on:
+
   * ATB resource costs (capital and O&M)
   * Interconnection costs
   * Average capacity factor of the resource at that location
