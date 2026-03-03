@@ -125,6 +125,112 @@
             letter-spacing: 0.05em;
         }
 
+        /* ── Welcome overlay ────────────────────────────────── */
+        #welcome-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(12, 30, 60, 0.72);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 8000;
+            padding: 20px;
+        }
+
+        #welcome-overlay.hidden {
+            display: none;
+        }
+
+        #welcome-dialog {
+            background: var(--surface);
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-md);
+            max-width: 560px;
+            width: 100%;
+            padding: 32px 36px 28px;
+        }
+
+        #welcome-dialog h2 {
+            margin: 0 0 6px;
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--navy);
+            letter-spacing: -0.02em;
+        }
+
+        #welcome-dialog .welcome-subtitle {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 20px;
+        }
+
+        #welcome-dialog p {
+            margin: 0 0 14px;
+            font-size: 13.5px;
+            line-height: 1.6;
+            color: var(--text);
+        }
+
+        #welcome-dialog ul {
+            margin: 0 0 14px;
+            padding-left: 20px;
+            font-size: 13.5px;
+            line-height: 1.7;
+            color: var(--text);
+        }
+
+        #welcome-dialog .welcome-links {
+            display: flex;
+            gap: 10px;
+            margin: 20px 0 24px;
+            flex-wrap: wrap;
+        }
+
+        #welcome-dialog .welcome-link {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--blue);
+            text-decoration: none;
+            padding: 7px 13px;
+            border: 1px solid var(--info-border);
+            border-radius: var(--radius);
+            background: var(--info-bg);
+            transition: all 0.15s;
+        }
+
+        #welcome-dialog .welcome-link:hover {
+            background: #dce8ff;
+            border-color: var(--blue);
+        }
+
+        #welcome-dialog .welcome-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            border-top: 1px solid var(--border);
+            padding-top: 18px;
+        }
+
+        #welcome-dialog .welcome-skip {
+            font-size: 12px;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        #welcome-dialog .welcome-skip input {
+            margin: 0;
+            cursor: pointer;
+        }
+
+        #welcome-dialog .welcome-skip label {
+            margin: 0;
+            font-weight: normal;
+            cursor: pointer;
+        }
+
         /* ── Navbar ─────────────────────────────────────────── */
         #navbar {
             background: var(--navy);
@@ -1174,6 +1280,36 @@
     <div id="loading">
         <div class="spinner"></div>
         <div id="loadingText">Loading PyScript and dependencies...</div>
+    </div>
+
+    <!-- Welcome overlay -->
+    <div id="welcome-overlay" class="hidden">
+        <div id="welcome-dialog">
+            <h2>Welcome to PowerGenome System Design</h2>
+            <p class="welcome-subtitle">A browser-based tool for building capacity expansion model inputs</p>
+            <p>
+                This tool is designed to help you:
+            </p>
+            <ul>
+                <li><strong>Design model regions</strong> — select and group Balancing Authorities into model zones that define load, transmission constraints, and resource availability</li>
+                <li><strong>Calculate wind &amp; solar interconnection costs</strong> — based on the geographic layout of your chosen regions</li>
+                <li><strong>Create a baseline set of PowerGenome settings files</strong> — ready-to-use YAML configuration files that you can further customize for your study</li>
+            </ul>
+            <p>
+                The wizard guides you through nine steps. Each step builds on the previous ones, so work through them in order. You can return to earlier steps at any time to adjust your configuration.
+            </p>
+            <div class="welcome-links">
+                <a class="welcome-link" href="https://gschivley.github.io/PowerGenome-tools/" target="_blank" rel="noopener noreferrer" aria-label="App Documentation (opens in new tab)">📖 App Documentation ↗</a>
+                <a class="welcome-link" href="https://powergenome.github.io/PowerGenome/beta/" target="_blank" rel="noopener noreferrer" aria-label="PowerGenome Documentation (opens in new tab)">⚡ PowerGenome Docs ↗</a>
+            </div>
+            <div class="welcome-footer">
+                <div class="welcome-skip">
+                    <input type="checkbox" id="welcomeSkipCheckbox">
+                    <label for="welcomeSkipCheckbox">Don't show this again</label>
+                </div>
+                <button class="btn-primary" id="welcomeGetStartedBtn">Get Started →</button>
+            </div>
+        </div>
     </div>
 
     <!-- Navbar -->
@@ -2694,6 +2830,23 @@
                 }
             });
         })();
+    </script>
+
+    <!-- Welcome overlay logic -->
+    <script>
+        function showWelcome() {
+            if (localStorage.getItem('pg_welcome_skip') === '1') return;
+            document.getElementById('welcome-overlay').classList.remove('hidden');
+        }
+        function dismissWelcome() {
+            if (document.getElementById('welcomeSkipCheckbox').checked) {
+                localStorage.setItem('pg_welcome_skip', '1');
+            }
+            document.getElementById('welcome-overlay').classList.add('hidden');
+        }
+        document.getElementById('welcomeGetStartedBtn').addEventListener('click', dismissWelcome);
+        // Expose for cluster_app.py
+        window.showWelcome = showWelcome;
     </script>
 
     <!-- PyScript config and app -->

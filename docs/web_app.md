@@ -4,6 +4,18 @@ PowerGenome System Design is a comprehensive web-based interface for building co
 
 [Launch Web App](https://gschivley.github.io/PowerGenome-tools/web/){ .md-button .md-button--primary }
 
+## What Is This Tool?
+
+**Capacity expansion models** are optimization tools used in energy planning. They find the least-cost mix of generation, storage, and transmission investments that can reliably meet future electricity demand while satisfying constraints such as emissions limits, reliability standards, and policy requirements. Examples include GenX, Switch, and TEMOA.
+
+**[PowerGenome](https://powergenome.github.io/PowerGenome/beta/)** is an open-source ETL (extract, transform, load) tool that assembles the inputs these models need — pulling together data on existing generators, fuel prices, transmission capacity, renewable resource availability, and demand — and writing them out as model-ready files.
+
+**This web tool** helps you create a basic set of PowerGenome settings files without writing any configuration by hand. Specifically, it helps you:
+
+- Design model regions by grouping Balancing Authorities (BAs) using transmission data or manual assignment
+- Calculate wind and solar interconnection costs based on the geography of your chosen regions
+- Generate a complete starting set of PowerGenome settings YAML files that you can further customize
+
 ## Overview
 
 The guided workflow ensures you configure all necessary settings in the correct order:
@@ -23,6 +35,16 @@ Each step builds on the previous ones, with the Regions step being the foundatio
 ## Step 1: Regions
 
 The Regions step allows you to define model regions using two different approaches: **Automatic Clustering** (algorithm-driven) or **Manual Definition** (user-controlled). This is the foundation of your PowerGenome model configuration, determining how plants are aggregated and how model boundaries are defined.
+
+!!! info "Why geographic zones matter"
+    The regions you define here are the spatial building blocks of the entire model. Each zone determines:
+
+    - **Total hourly load** — demand is aggregated from all Balancing Authorities in the zone
+    - **Transmission constraints** — flow limits between zones come from the underlying BA interconnections
+    - **Existing resources** — generators are assigned to whichever zone contains their BA
+    - **New-build renewables** — available wind and solar sites are filtered to those within each zone
+
+    Choosing region boundaries that reflect how the grid is actually operated — and the policies that apply to it — is one of the most consequential decisions in model setup.
 
 ### Choosing Your Approach
 
@@ -391,6 +413,15 @@ The Model Setup step allows you to configure the temporal and financial paramete
 !!! note
     Model Years and First Planning Years must be lists of the same length. These define the temporal scope of your capacity expansion analysis.
 
+!!! info "Planning periods"
+    Each entry in *Model Years* defines a planning period with a start year (*First Planning Year*) and an end year (*Model Year*). PowerGenome uses the **end year** when selecting demand projections and fuel prices. **Capital costs** from the ATB are averaged over all years in the period (from the first planning year through the model year), reflecting that investment decisions made today have costs spread across multiple years.
+
+!!! info "Dollar-year alignment"
+    Cost data comes from many different sources — ATB capital costs, fuel price forecasts, O&M data — each potentially reported in different dollar years. PowerGenome adjusts all values to your chosen **Target USD Year** so they can be meaningfully compared and combined. Choose the year that best matches your analysis context (e.g., the year of your study or a standard year used by your organization).
+
+!!! note "Timeseries data and UTC"
+    All timeseries data in PowerGenome (demand profiles, renewable generation, etc.) are stored in **UTC**. The *UTC Offset* you enter here is only used for display purposes — for example, making solar generation plots easier to read in local time. It does not shift the underlying data used for model calculations.
+
 ## Step 3: Existing Plants
 
 The Existing Plants step allows you to cluster existing generators within each model region. This reduces model complexity while preserving the operational diversity of the fleet.
@@ -592,6 +623,14 @@ For each fuel (coal, natural gas, distillate, uranium), choose a price scenario:
 
 The ESR Policies step allows you to configure Energy Share Requirements for state-level policies like Renewable Portfolio Standards (RPS) and Clean Energy Standards (CES). This step is optional—uncheck "Include ESR policies" if your analysis doesn't require policy constraints.
 
+!!! info "What is an ESR?"
+    **ESR (Energy Share Requirement)** is a generalized policy constraint requiring that some fraction of electricity generation come from qualifying resources. It captures two common policy types under a single framework:
+
+    - **RPS (Renewable Portfolio Standard)**: Requires a specified fraction of generation from renewable sources (wind, solar, hydro, etc.)
+    - **CES (Clean Energy Standard)**: Requires a specified fraction from low- or zero-carbon sources, which may include nuclear and CCS in addition to renewables
+
+    Using ESR as a generalized form lets PowerGenome model both policy types consistently.
+
 For detailed technical information about how ESR zones are created and calculated, see the [ESR Policies documentation](esr_policies.md).
 
 ### How ESR Zones Work
@@ -657,6 +696,11 @@ Upload separate files for wind and solar as needed. The resource group JSON file
 ## Step 8: Renewables Clustering
 
 The Renewables Clustering step builds `renewables_clusters` settings for wind and solar using regional demand shares and the resource group LCOE tables generated in Step 7.
+
+!!! info "Why filter renewables resources?"
+    There is far more available wind and solar capacity across the US than any model would ever build — especially in the western US. Including every possible site would make the model unnecessarily large and dilute the quality of resource cost averages. At the same time, you want to give the model enough choices that it can find a genuinely least-cost portfolio.
+
+    A practical approach is to include only the **cheapest sites** sufficient to meet some target fraction of each region's annual demand. This keeps the model tractable while ensuring the optimizer has access to the best resources at realistic costs — without swamping it with marginal or very expensive sites it would never select anyway.
 
 ### Inputs
 

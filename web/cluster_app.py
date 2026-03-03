@@ -9431,6 +9431,8 @@ async def main():
 
         # Done loading
         hide_loading()
+        if hasattr(window, "showWelcome"):
+            window.showWelcome()
         set_status(
             "Ready! Drag on the map to select BAs, or switch to Click mode for individual selection.",
             "info",
