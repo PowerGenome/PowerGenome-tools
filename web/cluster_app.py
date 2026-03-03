@@ -7814,7 +7814,9 @@ def generate_resources_settings():
     # Keep resource_data_year separate from target_usd_year for future; default to targetUsdYear for MVP
     resource_financial_case = "Market"
     resource_cap_recovery_years = 20
-    interconnect_capex_mw = 100000
+    interconnect_capex_mw = int(
+        _get_input_value(document.getElementById("interconnectCapexMw"), 100000)
+    )
 
     out = {
         "cluster_with_retired_gens": True,

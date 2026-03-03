@@ -47,7 +47,7 @@ The guided workflow ensures you configure all necessary settings in the correct 
 4. **New Resources** - Select new-build technologies and define custom resources
 5. **Fuels** - Choose fuel price scenarios
 6. **ESR Policies** - Configure Energy Share Requirements for state-level policies (optional)
-7. **Resource Groups** - Define region-level inputs and LCOE adjustments for resource group outputs
+7. **Interconnection** - Configure default interconnection costs and generate resource group files for wind and solar
 8. **Renewables Clustering** - Build renewables_clusters settings using demand shares and resource group LCOE tables
 9. **Export** - Generate and download complete settings YAML files
 
@@ -743,9 +743,33 @@ The ESR step generates `emission_policies.csv` containing:
 * **Policy requirements**: Fraction of demand that must be met by qualifying resources
 * **Technology tags**: Updated in `resource_tags.yml` to mark qualifying technologies
 
-## Step 7: Resource Groups
+## Step 7: Interconnection
 
-The Resource Groups step lets you define resource group inputs for each model region and generate the supporting LCOE tables.
+The Interconnection step allows you to configure interconnection costs for your model resources and generate the resource group files needed for wind and solar resources.
+
+### Default Interconnection Cost
+
+The default interconnection cost applies to resources like natural gas, batteries, or nuclear that don't have specific geospatial locations. This value is written to the `interconnect_capex_mw` setting in `resources.yml`.
+
+* **Default value**: $100,000/MW
+* **Editable**: You can adjust this value based on your analysis needs
+* **Documentation**: See [PowerGenome's interconnection cost documentation](https://powergenome.github.io/PowerGenome/beta/reference/settings/new-build/#interconnection-costs) for advanced configuration options
+
+### Geospatial Resource Files
+
+For wind and solar resources with specific geospatial locations and generation profiles tied to those locations, interconnection costs are calculated dynamically based on how regions are aggregated. These calculations use the fast interconnection algorithm to estimate the cost of connecting each candidate project area (CPA) to the transmission network.
+
+The results are saved in parquet files that include:
+
+* **Interconnection costs** - Estimated cost to connect each site to the grid
+* **LCOE (Levelized Cost of Energy)** - Approximate total cost based on:
+  * ATB resource costs (capital and O&M)
+  * Interconnection costs
+  * Average capacity factor of the resource at that location
+
+These parquet files, along with accompanying JSON files containing generation profiles and site metadata, are referred to as **"Resource Group" files**. While this terminology may not be widely familiar, it's the term used within PowerGenome to refer to these geospatially-explicit renewable resource datasets.
+
+**Why LCOE matters**: The LCOE values calculated in this step are used in the "Renewables" tab (Step 8) to select the lowest-cost sites to include as resources in each model region. By filtering to the cheapest sites needed to meet some multiple of regional demand, the model gets a good selection of cost-effective options without being overwhelmed by every possible site.
 
 ### Inputs
 

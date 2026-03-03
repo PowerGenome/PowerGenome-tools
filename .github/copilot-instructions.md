@@ -7,7 +7,7 @@ Web app in `/web` only. For detailed user documentation see [docs/web_app.md](..
 - **Browser-based**: Runs entirely in-browser via PyScript/Pyodide; no server needed.
 - **Core files**: UI scaffolding in [index.html](../web/index.html), logic in [cluster_app.py](../web/cluster_app.py).
 - **Data sources**: Loads GeoJSON, CSVs, and JSON from `web/data/` (BA boundaries, transmission, plants, ATB, fuels).
-- **Wizard flow**: Multi-step wizard (Regions → Model Setup → Existing Plants → New Resources → Fuels → ESR Policies → Resource Groups → Renewables Clustering → Export) guides users to build PowerGenome settings YAML files.
+- **Wizard flow**: Multi-step wizard (Regions → Model Setup → Existing Plants → New Resources → Fuels → ESR Policies → Interconnection → Renewables Clustering → Export) guides users to build PowerGenome settings YAML files.
 
 ## Key Workflow Concepts
 1. **Regions** are foundational—users select BAs and either cluster them algorithmically or manually assign them to model regions.
