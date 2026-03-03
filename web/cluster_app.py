@@ -7316,14 +7316,29 @@ async def _compute_renewables_clusters():
     try:
         t_start = time.perf_counter()
         window.console.log("Renewables: _compute_renewables_clusters() started")
-        region_aggs = _get_region_aggregations_or_raise()
-        if state.resource_group_assignments is None:
-            set_renewables_status(
-                "Resource group assignments not cached. "
-                "Please re-run 'Generate Resource Groups' first.",
-                "error",
-            )
-            return
+        try:
+            region_aggs = _get_region_aggregations_or_raise()
+        except Exception:
+            # Provide a better error message if LCOE files are uploaded
+            has_lcoe_wind = state.uploaded_lcoe_onshorewind is not None
+            has_lcoe_solar = state.uploaded_lcoe_solar is not None
+            if has_lcoe_wind or has_lcoe_solar:
+                lcoe_status = []
+                if has_lcoe_wind:
+                    lcoe_status.append("Wind LCOE uploaded")
+                if has_lcoe_solar:
+                    lcoe_status.append("Solar LCOE uploaded")
+                raise Exception(
+                    f"Model regions required: Complete Step 1 (Regions) to define model regions. "
+                    f"You have {', '.join(lcoe_status)}, and they will be used once regions are defined. "
+                    f"You can either run automatic clustering or use Manual Definition mode to quickly create regions."
+                )
+            else:
+                raise Exception(
+                    "Run Step 1 (Regions) first to define model regions, then return to Step 8 (Renewables Clustering)."
+                )
+
+        # Check if annual demand data is loaded
         if not state.reeds_annual_demand_avg:
             set_renewables_status("Annual demand data not loaded.", "error")
             return
@@ -7346,6 +7361,10 @@ async def _compute_renewables_clusters():
         pending_capacity_summary = {}
         curve_data_summary = {}
         floor_notes = []
+
+        # Track whether we have any LCOE data at all
+        has_any_lcoe_data = False
+
         for tech, share in [("landbasedwind", wind_share), ("utilitypv", solar_share)]:
             config = RENEWABLES_TECH_CONFIG[tech]
             avg_resource_mw = (
@@ -7356,7 +7375,13 @@ async def _compute_renewables_clusters():
             t_tech_start = time.perf_counter()
             lcoe_df = _load_resource_group_lcoe_df(config["resource_key"])
             if lcoe_df is None:
+                window.console.log(
+                    f"Renewables: No LCOE data available for {tech}. "
+                    f"Skipping this technology."
+                )
                 continue
+
+            has_any_lcoe_data = True
 
             lcoe_df = lcoe_df[["region", "cf", "lcoe", "capacity_mw"]].copy()
             lcoe_df["region"] = lcoe_df["region"].astype(str)
@@ -7567,6 +7592,15 @@ async def _compute_renewables_clusters():
             window.console.log(
                 f"Renewables: {tech} done in {(t_tech_end - t_tech_start):.2f}s"
             )
+
+        # Check if we have any LCOE data at all
+        if not has_any_lcoe_data:
+            set_renewables_status(
+                "No LCOE data available. Either generate resource groups in Step 7 "
+                "or upload LCOE parquet/CSV files for wind and/or solar.",
+                "error",
+            )
+            return
 
         state.renewables_clusters = clusters
         state.renewables_clusters_info = summary
