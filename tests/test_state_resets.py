@@ -455,3 +455,46 @@ class TestRenderESRResultsUIClearing:
             assert mock_zones_list.innerHTML == ""
         finally:
             mock_js.document.getElementById = original_get_elem
+
+
+class TestResetUploadedLcoeState:
+    """Test that reset_region_dependent_state() clears uploaded LCOE DataFrames."""
+
+    def test_reset_region_dependent_state_clears_uploaded_lcoe(self, cluster_app):
+        """reset_region_dependent_state() sets both uploaded LCOE attrs to None."""
+        import pandas as pd
+
+        cluster_app.state.uploaded_lcoe_onshorewind = pd.DataFrame({
+            "region": ["r1", "r2"],
+            "cpa_mw": [100.0, 200.0],
+            "cf": [0.30, 0.35],
+            "lcoe": [40.0, 38.0],
+        })
+        cluster_app.state.uploaded_lcoe_solar = pd.DataFrame({
+            "region": ["s1"],
+            "cpa_mw": [300.0],
+            "cf": [0.22],
+            "lcoe": [35.0],
+        })
+
+        cluster_app.reset_region_dependent_state()
+
+        assert cluster_app.state.uploaded_lcoe_onshorewind is None
+        assert cluster_app.state.uploaded_lcoe_solar is None
+
+    def test_uploaded_lcoe_initial_state_is_none(self, cluster_app):
+        """AppState initialises both uploaded LCOE attributes to None."""
+        fresh_state = cluster_app.AppState()
+
+        assert fresh_state.uploaded_lcoe_onshorewind is None
+        assert fresh_state.uploaded_lcoe_solar is None
+
+    def test_reset_does_not_affect_uploaded_lcoe_if_already_none(self, cluster_app):
+        """reset_region_dependent_state() is idempotent when attrs are already None."""
+        cluster_app.state.uploaded_lcoe_onshorewind = None
+        cluster_app.state.uploaded_lcoe_solar = None
+
+        cluster_app.reset_region_dependent_state()
+
+        assert cluster_app.state.uploaded_lcoe_onshorewind is None
+        assert cluster_app.state.uploaded_lcoe_solar is None

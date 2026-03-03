@@ -107,6 +107,8 @@ class AppState:
         self.fast_interconnection_data = None  # cached parquet/csv dataframes
         self.resource_group_files = {}  # filename -> bytes or str
         self.resource_group_assignments = None  # cached assignments dataframe
+        self.uploaded_lcoe_onshorewind = None  # user-uploaded wind LCOE DataFrame
+        self.uploaded_lcoe_solar = None  # user-uploaded solar LCOE DataFrame
 
         # Renewables clustering inputs
         self.reeds_annual_demand_df = None  # BA-level annual demand by weather year
@@ -3260,6 +3262,8 @@ def reset_region_dependent_state():
     # Resource groups depend on region aggregations
     state.resource_group_files = {}
     state.resource_group_assignments = None
+    state.uploaded_lcoe_onshorewind = None
+    state.uploaded_lcoe_solar = None
 
     # Renewables clustering depends on regions and resource groups
     state.renewables_clusters = None
@@ -6110,41 +6114,58 @@ def _build_region_demand_map(region_aggs):
 
 
 def _load_resource_group_lcoe_df(resource_key):
-    """Load LCOE data for a resource from cached assignments.
+    """Load LCOE data for a resource from cached assignments or uploaded files.
 
-    NOTE: Parquet fallback is intentionally removed.  Decoding large parquet
-    files in Pyodide/WASM can hang the browser for hours.  Users must
-    (re-)run resource-group generation so that assignments are cached in
-    ``state.resource_group_assignments``.
+    Prefers in-session assignments cached by resource-group generation.
+    Falls back to user-uploaded LCOE DataFrames when assignments are absent.
     """
-    if state.resource_group_assignments is None:
+    # --- primary path: in-session assignments ---
+    if state.resource_group_assignments is not None:
+        assignments = state.resource_group_assignments
+        required = {"tech", "model_region", "cpa_mw", "cf", "lcoe"}
+        if not required <= set(assignments.columns):
+            window.console.log(
+                f"Renewables: assignments missing columns "
+                f"{sorted(required - set(assignments.columns))}"
+            )
+            return None
+
+        df = assignments[assignments["tech"] == resource_key][
+            ["model_region", "cpa_mw", "cf", "lcoe"]
+        ].copy()
+        if df.empty:
+            window.console.log(
+                f"Renewables: no rows for tech={resource_key} in assignments"
+            )
+            return None
+
+        df = df.rename(columns={"model_region": "region", "cpa_mw": "capacity_mw"})
         window.console.log(
-            f"Renewables: no cached assignments – cannot load {resource_key}"
+            f"Renewables: loaded {resource_key} from assignments, rows={len(df):,}"
+        )
+        return df
+
+    # --- fallback path: user-uploaded LCOE file ---
+    uploaded = None
+    if resource_key == "onshorewind":
+        uploaded = state.uploaded_lcoe_onshorewind
+    elif resource_key == "solar":
+        uploaded = state.uploaded_lcoe_solar
+
+    if uploaded is None:
+        window.console.log(
+            f"Renewables: no cached assignments and no uploaded file for {resource_key}"
         )
         return None
 
-    assignments = state.resource_group_assignments
-    required = {"tech", "model_region", "cpa_mw", "cf", "lcoe"}
-    if not required <= set(assignments.columns):
-        window.console.log(
-            f"Renewables: assignments missing columns "
-            f"{sorted(required - set(assignments.columns))}"
-        )
-        return None
-
-    df = assignments[assignments["tech"] == resource_key][
-        ["model_region", "cpa_mw", "cf", "lcoe"]
-    ].copy()
+    df = uploaded[["region", "cpa_mw", "cf", "lcoe"]].copy()
     if df.empty:
-        window.console.log(
-            f"Renewables: no rows for tech={resource_key} in assignments"
-        )
+        window.console.log(f"Renewables: uploaded file for {resource_key} is empty")
         return None
 
-    df = df.rename(columns={"model_region": "region", "cpa_mw": "capacity_mw"})
-    # df["capacity_mw"] = df["cpa_mw"]
+    df = df.rename(columns={"cpa_mw": "capacity_mw"})
     window.console.log(
-        f"Renewables: loaded {resource_key} from assignments, rows={len(df):,}"
+        f"Renewables: loaded {resource_key} from uploaded file, rows={len(df):,}"
     )
     return df
 
@@ -7391,14 +7412,29 @@ async def _compute_renewables_clusters():
     try:
         t_start = time.perf_counter()
         window.console.log("Renewables: _compute_renewables_clusters() started")
-        region_aggs = _get_region_aggregations_or_raise()
-        if state.resource_group_assignments is None:
-            set_renewables_status(
-                "Resource group assignments not cached. "
-                "Please re-run 'Generate Resource Groups' first.",
-                "error",
-            )
-            return
+        try:
+            region_aggs = _get_region_aggregations_or_raise()
+        except Exception:
+            # Provide a better error message if LCOE files are uploaded
+            has_lcoe_wind = state.uploaded_lcoe_onshorewind is not None
+            has_lcoe_solar = state.uploaded_lcoe_solar is not None
+            if has_lcoe_wind or has_lcoe_solar:
+                lcoe_status = []
+                if has_lcoe_wind:
+                    lcoe_status.append("Wind LCOE uploaded")
+                if has_lcoe_solar:
+                    lcoe_status.append("Solar LCOE uploaded")
+                raise Exception(
+                    f"Model regions required: Complete Step 1 (Regions) to define model regions. "
+                    f"You have {', '.join(lcoe_status)}, and they will be used once regions are defined. "
+                    f"You can either run automatic clustering or use Manual Definition mode to quickly create regions."
+                )
+            else:
+                raise Exception(
+                    "Run Step 1 (Regions) first to define model regions, then return to Step 8 (Renewables Clustering)."
+                )
+
+        # Check if annual demand data is loaded
         if not state.reeds_annual_demand_avg:
             set_renewables_status("Annual demand data not loaded.", "error")
             return
@@ -7421,6 +7457,10 @@ async def _compute_renewables_clusters():
         pending_capacity_summary = {}
         curve_data_summary = {}
         floor_notes = []
+
+        # Track whether we have any LCOE data at all
+        has_any_lcoe_data = False
+
         for tech, share in [("landbasedwind", wind_share), ("utilitypv", solar_share)]:
             config = RENEWABLES_TECH_CONFIG[tech]
             avg_resource_mw = (
@@ -7431,7 +7471,13 @@ async def _compute_renewables_clusters():
             t_tech_start = time.perf_counter()
             lcoe_df = _load_resource_group_lcoe_df(config["resource_key"])
             if lcoe_df is None:
+                window.console.log(
+                    f"Renewables: No LCOE data available for {tech}. "
+                    f"Skipping this technology."
+                )
                 continue
+
+            has_any_lcoe_data = True
 
             lcoe_df = lcoe_df[["region", "cf", "lcoe", "capacity_mw"]].copy()
             lcoe_df["region"] = lcoe_df["region"].astype(str)
@@ -7642,6 +7688,15 @@ async def _compute_renewables_clusters():
             window.console.log(
                 f"Renewables: {tech} done in {(t_tech_end - t_tech_start):.2f}s"
             )
+
+        # Check if we have any LCOE data at all
+        if not has_any_lcoe_data:
+            set_renewables_status(
+                "No LCOE data available. Either generate resource groups in Step 7 "
+                "or upload LCOE parquet/CSV files for wind and/or solar.",
+                "error",
+            )
+            return
 
         state.renewables_clusters = clusters
         state.renewables_clusters_info = summary
@@ -8413,29 +8468,45 @@ async def _fetch_parquet_df(url):
         raise Exception(f"Failed to load parquet: {url} ({response.status})")
     buffer = await response.arrayBuffer()
     data = bytes(Uint8Array.new(buffer).to_py())
+
+    # First, try with any available parquet engine (pyarrow, fastparquet, duckdb)
     try:
         return pd.read_parquet(BytesIO(data))
-    except Exception:
-        import os
-        import uuid
+    except Exception as e:
+        initial_error = str(e)
 
-        import duckdb
-
-        tmp_dir = "/tmp"
+    # If that fails, try loading parquet engines from Pyodide
+    parquet_ready = False
+    for pkg in ["pyarrow", "fastparquet"]:
         try:
-            os.makedirs(tmp_dir, exist_ok=True)
+            __import__(pkg)
+            parquet_ready = True
+            break
         except Exception:
             pass
-        tmp_path = f"{tmp_dir}/pg_parquet_{uuid.uuid4().hex}.parquet"
-        with open(tmp_path, "wb") as f:
-            f.write(data)
-        try:
-            return duckdb.read_parquet(tmp_path).df()
-        finally:
+
+    if not parquet_ready:
+        # Try loading from Pyodide
+        for pkg in ["pyarrow", "fastparquet"]:
             try:
-                os.remove(tmp_path)
+                loaded = await _load_pyodide_package(pkg)
+                if loaded:
+                    __import__(pkg)
+                    parquet_ready = True
+                    break
             except Exception:
                 pass
+
+    if parquet_ready:
+        try:
+            return pd.read_parquet(BytesIO(data))
+        except Exception:
+            pass
+
+    raise ImportError(
+        f"pyarrow or fastparquet is required to read .parquet files. "
+        f"Initial error: {initial_error}"
+    )
 
 
 async def _fetch_csv_df(url, **kwargs):
@@ -8744,6 +8815,114 @@ def on_download_resource_groups(event):
     zip_name = f"resource_groups_{_get_resource_group_name()}.zip"
     _download_binary_file(zip_name, buffer.getvalue(), "application/zip")
     set_resource_group_status(f"Downloaded {zip_name}", "success")
+
+
+_LCOE_REQUIRED_COLUMNS = {"region", "cpa_mw", "cf", "lcoe"}
+_LCOE_TECH_LABELS = {"onshorewind": "Wind", "solar": "Solar"}
+
+
+async def _read_uploaded_lcoe_file(event, tech):
+    """Read a user-uploaded parquet or CSV LCOE file and store it in state.
+
+    Validates that the file contains the required columns (region, cpa_mw, cf, lcoe)
+    before storing.  Supports both .parquet and .csv file formats.
+    """
+    files = event.target.files
+    if not files or files.length == 0:
+        return
+
+    label = _LCOE_TECH_LABELS.get(tech, tech)
+    file_obj = files.item(0)
+    filename = file_obj.name
+
+    set_resource_group_status(f"Reading {label} LCOE file: {filename}…", "info")
+
+    try:
+        array_buffer = await file_obj.arrayBuffer()
+        data = bytes(Uint8Array.new(array_buffer).to_py())
+
+        lower = filename.lower()
+        if lower.endswith(".parquet"):
+            # Try reading with any available engine first
+            try:
+                df = pd.read_parquet(BytesIO(data))
+            except Exception as initial_error:
+                # If that fails, try to load parquet engines from Pyodide
+                parquet_ready = False
+                for pkg in ["pyarrow", "fastparquet"]:
+                    try:
+                        __import__(pkg)
+                        parquet_ready = True
+                        break
+                    except Exception:
+                        pass
+
+                if not parquet_ready:
+                    # Try loading from Pyodide
+                    for pkg in ["pyarrow", "fastparquet"]:
+                        try:
+                            loaded = await _load_pyodide_package(pkg)
+                            if loaded:
+                                __import__(pkg)
+                                parquet_ready = True
+                                break
+                        except Exception:
+                            pass
+
+                if parquet_ready:
+                    try:
+                        df = pd.read_parquet(BytesIO(data))
+                    except Exception:
+                        raise ImportError(
+                            f"Failed to read .parquet file after loading parquet engines. "
+                            f"Initial error: {initial_error}"
+                        )
+                else:
+                    raise ImportError(
+                        f"pyarrow or fastparquet is required to read .parquet files, "
+                        f"but neither could be loaded. Please convert your file to CSV format. "
+                        f"Initial error: {initial_error}"
+                    )
+        elif lower.endswith(".csv"):
+            df = pd.read_csv(BytesIO(data))
+        else:
+            set_resource_group_status(
+                f"{label} LCOE file must be .parquet or .csv (got {filename}).",
+                "error",
+            )
+            return
+
+        missing = _LCOE_REQUIRED_COLUMNS - set(df.columns)
+        if missing:
+            set_resource_group_status(
+                f"{label} LCOE file is missing required columns: "
+                f"{sorted(missing)}.  Required: {sorted(_LCOE_REQUIRED_COLUMNS)}.",
+                "error",
+            )
+            return
+
+        if tech == "onshorewind":
+            state.uploaded_lcoe_onshorewind = df
+        else:
+            state.uploaded_lcoe_solar = df
+
+        set_resource_group_status(
+            f"{label} LCOE file loaded: {filename} ({len(df):,} rows).", "success"
+        )
+        window.console.log(
+            f"Uploaded LCOE [{tech}]: {filename}, rows={len(df):,}, "
+            f"columns={list(df.columns)}"
+        )
+    except Exception as exc:
+        set_resource_group_status(f"Error reading {label} LCOE file: {exc}", "error")
+
+
+def on_upload_lcoe_wind(event):
+    asyncio.create_task(_read_uploaded_lcoe_file(event, "onshorewind"))
+
+
+def on_upload_lcoe_solar(event):
+    asyncio.create_task(_read_uploaded_lcoe_file(event, "solar"))
 
 
 def on_copy_plant_yaml(event):
@@ -9131,6 +9310,12 @@ async def main():
         )
         document.getElementById("downloadResourceGroupsBtn").addEventListener(
             "click", create_proxy(on_download_resource_groups)
+        )
+        document.getElementById("uploadLcoeWindInput").addEventListener(
+            "change", create_proxy(on_upload_lcoe_wind)
+        )
+        document.getElementById("uploadLcoeSolarInput").addEventListener(
+            "change", create_proxy(on_upload_lcoe_solar)
         )
 
         # Renewables clustering
