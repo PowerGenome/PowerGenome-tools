@@ -761,12 +761,19 @@ For wind and solar resources with specific geospatial locations and generation p
 
 The results are saved in parquet files that include:
 
-* **Interconnection costs** - Estimated cost to connect each site to the grid
-* **LCOE (Levelized Cost of Energy)** - Approximate total cost based on:
-
-  * ATB resource costs (capital and O&M)
-  * Interconnection costs
-  * Average capacity factor of the resource at that location
+<!-- markdownlint-disable MD033 -->
+<ul>
+  <li><strong>Interconnection costs</strong> - Estimated cost to connect each site to the grid</li>
+  <li>
+    <strong>LCOE (Levelized Cost of Energy)</strong> - Approximate total cost based on:
+    <ul>
+      <li>ATB resource costs (capital and O&amp;M)</li>
+      <li>Interconnection costs</li>
+      <li>Average capacity factor of the resource at that location</li>
+    </ul>
+  </li>
+</ul>
+<!-- markdownlint-enable MD033 -->
 
 These parquet files, along with accompanying JSON files containing generation profiles and site metadata, are referred to as **"Resource Group" files**. While this terminology may not be widely familiar, it's the term used within PowerGenome to refer to these geospatially-explicit renewable resource datasets.
 
