@@ -1344,18 +1344,12 @@
     </div>
 
     <!-- Welcome Overlay -->
-    <div id="welcomeOverlay"
-         class="hidden"
-         role="dialog"
-         aria-modal="true"
-         aria-labelledby="welcomeDialogTitle"
-         onclick="closeWelcomeOnBackdrop(event)">
+    <div id="welcomeOverlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="welcomeDialogTitle"
+        onclick="closeWelcomeOnBackdrop(event)">
         <div class="welcome-dialog" onclick="event.stopPropagation()">
             <div class="welcome-header">
-                <button type="button"
-                        class="welcome-close-x"
-                        onclick="closeWelcome()"
-                        aria-label="Close welcome dialog">&times;</button>
+                <button type="button" class="welcome-close-x" onclick="closeWelcome()"
+                    aria-label="Close welcome dialog">&times;</button>
                 <h2 id="welcomeDialogTitle">Welcome to PowerGenome System Design</h2>
                 <p>Create complete settings files for capacity expansion modeling</p>
             </div>
@@ -1388,11 +1382,13 @@
 
                 <h3>Learn More</h3>
                 <div class="welcome-links">
-                    <a href="https://gschivley.github.io/PowerGenome-tools/" target="_blank" rel="noopener noreferrer" class="welcome-link">
+                    <a href="https://gschivley.github.io/PowerGenome-tools/" target="_blank" rel="noopener noreferrer"
+                        class="welcome-link">
                         <div class="welcome-link-title">📚 App Documentation</div>
                         <div class="welcome-link-desc">Step-by-step guide for using this web interface</div>
                     </a>
-                    <a href="https://powergenome.github.io/PowerGenome/beta/" target="_blank" rel="noopener noreferrer" class="welcome-link">
+                    <a href="https://powergenome.github.io/PowerGenome/beta/" target="_blank" rel="noopener noreferrer"
+                        class="welcome-link">
                         <div class="welcome-link-title">⚡ PowerGenome Docs</div>
                         <div class="welcome-link-desc">Full documentation for PowerGenome data processing</div>
                     </a>
@@ -2337,10 +2333,12 @@
                     <h3 style="margin: 0 0 8px 0; font-size: 14px; font-weight: 600;">Default Interconnection Cost</h3>
                     <p style="margin: 0 0 12px 0; font-size: 12px; color: var(--text-muted); line-height: 1.5;">
                         This default interconnection cost applies to resources like natural gas, batteries, or nuclear
-                        that don't have specific geospatial locations. Resources with specific locations (wind and solar)
+                        that don't have specific geospatial locations. Resources with specific locations (wind and
+                        solar)
                         have their interconnection costs calculated dynamically based on how regions are aggregated.
                         <a href="https://powergenome.github.io/PowerGenome/beta/reference/settings/new-build/#interconnection-costs"
-                           target="_blank" style="color: var(--blue);">Learn more about advanced configuration →</a>
+                            target="_blank" rel="noopener noreferrer" style="color: var(--blue);">Learn more about
+                            advanced configuration →</a>
                     </p>
                     <label>Interconnection CAPEX ($/MW)</label>
                     <input type="number" id="interconnectCapexMw" value="100000" min="0" step="1000" />
@@ -2352,9 +2350,11 @@
                         For wind and solar resources with specific geospatial locations and generation profiles,
                         interconnection costs are calculated dynamically. These costs are included in parquet files
                         along with an approximate LCOE (levelized cost of energy), which is based on ATB resource costs,
-                        interconnection costs, and average capacity factors. The parquet files and accompanying JSON files
+                        interconnection costs, and average capacity factors. The parquet files and accompanying JSON
+                        files
                         are referred to as "Resource Group" files. The LCOE values from these files are used in the
-                        "Renewables" tab for selecting the lowest-cost sites to include as resources in each model region.
+                        "Renewables" tab for selecting the lowest-cost sites to include as resources in each model
+                        region.
                     </p>
                     <label>Region Name (used in file names)</label>
                     <input type="text" id="resourceGroupName" value="resource_groups" />
