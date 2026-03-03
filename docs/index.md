@@ -8,15 +8,25 @@ The project consists of an interactive **[Web Application](web_app.md)** that wa
 
 ### Guided Workflow
 
-1. **Regions** - Select Balancing Authorities and cluster them into model regions
-2. **Model Setup** - Define planning years, financial parameters, and model horizon
-3. **Existing Plants** - Cluster existing generators within model regions
-4. **New Resources** - Select new-build technologies from NREL ATB and define modified resources
-5. **Fuels** - Choose fuel price scenarios
-6. **ESR Policies** - Build Energy Share Requirement policies based on selected regions and resources
-7. **Resource Groups** - Generate resource group outputs and LCOE tables
-8. **Renewables Clustering** - Build renewables_clusters settings from demand shares and LCOE data
-9. **Export** - Generate and download complete PowerGenome settings YAML files
+The web application guides you through a 9-step workflow to build complete PowerGenome settings files. Each step builds on the previous ones, ensuring a logical progression from defining your model's geographic scope to exporting ready-to-use configuration files.
+
+1. **Regions** - Select Balancing Authorities and cluster them into model regions using automatic clustering algorithms (Spectral, Louvain, Hierarchical) or manual assignment. Define the geographic boundaries that determine how load, transmission, and resources are aggregated.
+
+2. **Model Setup** - Define planning years (e.g., 2030, 2035, 2040), financial parameters, target dollar-year for cost alignment, and timezone settings. These parameters establish the temporal and financial framework for your analysis.
+
+3. **Existing Plants** - Cluster existing generators within model regions to reduce model complexity while preserving operational diversity. Use heat rate variability and capacity thresholds to determine optimal cluster counts.
+
+4. **New Resources** - Select new-build technologies from NREL's Annual Technology Baseline (ATB), specify resource sizes, and optionally override cost/performance attributes. Create custom modified resources for technologies not in the ATB (e.g., hydrogen combustion turbines).
+
+5. **Fuels** - Choose fuel price scenarios for coal, natural gas, distillate, and uranium from EIA projections or other data sources. Fuel prices are automatically aligned to your target dollar-year.
+
+6. **ESR Policies** - Build Energy Share Requirement (ESR) policies that generalize Renewable Portfolio Standards (RPS) and Clean Energy Standards (CES). The app automatically groups regions into trading zones based on state policy rules and interconnect boundaries.
+
+7. **Resource Groups** - Generate resource group outputs and LCOE (Levelized Cost of Energy) tables for wind and solar resources. These tables include interconnection costs calculated using the fast interconnection algorithm.
+
+8. **Renewables Clustering** - Build `renewables_clusters` settings from demand shares and LCOE data. Filter to the most cost-effective wind and solar sites to keep model size manageable while providing sufficient capacity options. Visualize supply curves to understand resource selection.
+
+9. **Export** - Generate and download complete PowerGenome settings YAML files, including `model_definition.yml`, `resources.yml`, `fuels.yml`, `transmission.yml`, and other configuration files ready for use with PowerGenome.
 
 ## Key Features
 
