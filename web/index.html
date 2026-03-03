@@ -788,6 +788,170 @@
             z-index: 1000;
         }
 
+        /* ── Welcome Overlay ──────────────────────────────────── */
+        #welcomeOverlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(12, 30, 60, 0.92);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            padding: 20px;
+        }
+
+        #welcomeOverlay.hidden {
+            display: none;
+        }
+
+        .welcome-dialog {
+            background: var(--surface);
+            border-radius: var(--radius-md);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+            max-width: 680px;
+            width: 100%;
+            max-height: 85vh;
+            overflow-y: auto;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .welcome-header {
+            background: linear-gradient(135deg, var(--navy) 0%, var(--navy-light) 100%);
+            color: white;
+            padding: 28px 32px;
+            border-radius: var(--radius-md) var(--radius-md) 0 0;
+        }
+
+        .welcome-header h2 {
+            margin: 0 0 8px 0;
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        .welcome-header p {
+            margin: 0;
+            font-size: 14px;
+            opacity: 0.9;
+            line-height: 1.5;
+        }
+
+        .welcome-body {
+            padding: 28px 32px 32px;
+        }
+
+        .welcome-body h3 {
+            margin: 0 0 12px 0;
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--navy);
+        }
+
+        .welcome-body p {
+            margin: 0 0 18px 0;
+            font-size: 14px;
+            line-height: 1.6;
+            color: var(--text);
+        }
+
+        .welcome-body ul {
+            margin: 0 0 18px 0;
+            padding-left: 24px;
+            font-size: 14px;
+            line-height: 1.7;
+            color: var(--text);
+        }
+
+        .welcome-body ul li {
+            margin-bottom: 8px;
+        }
+
+        .welcome-body strong {
+            color: var(--navy);
+            font-weight: 600;
+        }
+
+        .welcome-links {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+
+        .welcome-link {
+            flex: 1;
+            min-width: 200px;
+            padding: 16px 18px;
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            text-decoration: none;
+            color: var(--text);
+            transition: all 0.15s;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .welcome-link:hover {
+            background: var(--surface-3);
+            border-color: var(--blue);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .welcome-link-title {
+            font-weight: 600;
+            font-size: 14px;
+            color: var(--navy);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .welcome-link-desc {
+            font-size: 12px;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        .welcome-footer {
+            padding: 20px 32px;
+            background: var(--surface-2);
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: flex-end;
+            border-radius: 0 0 var(--radius-md) var(--radius-md);
+        }
+
+        .welcome-close-btn {
+            padding: 10px 24px;
+            background: var(--navy);
+            color: white;
+            border: none;
+            border-radius: var(--radius);
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: var(--font-ui);
+            transition: background 0.15s;
+        }
+
+        .welcome-close-btn:hover {
+            background: var(--navy-light);
+        }
+
         /* ── Instructions / collapsible ───────────────────────── */
         .instructions {
             background: var(--warn-bg);
@@ -1174,6 +1338,49 @@
     <div id="loading">
         <div class="spinner"></div>
         <div id="loadingText">Loading PyScript and dependencies...</div>
+    </div>
+
+    <!-- Welcome Overlay -->
+    <div id="welcomeOverlay" class="hidden">
+        <div class="welcome-dialog">
+            <div class="welcome-header">
+                <h2>Welcome to PowerGenome System Design</h2>
+                <p>Create complete settings files for capacity expansion modeling</p>
+            </div>
+            <div class="welcome-body">
+                <h3>What This Tool Does</h3>
+                <p>This web application helps you design your energy system model and create PowerGenome settings files. It guides you through three key tasks:</p>
+                <ul>
+                    <li><strong>Design your system:</strong> Define geographic regions, existing resources, and potential new-build technologies</li>
+                    <li><strong>Calculate interconnection costs:</strong> Automatically compute wind and solar interconnection costs based on your geographic setup</li>
+                    <li><strong>Export customizable settings:</strong> Generate a complete set of PowerGenome YAML files that you can further customize for your analysis</li>
+                </ul>
+
+                <h3>About Capacity Expansion Modeling</h3>
+                <p>Capacity expansion models help answer questions like "What's the least-cost way to meet future electricity demand while meeting policy goals?" These models need several key inputs:</p>
+                <ul>
+                    <li><strong>Geographic zones:</strong> Define regions with their hourly load, transmission constraints, existing resources, and renewable potential</li>
+                    <li><strong>Technology costs:</strong> Capital costs, fixed/variable O&M, heat rates, and financial parameters aligned to a consistent dollar-year</li>
+                    <li><strong>Fuel prices & emissions:</strong> Regional fuel costs and emissions factors for each planning period</li>
+                    <li><strong>Policy constraints:</strong> Renewable portfolio standards, clean energy standards, and emission limits</li>
+                </ul>
+
+                <h3>Learn More</h3>
+                <div class="welcome-links">
+                    <a href="https://gschivley.github.io/PowerGenome-tools/" target="_blank" class="welcome-link">
+                        <div class="welcome-link-title">📚 App Documentation</div>
+                        <div class="welcome-link-desc">Step-by-step guide for using this web interface</div>
+                    </a>
+                    <a href="https://powergenome.github.io/PowerGenome/beta/" target="_blank" class="welcome-link">
+                        <div class="welcome-link-title">⚡ PowerGenome Docs</div>
+                        <div class="welcome-link-desc">Full documentation for PowerGenome data processing</div>
+                    </a>
+                </div>
+            </div>
+            <div class="welcome-footer">
+                <button class="welcome-close-btn" onclick="closeWelcome()">Get Started</button>
+            </div>
+        </div>
     </div>
 
     <!-- Navbar -->
@@ -2488,6 +2695,10 @@
                 standardRow.style.display = 'block';
                 newRow.style.display = 'none';
             }
+        }
+
+        function closeWelcome() {
+            document.getElementById('welcomeOverlay').classList.add('hidden');
         }
 
         function toggleCommitRow() {
