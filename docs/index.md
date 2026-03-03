@@ -22,7 +22,7 @@ The web application guides you through a 9-step workflow to build complete Power
 
 6. **ESR Policies** - Build Energy Share Requirement (ESR) policies that generalize Renewable Portfolio Standards (RPS) and Clean Energy Standards (CES). The app automatically groups regions into trading zones based on state policy rules and interconnect boundaries.
 
-7. **Resource Groups** - Generate resource group outputs and LCOE (Levelized Cost of Energy) tables for wind and solar resources. These tables include interconnection costs calculated using the fast interconnection algorithm.
+7. **Interconnection** - Configure default interconnection costs for resources that are not tied to specific locations (e.g. natural gas, batteries, or nuclear). Generate resource group files with dynamically calculated interconnection costs and LCOE (Levelized Cost of Energy) for each potential wind and solar resource based on model region aggregation.
 
 8. **Renewables Clustering** - Build `renewables_clusters` settings from demand shares and LCOE data. Filter to the most cost-effective wind and solar sites to keep model size manageable while providing sufficient capacity options. Visualize supply curves to understand resource selection.
 
