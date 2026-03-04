@@ -524,7 +524,7 @@ You can work with the defaults in any combination:
 
 * **Keep them as-is** — accept the ATB 2024 Moderate cost assumptions with no changes.
 * **Delete any you don't need** — remove technologies not relevant to your model using the delete button on each resource card.
-* **Adjust a default's cost/performance** — expand the **"Optional: Override cost/performance attributes"** panel on any card to tune CAPEX, O&M, heat rate, and more (see [Standard ATB Resources](#standard-atb-resources)).
+* **Adjust a default's cost/performance** — select the same Technology / Tech Detail / Cost Case in the ATB picker above the list, use the **"Optional: Override cost/performance attributes"** panel there to tune CAPEX, O&M, heat rate, and more, then click **"Add New-build Resource"** to create a modified entry (you can delete the original default card if you no longer need it) (see [Standard ATB Resources](#standard-atb-resources)).
 * **Add more resources** — use the dropdowns and **"Add New-build Resource"** button to include additional technologies alongside the defaults.
 * **Add year-specific versions** — select a specific planning year from the Planning Year dropdown to layer year-by-year cost assumptions on top of the "All (default)" baseline (e.g., a lower-cost battery case for 2035).
 
