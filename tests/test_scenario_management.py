@@ -1357,3 +1357,206 @@ class TestBuildSettingsYamlsIntegration:
 
         extra = yaml.safe_load(result["extra_inputs.yml"])
         assert extra["input_folder"] == "extra_inputs"
+
+
+# ============================================================================
+# F. Duplicate-resource prevention in on_add_new_resource
+# ============================================================================
+
+
+class TestDuplicateResourcePrevention:
+    """Tests for the duplicate (technology, tech_detail, planning_year) guard
+    that was added to on_add_new_resource.
+
+    The guard runs after reading tech/detail/case/size/planning_year but before
+    the attr_overrides block.  When a duplicate is detected it calls
+    set_status(..., "error") and returns without modifying state.
+    """
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _make_dom_map(self, tech, detail, case="Moderate", size="500", year_str="all"):
+        """Return a dict mapping element IDs to mocks for the ATB picker and
+        the resource year select, which are the only elements on_add_new_resource
+        reads before (and including) the duplicate check."""
+        return {
+            "newResourcesRaw": _mock_dom_element(""),
+            "atbYearSelect": _mock_dom_element("2024"),
+            "atbTechSelect": _mock_dom_element(tech),
+            "atbTechDetailSelect": _mock_dom_element(detail),
+            "atbCostCaseSelect": _mock_dom_element(case),
+            "atbSizeMw": _mock_dom_element(size),
+            "newResourceYearSelect": _mock_dom_element(year_str),
+            # set_status target
+            "statusBox": _mock_dom_element(""),
+            # Various override fields (empty → no attr overrides)
+            "atbOverrideCapex": _mock_dom_element(""),
+            "atbOverrideCapexMwh": _mock_dom_element(""),
+            "atbOverrideHeatRate": _mock_dom_element(""),
+            "atbOverrideFixedOM": _mock_dom_element(""),
+            "atbOverrideVarOM": _mock_dom_element(""),
+            "atbOverrideVarOMIn": _mock_dom_element(""),
+            "atbOverrideWacc": _mock_dom_element(""),
+        }
+
+    def _wire_dom(self, cluster_app, dom_map):
+        """Install dom_map into cluster_app.document.getElementById."""
+        cluster_app.document.getElementById = MagicMock(
+            side_effect=lambda id_: dom_map.get(id_, _mock_dom_element(""))
+        )
+
+    def _call_add(self, cluster_app, dom_map):
+        """Wire DOM, reset relevant render helpers so they don't fail, then
+        invoke on_add_new_resource with a dummy event."""
+        self._wire_dom(cluster_app, dom_map)
+        # Stub out render helpers that are called on the success path so the
+        # test doesn't depend on unrelated DOM state.
+        cluster_app.render_new_resources_list = MagicMock()
+        cluster_app.render_modified_resources_list = MagicMock()
+        cluster_app.sync_textarea_from_state = MagicMock()
+        cluster_app._check_year_default_warning = MagicMock()
+        cluster_app.on_add_new_resource(None)
+
+    # ------------------------------------------------------------------
+    # Test 1 – duplicate in state.new_resources with planning_year="all"
+    # ------------------------------------------------------------------
+
+    def test_duplicate_in_new_resources_all_year_is_blocked(self, cluster_app):
+        """Adding (UtilityPV, Class1, all) when it already exists in
+        state.new_resources must trigger an error status and not append."""
+        cluster_app.state.new_resources = [
+            _make_resource(tech="UtilityPV", detail="Class1", year="all"),
+        ]
+        cluster_app.state.modified_new_resources = {}
+
+        dom = self._make_dom_map("UtilityPV", "Class1", year_str="all")
+        status_el = dom["statusBox"]
+        self._call_add(cluster_app, dom)
+
+        # Status box must show an error class
+        assert "error" in status_el.className
+        # The resource list must be unchanged (no new entry appended)
+        assert len(cluster_app.state.new_resources) == 1
+
+    # ------------------------------------------------------------------
+    # Test 2 – duplicate with a specific integer planning year
+    # ------------------------------------------------------------------
+
+    def test_duplicate_in_new_resources_specific_year_is_blocked(self, cluster_app):
+        """Adding (NaturalGas, CC, 2030) when that exact triple already exists
+        in state.new_resources must be blocked."""
+        cluster_app.state.new_resources = [
+            _make_resource(tech="NaturalGas", detail="CC", year=2030),
+        ]
+        cluster_app.state.modified_new_resources = {}
+
+        dom = self._make_dom_map("NaturalGas", "CC", year_str="2030")
+        status_el = dom["statusBox"]
+        self._call_add(cluster_app, dom)
+
+        assert "error" in status_el.className
+        assert len(cluster_app.state.new_resources) == 1
+
+    # ------------------------------------------------------------------
+    # Test 3 – same tech+detail but DIFFERENT year → should be ALLOWED
+    # ------------------------------------------------------------------
+
+    def test_same_tech_detail_different_year_is_allowed(self, cluster_app):
+        """Adding (NaturalGas, CC, 2030) when only (NaturalGas, CC, all)
+        already exists must succeed — the planning years differ."""
+        cluster_app.state.new_resources = [
+            _make_resource(tech="NaturalGas", detail="CC", year="all"),
+        ]
+        cluster_app.state.modified_new_resources = {}
+
+        dom = self._make_dom_map("NaturalGas", "CC", year_str="2030")
+        status_el = dom["statusBox"]
+        self._call_add(cluster_app, dom)
+
+        # Should NOT be an error
+        assert "error" not in status_el.className
+        # A new entry must have been appended
+        assert len(cluster_app.state.new_resources) == 2
+
+    # ------------------------------------------------------------------
+    # Test 4 – duplicate found in state.modified_new_resources
+    # ------------------------------------------------------------------
+
+    def test_duplicate_in_modified_new_resources_is_blocked(self, cluster_app):
+        """Adding (UtilityPV, Class1, 2040) when modified_new_resources already
+        contains an entry with the same triple must be blocked."""
+        cluster_app.state.new_resources = []
+        cluster_app.state.modified_new_resources = {
+            "upv_class1": _make_modified(
+                "upv_class1", tech="UtilityPV", detail="Class1", year=2040
+            ),
+        }
+
+        dom = self._make_dom_map("UtilityPV", "Class1", year_str="2040")
+        status_el = dom["statusBox"]
+        self._call_add(cluster_app, dom)
+
+        assert "error" in status_el.className
+        # No new resources should have been appended
+        assert len(cluster_app.state.new_resources) == 0
+        # Existing modified entry must be untouched
+        assert "upv_class1" in cluster_app.state.modified_new_resources
+
+    # ------------------------------------------------------------------
+    # Test 5 – same technology+year but DIFFERENT tech_detail → ALLOWED
+    # ------------------------------------------------------------------
+
+    def test_same_tech_different_detail_is_allowed(self, cluster_app):
+        """Adding (NaturalGas, CT, all) when only (NaturalGas, CC, all)
+        already exists must succeed — the tech_detail differs."""
+        cluster_app.state.new_resources = [
+            _make_resource(tech="NaturalGas", detail="CC", year="all"),
+        ]
+        cluster_app.state.modified_new_resources = {}
+
+        dom = self._make_dom_map("NaturalGas", "CT", year_str="all")
+        status_el = dom["statusBox"]
+        self._call_add(cluster_app, dom)
+
+        assert "error" not in status_el.className
+        assert len(cluster_app.state.new_resources) == 2
+
+    # ------------------------------------------------------------------
+    # Bonus: error message content for the "all years" label
+    # ------------------------------------------------------------------
+
+    def test_error_message_uses_all_years_label(self, cluster_app):
+        """When a duplicate is detected for planning_year='all', the error
+        message should read '…for all years.'."""
+        cluster_app.state.new_resources = [
+            _make_resource(tech="Nuclear", detail="Large", year="all"),
+        ]
+        cluster_app.state.modified_new_resources = {}
+
+        dom = self._make_dom_map("Nuclear", "Large", year_str="all")
+        status_el = dom["statusBox"]
+        self._call_add(cluster_app, dom)
+
+        assert "error" in status_el.className
+        assert "all years" in status_el.textContent
+
+    # ------------------------------------------------------------------
+    # Bonus: error message content for a specific planning year
+    # ------------------------------------------------------------------
+
+    def test_error_message_uses_numeric_year_label(self, cluster_app):
+        """When a duplicate is detected for planning_year=2035, the error
+        message should mention '2035'."""
+        cluster_app.state.new_resources = [
+            _make_resource(tech="OffShoreWind", detail="Class3", year=2035),
+        ]
+        cluster_app.state.modified_new_resources = {}
+
+        dom = self._make_dom_map("OffShoreWind", "Class3", year_str="2035")
+        status_el = dom["statusBox"]
+        self._call_add(cluster_app, dom)
+
+        assert "error" in status_el.className
+        assert "2035" in status_el.textContent
