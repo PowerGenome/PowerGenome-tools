@@ -86,6 +86,7 @@ def cluster_app_module():
 
         # Load the module
         web_dir = Path(__file__).parent.parent / "web"
+        sys.path.insert(0, str(web_dir))
         module_path = web_dir / "cluster_app.py"
         spec = importlib.util.spec_from_file_location("cluster_app", module_path)
         module = importlib.util.module_from_spec(spec)
@@ -105,6 +106,8 @@ def cluster_app_module():
 
         yield module
     finally:
+        if str(web_dir) in sys.path:
+            sys.path.remove(str(web_dir))
         for name, original in original_modules.items():
             if original is None:
                 sys.modules.pop(name, None)

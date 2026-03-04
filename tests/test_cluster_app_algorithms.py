@@ -72,6 +72,7 @@ def cluster_app():
         mock_js.globalThis = MagicMock()
 
         web_dir = Path(__file__).parent.parent / "web"
+        sys.path.insert(0, str(web_dir))
         module_path = web_dir / "cluster_app.py"
         spec = importlib.util.spec_from_file_location("cluster_app", module_path)
         module = importlib.util.module_from_spec(spec)
@@ -81,6 +82,8 @@ def cluster_app():
 
         yield module
     finally:
+        if str(web_dir) in sys.path:
+            sys.path.remove(str(web_dir))
         for name, original in original_modules.items():
             if original is None:
                 sys.modules.pop(name, None)
@@ -588,11 +591,7 @@ class TestFindOptimalClusters:
 
 
 class TestGenerateClusterNames:
-    """Tests for generate_cluster_names.
-
-    IMPORTANT: This function reads state.hierarchy_df internally.
-    We must set module.state.hierarchy_df before calling it and restore afterward.
-    """
+    """Tests for generate_cluster_names."""
 
     @pytest.fixture()
     def hierarchy_df(self):
@@ -611,51 +610,31 @@ class TestGenerateClusterNames:
     def test_single_state_cluster_name_starts_with_state(
         self, cluster_app, hierarchy_df
     ):
-        orig = cluster_app.state.hierarchy_df
-        try:
-            cluster_app.state.hierarchy_df = hierarchy_df
-            clusters = {0: {"ca1", "ca2"}}
-            groups = {"CA": {"ca1", "ca2"}}
-            names = cluster_app.generate_cluster_names(clusters, groups)
-            assert names[0].startswith("CA")
-        finally:
-            cluster_app.state.hierarchy_df = orig
+        clusters = {0: {"ca1", "ca2"}}
+        groups = {"CA": {"ca1", "ca2"}}
+        names = cluster_app.generate_cluster_names(clusters, groups, hierarchy_df)
+        assert names[0].startswith("CA")
 
     def test_all_labels_in_result(self, cluster_app, hierarchy_df):
-        orig = cluster_app.state.hierarchy_df
-        try:
-            cluster_app.state.hierarchy_df = hierarchy_df
-            clusters = {0: {"ca1", "ca2"}, 1: {"tx1"}}
-            groups = {"CA": {"ca1", "ca2"}, "TX": {"tx1"}}
-            names = cluster_app.generate_cluster_names(clusters, groups)
-            assert 0 in names
-            assert 1 in names
-        finally:
-            cluster_app.state.hierarchy_df = orig
+        clusters = {0: {"ca1", "ca2"}, 1: {"tx1"}}
+        groups = {"CA": {"ca1", "ca2"}, "TX": {"tx1"}}
+        names = cluster_app.generate_cluster_names(clusters, groups, hierarchy_df)
+        assert 0 in names
+        assert 1 in names
 
     def test_no_duplicate_names(self, cluster_app, hierarchy_df):
-        orig = cluster_app.state.hierarchy_df
-        try:
-            cluster_app.state.hierarchy_df = hierarchy_df
-            clusters = {0: {"ca1", "ca2"}, 1: {"tx1"}}
-            groups = {"CA": {"ca1", "ca2"}, "TX": {"tx1"}}
-            names = cluster_app.generate_cluster_names(clusters, groups)
-            # Values should be unique
-            assert len(set(names.values())) == len(names)
-        finally:
-            cluster_app.state.hierarchy_df = orig
+        clusters = {0: {"ca1", "ca2"}, 1: {"tx1"}}
+        groups = {"CA": {"ca1", "ca2"}, "TX": {"tx1"}}
+        names = cluster_app.generate_cluster_names(clusters, groups, hierarchy_df)
+        # Values should be unique
+        assert len(set(names.values())) == len(names)
 
     def test_counter_suffix_on_first_occurrence(self, cluster_app, hierarchy_df):
-        orig = cluster_app.state.hierarchy_df
-        try:
-            cluster_app.state.hierarchy_df = hierarchy_df
-            clusters = {0: {"ca1", "ca2"}}
-            groups = {"CA": {"ca1", "ca2"}}
-            names = cluster_app.generate_cluster_names(clusters, groups)
-            # First occurrence gets suffix "1"
-            assert names[0].endswith("1")
-        finally:
-            cluster_app.state.hierarchy_df = orig
+        clusters = {0: {"ca1", "ca2"}}
+        groups = {"CA": {"ca1", "ca2"}}
+        names = cluster_app.generate_cluster_names(clusters, groups, hierarchy_df)
+        # First occurrence gets suffix "1"
+        assert names[0].endswith("1")
 
 
 # ---------------------------------------------------------------------------
