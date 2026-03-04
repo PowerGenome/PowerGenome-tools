@@ -4163,72 +4163,6 @@ def _get_resource_planning_year(select_id):
         return "all"
 
 
-def sync_textarea_from_state():
-    """Rebuild the manual textarea from ``state.new_resources`` so users
-    can see/export the current list.  Year-specific resources get a
-    trailing comment.
-    """
-    raw_el = document.getElementById("newResourcesRaw")
-    if not raw_el:
-        return
-    lines = []
-    for r in state.new_resources:
-        line = f"{r['technology']} | {r['tech_detail']} | {r['cost_case']} | {r['size_mw']}"
-        if r.get("planning_year") != "all":
-            line += f"  # year:{r['planning_year']}"
-        lines.append(line)
-    raw_el.value = "\n".join(lines)
-
-
-def _on_textarea_input():
-    """Sync state.new_resources from the manual textarea.
-
-    Parses the textarea, extracting an optional ``# year:<N>`` comment at
-    the end of each line.  Resources without a year comment default to
-    ``planning_year="all"``.
-    """
-    raw_el = document.getElementById("newResourcesRaw")
-    if not raw_el:
-        return
-    text = raw_el.value or ""
-    new_list = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        # Extract optional year comment
-        planning_year = "all"
-        if "# year:" in line:
-            main_part, _, year_part = line.partition("# year:")
-            line = main_part.strip()
-            year_str = year_part.strip()
-            try:
-                planning_year = int(year_str)
-            except (ValueError, TypeError):
-                planning_year = "all"
-        parts = [p.strip() for p in line.split("|")]
-        if len(parts) != 4:
-            continue
-        tech, detail, case, size = parts
-        if not tech or not detail or not case or not size:
-            continue
-        try:
-            size_val = int(float(size))
-        except Exception:
-            continue
-        new_list.append(
-            {
-                "technology": tech,
-                "tech_detail": detail,
-                "cost_case": case,
-                "size_mw": size_val,
-                "planning_year": planning_year,
-            }
-        )
-    state.new_resources = new_list
-    render_new_resources_list()
-
-
 def _check_year_default_warning(tech, detail, case, planning_year, warning_el_id):
     """Show a soft warning if user adds a year-specific resource without an
     'All (default)' counterpart.  Returns the warning element (may be hidden).
@@ -4267,34 +4201,6 @@ def _check_year_default_warning(tech, detail, case, planning_year, warning_el_id
         warn_el.style.display = "block"
     else:
         warn_el.style.display = "none"
-
-
-def parse_new_resources_text(text):
-    """Parse manual new_resources lines.
-
-    Each non-empty line should be: Technology | Tech Detail | Cost Case | Size
-    """
-    if not text:
-        return []
-    items = []
-    for line in str(text).splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith("#"):
-            continue
-        parts = [p.strip() for p in line.split("|")]
-        if len(parts) != 4:
-            continue
-        tech, detail, case, size = parts
-        if not tech or not detail or not case or not size:
-            continue
-        try:
-            size_val = int(float(size))
-        except Exception:
-            continue
-        items.append([tech, detail, case, size_val])
-    return items
 
 
 def _year_badge_html(planning_year):
@@ -4408,10 +4314,6 @@ def render_new_resources_list():
 
 
 def on_add_new_resource(event):
-    raw_el = document.getElementById("newResourcesRaw")
-    if not raw_el:
-        return
-
     year_el = document.getElementById("atbYearSelect")
     tech_el = document.getElementById("atbTechSelect")
     detail_el = document.getElementById("atbTechDetailSelect")
@@ -4601,7 +4503,6 @@ def on_add_new_resource(event):
             state.ccs_disposal_cost_map[tech_name] = ccs_disposal_cost
 
         state.new_resources.append(resource_entry)
-        sync_textarea_from_state()
         render_new_resources_list()
 
         # Show year-default warning if needed
@@ -4620,7 +4521,6 @@ def delete_new_resource(index):
     """Delete a regular new resource by index from ``state.new_resources``."""
     if 0 <= index < len(state.new_resources):
         state.new_resources.pop(index)
-        sync_textarea_from_state()
         render_new_resources_list()
         set_status("Resource deleted.", "success")
     else:
@@ -7458,19 +7358,18 @@ def generate_resource_tags_settings():
                     "ccs_disposal_cost", state.ccs_disposal_cost
                 )
 
-    # Check regular new resources from textarea for CCS
-    raw_el = document.getElementById("newResourcesRaw")
-    if raw_el:
-        new_resources = parse_new_resources_text(raw_el.value if raw_el else "")
-        for tech, detail, case, size in new_resources:
-            ccs_fraction = _extract_ccs_capture_fraction(detail)
-            if ccs_fraction is not None:
-                # Build the full tech name as it appears in PowerGenome: Technology_TechDetail
-                tech_name = f"{tech}_{detail}"
-                ccs_technologies[tech_name] = ccs_fraction
-                ccs_costs[tech_name] = state.ccs_disposal_cost_map.get(
-                    tech_name, state.ccs_disposal_cost
-                )
+    # Check regular new resources from state for CCS
+    for resource in state.new_resources:
+        tech = resource["technology"]
+        detail = resource["tech_detail"]
+        ccs_fraction = _extract_ccs_capture_fraction(detail)
+        if ccs_fraction is not None:
+            # Build the full tech name as it appears in PowerGenome: Technology_TechDetail
+            tech_name = f"{tech}_{detail}"
+            ccs_technologies[tech_name] = ccs_fraction
+            ccs_costs[tech_name] = state.ccs_disposal_cost_map.get(
+                tech_name, state.ccs_disposal_cost
+            )
 
     # Apply modified resource tag choices
     for _, item in state.modified_new_resources.items():
@@ -8364,9 +8263,11 @@ def on_run_esr_analysis(event):
         )
 
         # Get qualified technologies
-        # Collect new resources from textarea
-        raw_el = document.getElementById("newResourcesRaw")
-        new_resources = parse_new_resources_text(raw_el.value if raw_el else "")
+        # Convert state.new_resources to the format expected by get_qualified_technologies
+        new_resources = [
+            [r["technology"], r["tech_detail"], r["cost_case"], r["size_mw"]]
+            for r in state.new_resources
+        ]
 
         state.esr_rps_techs, state.esr_ces_techs = get_qualified_technologies(
             state.plants_df, new_resources, state.allowed_techs_df
@@ -8526,9 +8427,6 @@ async def main():
         # Settings tab
         document.getElementById("addNewResourceBtn").addEventListener(
             "click", create_proxy(on_add_new_resource)
-        )
-        document.getElementById("newResourcesRaw").addEventListener(
-            "input", create_proxy(lambda e: _on_textarea_input())
         )
         document.getElementById("addModifiedResourceBtn").addEventListener(
             "click", create_proxy(on_add_modified_resource)

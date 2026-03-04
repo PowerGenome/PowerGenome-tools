@@ -540,18 +540,6 @@ Resources tagged to a specific year show a blue **year badge** (e.g., "2030") ne
 !!! tip "Required: always add an 'All (default)' version"
     If you add a year-specific resource but no "All (default)" version exists for the same technology/detail/case combination, a soft yellow warning appears: *"Consider also adding an 'All (default)' version…"*. The "All" version serves as the baseline; year-specific entries override or supplement it.
 
-#### Manual Text area Format
-
-The manual text area reflects year-specific resources with `# year:N` comments. For example:
-
-```text
-Natural Gas | CCCCSAvgCF | Mid | 500
-# year:2035
-Natural Gas | CCCCSAvgCF | Mid | 750
-```
-
-You can also type `# year:N` comments directly in the text area to tag resources to specific years.
-
 ### Standard ATB Resources
 
 If ATB data is available, use the dropdowns to select:

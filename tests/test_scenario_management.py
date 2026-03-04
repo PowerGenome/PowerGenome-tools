@@ -8,7 +8,7 @@ Covers:
   generate_scenario_management_settings, generate_scenario_csv,
   generate_extra_inputs_settings
 - DOM-interacting: populate_resource_year_selects, _get_resource_planning_year,
-  sync_textarea_from_state, _on_textarea_input, _check_year_default_warning
+  _check_year_default_warning
 - Integration: full flows, resources.yml filtering, build_settings_yamls
 """
 
@@ -825,194 +825,6 @@ class TestGetResourcePlanningYear:
         assert cluster_app._get_resource_planning_year("missing") == "all"
 
 
-class TestSyncTextareaFromState:
-    """Tests for sync_textarea_from_state()."""
-
-    def test_builds_textarea_from_state(self, cluster_app):
-        cluster_app.state.new_resources = [
-            _make_resource(
-                tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
-            ),
-            _make_resource(
-                tech="UtilityPV", detail="Class1", case="Moderate", size=100, year="all"
-            ),
-        ]
-        raw_el = _mock_dom_element("")
-        cluster_app.document.getElementById = MagicMock(return_value=raw_el)
-
-        cluster_app.sync_textarea_from_state()
-
-        lines = raw_el.value.split("\n")
-        assert len(lines) == 2
-        assert "NaturalGas | CC | Moderate | 500" in lines[0]
-        assert "UtilityPV | Class1 | Moderate | 100" in lines[1]
-
-    def test_appends_year_comment_for_non_all(self, cluster_app):
-        cluster_app.state.new_resources = [
-            _make_resource(
-                tech="NaturalGas", detail="CC", case="Moderate", size=500, year=2030
-            ),
-        ]
-        raw_el = _mock_dom_element("")
-        cluster_app.document.getElementById = MagicMock(return_value=raw_el)
-
-        cluster_app.sync_textarea_from_state()
-
-        assert "# year:2030" in raw_el.value
-
-    def test_no_year_comment_for_all(self, cluster_app):
-        cluster_app.state.new_resources = [
-            _make_resource(year="all"),
-        ]
-        raw_el = _mock_dom_element("")
-        cluster_app.document.getElementById = MagicMock(return_value=raw_el)
-
-        cluster_app.sync_textarea_from_state()
-
-        assert "# year:" not in raw_el.value
-
-    def test_empty_state(self, cluster_app):
-        cluster_app.state.new_resources = []
-        raw_el = _mock_dom_element("")
-        cluster_app.document.getElementById = MagicMock(return_value=raw_el)
-
-        cluster_app.sync_textarea_from_state()
-
-        assert raw_el.value == ""
-
-    def test_missing_element_no_error(self, cluster_app):
-        cluster_app.state.new_resources = [_make_resource()]
-        cluster_app.document.getElementById = MagicMock(return_value=None)
-        # Should not raise
-        cluster_app.sync_textarea_from_state()
-
-
-class TestOnTextareaInput:
-    """Tests for _on_textarea_input()."""
-
-    def test_parses_basic_resources(self, cluster_app):
-        raw_el = _mock_dom_element("NaturalGas | CC | Moderate | 500")
-        # Need to also mock render_new_resources_list
-        cluster_app.document.getElementById = MagicMock(return_value=raw_el)
-
-        cluster_app._on_textarea_input()
-
-        assert len(cluster_app.state.new_resources) == 1
-        r = cluster_app.state.new_resources[0]
-        assert r["technology"] == "NaturalGas"
-        assert r["tech_detail"] == "CC"
-        assert r["cost_case"] == "Moderate"
-        assert r["size_mw"] == 500
-        assert r["planning_year"] == "all"
-
-    def test_extracts_year_comment(self, cluster_app):
-        raw_el = _mock_dom_element("NaturalGas | CC | Moderate | 500  # year:2030")
-        cluster_app.document.getElementById = MagicMock(return_value=raw_el)
-
-        cluster_app._on_textarea_input()
-
-        assert len(cluster_app.state.new_resources) == 1
-        assert cluster_app.state.new_resources[0]["planning_year"] == 2030
-
-    def test_multiple_lines(self, cluster_app):
-        text = (
-            "NaturalGas | CC | Moderate | 500\n"
-            "UtilityPV | Class1 | Moderate | 100  # year:2030\n"
-            "Nuclear | Large | Moderate | 1000  # year:2040"
-        )
-        raw_el = _mock_dom_element(text)
-        cluster_app.document.getElementById = MagicMock(return_value=raw_el)
-
-        cluster_app._on_textarea_input()
-
-        assert len(cluster_app.state.new_resources) == 3
-        assert cluster_app.state.new_resources[0]["planning_year"] == "all"
-        assert cluster_app.state.new_resources[1]["planning_year"] == 2030
-        assert cluster_app.state.new_resources[2]["planning_year"] == 2040
-
-    def test_skips_empty_and_comment_lines(self, cluster_app):
-        text = "# This is a comment\n" "\n" "NaturalGas | CC | Moderate | 500\n" "\n"
-        raw_el = _mock_dom_element(text)
-        cluster_app.document.getElementById = MagicMock(return_value=raw_el)
-
-        cluster_app._on_textarea_input()
-
-        assert len(cluster_app.state.new_resources) == 1
-
-    def test_skips_malformed_lines(self, cluster_app):
-        text = (
-            "NaturalGas | CC | Moderate | 500\n"
-            "BadLine\n"
-            "Too | Few\n"
-            "NaturalGas | CC | Moderate | notanumber\n"
-        )
-        raw_el = _mock_dom_element(text)
-        cluster_app.document.getElementById = MagicMock(return_value=raw_el)
-
-        cluster_app._on_textarea_input()
-
-        assert len(cluster_app.state.new_resources) == 1
-
-    def test_invalid_year_defaults_to_all(self, cluster_app):
-        raw_el = _mock_dom_element("NaturalGas | CC | Moderate | 500  # year:abc")
-        cluster_app.document.getElementById = MagicMock(return_value=raw_el)
-
-        cluster_app._on_textarea_input()
-
-        assert cluster_app.state.new_resources[0]["planning_year"] == "all"
-
-    def test_roundtrip_sync_textarea(self, cluster_app):
-        """sync_textarea_from_state → _on_textarea_input should be lossless."""
-        original = [
-            _make_resource(
-                tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
-            ),
-            _make_resource(
-                tech="UtilityPV", detail="Class1", case="Moderate", size=100, year=2030
-            ),
-        ]
-        cluster_app.state.new_resources = list(original)
-
-        raw_el = _mock_dom_element("")
-        cluster_app.document.getElementById = MagicMock(return_value=raw_el)
-
-        # Sync to textarea
-        cluster_app.sync_textarea_from_state()
-        # Parse back
-        cluster_app._on_textarea_input()
-
-        assert len(cluster_app.state.new_resources) == 2
-        assert cluster_app.state.new_resources[0]["planning_year"] == "all"
-        assert cluster_app.state.new_resources[1]["planning_year"] == 2030
-        for i, orig in enumerate(original):
-            got = cluster_app.state.new_resources[i]
-            assert got["technology"] == orig["technology"]
-            assert got["tech_detail"] == orig["tech_detail"]
-            assert got["cost_case"] == orig["cost_case"]
-            assert got["size_mw"] == orig["size_mw"]
-
-    def test_missing_element_no_error(self, cluster_app):
-        cluster_app.document.getElementById = MagicMock(return_value=None)
-        cluster_app._on_textarea_input()
-
-    def test_float_size_truncated(self, cluster_app):
-        raw_el = _mock_dom_element("NaturalGas | CC | Moderate | 123.7")
-        cluster_app.document.getElementById = MagicMock(return_value=raw_el)
-
-        cluster_app._on_textarea_input()
-
-        assert cluster_app.state.new_resources[0]["size_mw"] == 123
-
-    def test_empty_parts_skipped(self, cluster_app):
-        """Lines with empty tech/detail/case/size fields are skipped."""
-        raw_el = _mock_dom_element(" |  | Moderate | 500\nNaturalGas |  |  | 500")
-        cluster_app.document.getElementById = MagicMock(return_value=raw_el)
-
-        cluster_app._on_textarea_input()
-
-        assert len(cluster_app.state.new_resources) == 0
-
-
 class TestCheckYearDefaultWarning:
     """Tests for _check_year_default_warning()."""
 
@@ -1388,7 +1200,6 @@ class TestDuplicateResourcePrevention:
         the resource year select, which are the only elements on_add_new_resource
         reads before (and including) the duplicate check."""
         return {
-            "newResourcesRaw": _mock_dom_element(""),
             "atbYearSelect": _mock_dom_element("2024"),
             "atbTechSelect": _mock_dom_element(tech),
             "atbTechDetailSelect": _mock_dom_element(detail),
@@ -1421,7 +1232,6 @@ class TestDuplicateResourcePrevention:
         # test doesn't depend on unrelated DOM state.
         cluster_app.render_new_resources_list = MagicMock()
         cluster_app.render_modified_resources_list = MagicMock()
-        cluster_app.sync_textarea_from_state = MagicMock()
         cluster_app._check_year_default_warning = MagicMock()
         cluster_app.on_add_new_resource(None)
 
