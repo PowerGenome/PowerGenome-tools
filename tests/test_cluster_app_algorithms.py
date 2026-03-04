@@ -33,6 +33,7 @@ def cluster_app():
         "pyodide",
         "pyodide.ffi",
         "renewables_utils",
+        "visualization_utils",
         "fast_interconnection",
         "fast_interconnection.fast_assign",
         "fast_interconnection.resource_groups",
@@ -57,6 +58,20 @@ def cluster_app():
             r: 1 for r in bins
         }
         sys.modules["renewables_utils"] = mock_ru
+
+        # Mock visualization_utils with actual functions from the real module
+        mock_vu = MagicMock()
+        from web.visualization_utils import (
+            CLUSTER_COLORS,
+            GROUP_OUTLINE_COLORS,
+            lighten_color,
+        )
+
+        mock_vu.lighten_color = lighten_color
+        mock_vu.CLUSTER_COLORS = CLUSTER_COLORS
+        mock_vu.GROUP_OUTLINE_COLORS = GROUP_OUTLINE_COLORS
+        sys.modules["visualization_utils"] = mock_vu
+
         sys.modules["fast_interconnection"] = MagicMock()
         sys.modules["fast_interconnection.fast_assign"] = MagicMock()
         mock_rg = MagicMock()
@@ -92,50 +107,64 @@ def cluster_app():
                 sys.modules[name] = original
 
 
+@pytest.fixture(scope="session")
+def visualization_utils_module():
+    """Load visualization_utils module directly."""
+    web_dir = Path(__file__).parent.parent / "web"
+    sys.path.insert(0, str(web_dir))
+    try:
+        import visualization_utils
+
+        yield visualization_utils
+    finally:
+        if str(web_dir) in sys.path:
+            sys.path.remove(str(web_dir))
+
+
 # ---------------------------------------------------------------------------
 # 1. Color utilities
 # ---------------------------------------------------------------------------
 
 
 class TestColorUtilities:
-    """Tests for hex_to_rgb, rgb_to_hex, lighten_color."""
+    """Tests for hex_to_rgb, rgb_to_hex, lighten_color from visualization_utils."""
 
-    def test_hex_to_rgb_red(self, cluster_app):
-        assert cluster_app.hex_to_rgb("#FF0000") == (255, 0, 0)
+    def test_hex_to_rgb_red(self, visualization_utils_module):
+        assert visualization_utils_module.hex_to_rgb("#FF0000") == (255, 0, 0)
 
-    def test_hex_to_rgb_no_hash(self, cluster_app):
+    def test_hex_to_rgb_no_hash(self, visualization_utils_module):
         # hex_to_rgb strips leading '#'
-        assert cluster_app.hex_to_rgb("00FF00") == (0, 255, 0)
+        assert visualization_utils_module.hex_to_rgb("00FF00") == (0, 255, 0)
 
-    def test_hex_to_rgb_blue(self, cluster_app):
-        assert cluster_app.hex_to_rgb("#0000FF") == (0, 0, 255)
+    def test_hex_to_rgb_blue(self, visualization_utils_module):
+        assert visualization_utils_module.hex_to_rgb("#0000FF") == (0, 0, 255)
 
-    def test_rgb_to_hex_roundtrip(self, cluster_app):
+    def test_rgb_to_hex_roundtrip(self, visualization_utils_module):
         original = "#1a2b3c"
-        rgb = cluster_app.hex_to_rgb(original)
-        assert cluster_app.rgb_to_hex(rgb) == original
+        rgb = visualization_utils_module.hex_to_rgb(original)
+        assert visualization_utils_module.rgb_to_hex(rgb) == original
 
-    def test_rgb_to_hex_white(self, cluster_app):
-        assert cluster_app.rgb_to_hex((255, 255, 255)) == "#ffffff"
+    def test_rgb_to_hex_white(self, visualization_utils_module):
+        assert visualization_utils_module.rgb_to_hex((255, 255, 255)) == "#ffffff"
 
-    def test_lighten_black(self, cluster_app):
-        result = cluster_app.lighten_color("#000000", factor=0.5)
-        r, g, b = cluster_app.hex_to_rgb(result)
+    def test_lighten_black(self, visualization_utils_module):
+        result = visualization_utils_module.lighten_color("#000000", factor=0.5)
+        r, g, b = visualization_utils_module.hex_to_rgb(result)
         # Each channel should increase from 0 toward 255
         assert r > 0
         assert g > 0
         assert b > 0
 
-    def test_lighten_white_stays_white(self, cluster_app):
-        result = cluster_app.lighten_color("#ffffff", factor=0.7)
+    def test_lighten_white_stays_white(self, visualization_utils_module):
+        result = visualization_utils_module.lighten_color("#ffffff", factor=0.7)
         assert result == "#ffffff"
 
-    def test_lighten_default_factor(self, cluster_app):
+    def test_lighten_default_factor(self, visualization_utils_module):
         # Default factor=0.7 should produce a lighter color than the original
-        result = cluster_app.lighten_color("#ff0000")
-        r, _, _ = cluster_app.hex_to_rgb(result)
+        result = visualization_utils_module.lighten_color("#ff0000")
+        r, _, _ = visualization_utils_module.hex_to_rgb(result)
         assert r == 255  # red channel already max
-        _, g, _ = cluster_app.hex_to_rgb(result)
+        _, g, _ = visualization_utils_module.hex_to_rgb(result)
         assert g > 0  # green channel lifted
 
 
