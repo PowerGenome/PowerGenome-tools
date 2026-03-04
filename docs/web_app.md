@@ -507,6 +507,27 @@ The Existing Plants step allows you to cluster existing generators within each m
 
 The New Resources step allows you to select new-build technologies from NREL's Annual Technology Baseline (ATB) and define custom modified resources.
 
+### Pre-Populated Default Resources
+
+When the app loads, Step 4 comes pre-populated with **6 ATB 2024 new-build resources** so you have a realistic starting point without needing to configure everything from scratch. All 6 defaults use the **"All (default)"** planning year, meaning they apply to every model year.
+
+| Technology | Tech Detail | Cost Case |
+|---|---|---|
+| NaturalGas | 2-on-1 Combined Cycle (F-Frame) | Moderate |
+| NaturalGas | Combustion Turbine (F-Frame) | Moderate |
+| LandbasedWind | Class3 | Moderate |
+| UtilityPV | Class1 | Moderate |
+| Utility-Scale Battery Storage | Lithium Ion | Moderate |
+| Nuclear | Nuclear - Large | Moderate |
+
+You can work with the defaults in any combination:
+
+* **Keep them as-is** — accept the ATB 2024 Moderate cost assumptions with no changes.
+* **Delete any you don't need** — remove technologies not relevant to your model using the delete button on each resource card.
+* **Adjust a default's cost/performance** — expand the **"Optional: Override cost/performance attributes"** panel on any card to tune CAPEX, O&M, heat rate, and more (see [Standard ATB Resources](#standard-atb-resources)).
+* **Add more resources** — use the dropdowns and **"Add New-build Resource"** button to include additional technologies alongside the defaults.
+* **Add year-specific versions** — select a specific planning year from the Planning Year dropdown to layer year-by-year cost assumptions on top of the "All (default)" baseline (e.g., a lower-cost battery case for 2035).
+
 ### Planning Year Tagging
 
 Each resource you add can optionally be tagged to a specific **planning year**. A **Planning Year** dropdown appears next to the "Add New-build Resource" and "Add Modified Resource" buttons. It is populated from the Model Years you entered in Step 2 (Model Setup), plus an "All (default)" option.

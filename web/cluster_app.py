@@ -84,6 +84,53 @@ from visualization_utils import (
 # Global State
 # ============================================================================
 
+# Default new-build resources (ATB 2024, planning_year="all").
+# Sizes are taken from web/data/atb_size.json where available.
+_DEFAULT_NEW_RESOURCES = [
+    {
+        "technology": "NaturalGas",
+        "tech_detail": "2-on-1 Combined Cycle (F-Frame)",
+        "cost_case": "Moderate",
+        "size_mw": 727,
+        "planning_year": "all",
+    },
+    {
+        "technology": "NaturalGas",
+        "tech_detail": "Combustion Turbine (F-Frame)",
+        "cost_case": "Moderate",
+        "size_mw": 233,
+        "planning_year": "all",
+    },
+    {
+        "technology": "LandbasedWind",
+        "tech_detail": "Class3",
+        "cost_case": "Moderate",
+        "size_mw": 200,
+        "planning_year": "all",
+    },
+    {
+        "technology": "UtilityPV",
+        "tech_detail": "Class1",
+        "cost_case": "Moderate",
+        "size_mw": 100,
+        "planning_year": "all",
+    },
+    {
+        "technology": "Utility-Scale Battery Storage",
+        "tech_detail": "Lithium Ion",
+        "cost_case": "Moderate",
+        "size_mw": 60,
+        "planning_year": "all",
+    },
+    {
+        "technology": "Nuclear",
+        "tech_detail": "Nuclear - Large",
+        "cost_case": "Moderate",
+        "size_mw": 1000,
+        "planning_year": "all",
+    },
+]
+
 
 class AppState:
     def __init__(self):
@@ -132,9 +179,9 @@ class AppState:
 
         # Settings generation (Settings tab)
         self.settings_yamls = {}  # filename -> yaml string
-        self.new_resources = (
-            []
-        )  # list of dicts: {technology, tech_detail, cost_case, size_mw, planning_year}
+        self.new_resources = [
+            dict(r) for r in _DEFAULT_NEW_RESOURCES
+        ]  # list of dicts: {technology, tech_detail, cost_case, size_mw, planning_year}
         self.modified_new_resources = {}  # key -> metadata + schema for resources.yml
         self.atb_options = []  # list[dict] loaded from web/data/atb_options.json
         self.atb_index = {}  # year -> tech -> detail -> sorted(list(cost_case))
@@ -6684,13 +6731,10 @@ def generate_resources_settings():
         if r.get("planning_year") == "all"
     ]
     if not new_resources:
-        # Seed a minimal starter set
+        # Seed a minimal starter set (should normally be pre-populated via _DEFAULT_NEW_RESOURCES)
         new_resources = [
-            ["NaturalGas", "1-on-1 Combined Cycle (H-Frame)", "Moderate", 500],
-            ["LandbasedWind", "Class3", "Moderate", 1],
-            ["UtilityPV", "Class1", "Moderate", 1],
-            ["Utility-Scale Battery Storage", "Lithium Ion", "Moderate", 1],
-            ["Nuclear", "Nuclear - Large", "Moderate", 1000],
+            [r["technology"], r["tech_detail"], r["cost_case"], r["size_mw"]]
+            for r in _DEFAULT_NEW_RESOURCES
         ]
 
     # Hydro defaults

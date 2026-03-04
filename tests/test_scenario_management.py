@@ -334,6 +334,7 @@ class TestBuildResourceModifiersForYear:
     """Tests for _build_resource_modifiers_for_year(year)."""
 
     def test_no_modifiers_returns_none(self, cluster_app):
+        cluster_app.state.new_resources = []
         cluster_app.state.modified_new_resources = {}
         assert cluster_app._build_resource_modifiers_for_year(2030) is None
 
@@ -360,6 +361,7 @@ class TestBuildResourceModifiersForYear:
         assert result["ng_cc_2030"]["Fixed_OM_Cost_per_MWyr"] == 42.0
 
     def test_different_year_excluded(self, cluster_app):
+        cluster_app.state.new_resources = []
         cluster_app.state.modified_new_resources = {
             "ng_cc_2040": _make_modified(
                 "ng_cc_2040",
@@ -371,6 +373,7 @@ class TestBuildResourceModifiersForYear:
 
     def test_skips_identity_changes(self, cluster_app):
         """Entries that change technology/detail/case are not resource_modifiers."""
+        cluster_app.state.new_resources = []
         cluster_app.state.modified_new_resources = {
             "k1": _make_modified(
                 "k1",
@@ -383,6 +386,7 @@ class TestBuildResourceModifiersForYear:
 
     def test_skips_fuel_type_new(self, cluster_app):
         """Entries with fuel_type='new' are not resource_modifiers."""
+        cluster_app.state.new_resources = []
         cluster_app.state.modified_new_resources = {
             "k1": _make_modified(
                 "k1",
@@ -393,12 +397,14 @@ class TestBuildResourceModifiersForYear:
         assert cluster_app._build_resource_modifiers_for_year(2030) is None
 
     def test_empty_attr_modifiers_skipped(self, cluster_app):
+        cluster_app.state.new_resources = []
         cluster_app.state.modified_new_resources = {
             "k1": _make_modified("k1", attr_modifiers={}),
         }
         assert cluster_app._build_resource_modifiers_for_year(2030) is None
 
     def test_no_attr_modifiers_key_skipped(self, cluster_app):
+        cluster_app.state.new_resources = []
         v = _make_modified("k1")
         v["attr_modifiers"] = None
         cluster_app.state.modified_new_resources = {"k1": v}
