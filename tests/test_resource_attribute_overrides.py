@@ -46,6 +46,7 @@ def cluster_app():
         "cluster_app",
     ]
     original_modules = {name: sys.modules.get(name) for name in module_names}
+    web_dir = None
 
     try:
         # Mock PyScript/browser environment
@@ -81,6 +82,7 @@ def cluster_app():
 
         # Load cluster_app module
         web_dir = Path(__file__).parent.parent / "web"
+        sys.path.insert(0, str(web_dir))
         module_path = web_dir / "cluster_app.py"
         spec = importlib.util.spec_from_file_location("cluster_app", module_path)
         module = importlib.util.module_from_spec(spec)
@@ -90,6 +92,8 @@ def cluster_app():
 
         yield module
     finally:
+        if web_dir is not None and str(web_dir) in sys.path:
+            sys.path.remove(str(web_dir))
         for name, original in original_modules.items():
             if original is None:
                 sys.modules.pop(name, None)
@@ -812,15 +816,15 @@ class TestModifiedNewResourcesGeneration:
         assert entry["new_technology"] == "Hydrogen_CT"
 
         # heat_rate → Heat_Rate_MMBTU_per_MWh must be present (not dropped)
-        assert "Heat_Rate_MMBTU_per_MWh" in entry, (
-            "heat_rate attr_modifier was silently dropped for custom-fuel resource"
-        )
+        assert (
+            "Heat_Rate_MMBTU_per_MWh" in entry
+        ), "heat_rate attr_modifier was silently dropped for custom-fuel resource"
         assert entry["Heat_Rate_MMBTU_per_MWh"] == 9500.0
 
         # variable_o_m_mwh → Var_OM_Cost_per_MWh must be present (not dropped)
-        assert "Var_OM_Cost_per_MWh" in entry, (
-            "variable_o_m_mwh attr_modifier was silently dropped for custom-fuel resource"
-        )
+        assert (
+            "Var_OM_Cost_per_MWh" in entry
+        ), "variable_o_m_mwh attr_modifier was silently dropped for custom-fuel resource"
         assert entry["Var_OM_Cost_per_MWh"] == ["add", 2.5]
 
         # Raw UI keys must NOT leak into the output
@@ -865,19 +869,19 @@ class TestModifiedNewResourcesGeneration:
         entry = result["efficient_ct"]
 
         # All three attr_modifiers must be present with translated ATB keys
-        assert "Heat_Rate_MMBTU_per_MWh" in entry, (
-            "heat_rate attr_modifier was silently dropped for identity-changed resource"
-        )
+        assert (
+            "Heat_Rate_MMBTU_per_MWh" in entry
+        ), "heat_rate attr_modifier was silently dropped for identity-changed resource"
         assert entry["Heat_Rate_MMBTU_per_MWh"] == 7800.0
 
-        assert "Var_OM_Cost_per_MWh" in entry, (
-            "variable_o_m_mwh attr_modifier was silently dropped for identity-changed resource"
-        )
+        assert (
+            "Var_OM_Cost_per_MWh" in entry
+        ), "variable_o_m_mwh attr_modifier was silently dropped for identity-changed resource"
         assert entry["Var_OM_Cost_per_MWh"] == 3.0
 
-        assert "Fixed_OM_Cost_per_MWyr" in entry, (
-            "fixed_o_m_mw attr_modifier was silently dropped for identity-changed resource"
-        )
+        assert (
+            "Fixed_OM_Cost_per_MWyr" in entry
+        ), "fixed_o_m_mw attr_modifier was silently dropped for identity-changed resource"
         assert entry["Fixed_OM_Cost_per_MWyr"] == ["mul", 0.9]
 
         # Raw UI keys must NOT leak into the output
@@ -905,7 +909,9 @@ def generate_modified_new_resources_dict(state):
     # Use the same mapping as cluster_app._UI_TO_ATB_KEY to avoid drift.
     app_module_name = type(state).__module__
     app_module = sys.modules.get(app_module_name)
-    ui_to_atb_key = getattr(app_module, "_UI_TO_ATB_KEY", {}) if app_module is not None else {}
+    ui_to_atb_key = (
+        getattr(app_module, "_UI_TO_ATB_KEY", {}) if app_module is not None else {}
+    )
 
     modified_with_fuel = {}
     if not state.modified_new_resources:
@@ -986,7 +992,9 @@ class TestYAMLOutput:
             "add",
             0.15,
         ]
-        assert parsed["resource_modifiers"]["batteries"]["Var_OM_Cost_per_MWh_In"] == 0.15
+        assert (
+            parsed["resource_modifiers"]["batteries"]["Var_OM_Cost_per_MWh_In"] == 0.15
+        )
         assert parsed["resource_modifiers"]["batteries"]["wacc_real"] == 0.0467
 
     def test_yaml_operator_list_format(self, cluster_app, mock_app_state):
@@ -1279,5 +1287,8 @@ class TestEndToEndIntegration:
             0.15,
         ]
         assert parsed["resource_modifiers"]["wind"]["capex_mw"] == 1600000.0
-        assert parsed["resource_modifiers"]["ct"]["Heat_Rate_MMBTU_per_MWh"] == ["mul", 1.05]
+        assert parsed["resource_modifiers"]["ct"]["Heat_Rate_MMBTU_per_MWh"] == [
+            "mul",
+            1.05,
+        ]
         assert parsed["resource_modifiers"]["ct"]["capex_mw"] == 1000000.0

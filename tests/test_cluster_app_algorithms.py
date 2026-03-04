@@ -39,6 +39,7 @@ def cluster_app():
         "cluster_app",
     ]
     original_modules = {name: sys.modules.get(name) for name in module_names}
+    web_dir = None
 
     try:
         mock_js = MagicMock()
@@ -72,6 +73,7 @@ def cluster_app():
         mock_js.globalThis = MagicMock()
 
         web_dir = Path(__file__).parent.parent / "web"
+        sys.path.insert(0, str(web_dir))
         module_path = web_dir / "cluster_app.py"
         spec = importlib.util.spec_from_file_location("cluster_app", module_path)
         module = importlib.util.module_from_spec(spec)
@@ -81,6 +83,8 @@ def cluster_app():
 
         yield module
     finally:
+        if web_dir is not None and str(web_dir) in sys.path:
+            sys.path.remove(str(web_dir))
         for name, original in original_modules.items():
             if original is None:
                 sys.modules.pop(name, None)
@@ -588,11 +592,7 @@ class TestFindOptimalClusters:
 
 
 class TestGenerateClusterNames:
-    """Tests for generate_cluster_names.
-
-    IMPORTANT: This function reads state.hierarchy_df internally.
-    We must set module.state.hierarchy_df before calling it and restore afterward.
-    """
+    """Tests for generate_cluster_names."""
 
     @pytest.fixture()
     def hierarchy_df(self):
@@ -611,51 +611,27 @@ class TestGenerateClusterNames:
     def test_single_state_cluster_name_starts_with_state(
         self, cluster_app, hierarchy_df
     ):
-        orig = cluster_app.state.hierarchy_df
-        try:
-            cluster_app.state.hierarchy_df = hierarchy_df
-            clusters = {0: {"ca1", "ca2"}}
-            groups = {"CA": {"ca1", "ca2"}}
-            names = cluster_app.generate_cluster_names(clusters, groups)
-            assert names[0].startswith("CA")
-        finally:
-            cluster_app.state.hierarchy_df = orig
+        clusters = {0: {"ca1", "ca2"}}
+        names = cluster_app.generate_cluster_names(clusters, hierarchy_df)
+        assert names[0].startswith("CA")
 
     def test_all_labels_in_result(self, cluster_app, hierarchy_df):
-        orig = cluster_app.state.hierarchy_df
-        try:
-            cluster_app.state.hierarchy_df = hierarchy_df
-            clusters = {0: {"ca1", "ca2"}, 1: {"tx1"}}
-            groups = {"CA": {"ca1", "ca2"}, "TX": {"tx1"}}
-            names = cluster_app.generate_cluster_names(clusters, groups)
-            assert 0 in names
-            assert 1 in names
-        finally:
-            cluster_app.state.hierarchy_df = orig
+        clusters = {0: {"ca1", "ca2"}, 1: {"tx1"}}
+        names = cluster_app.generate_cluster_names(clusters, hierarchy_df)
+        assert 0 in names
+        assert 1 in names
 
     def test_no_duplicate_names(self, cluster_app, hierarchy_df):
-        orig = cluster_app.state.hierarchy_df
-        try:
-            cluster_app.state.hierarchy_df = hierarchy_df
-            clusters = {0: {"ca1", "ca2"}, 1: {"tx1"}}
-            groups = {"CA": {"ca1", "ca2"}, "TX": {"tx1"}}
-            names = cluster_app.generate_cluster_names(clusters, groups)
-            # Values should be unique
-            assert len(set(names.values())) == len(names)
-        finally:
-            cluster_app.state.hierarchy_df = orig
+        clusters = {0: {"ca1", "ca2"}, 1: {"tx1"}}
+        names = cluster_app.generate_cluster_names(clusters, hierarchy_df)
+        # Values should be unique
+        assert len(set(names.values())) == len(names)
 
     def test_counter_suffix_on_first_occurrence(self, cluster_app, hierarchy_df):
-        orig = cluster_app.state.hierarchy_df
-        try:
-            cluster_app.state.hierarchy_df = hierarchy_df
-            clusters = {0: {"ca1", "ca2"}}
-            groups = {"CA": {"ca1", "ca2"}}
-            names = cluster_app.generate_cluster_names(clusters, groups)
-            # First occurrence gets suffix "1"
-            assert names[0].endswith("1")
-        finally:
-            cluster_app.state.hierarchy_df = orig
+        clusters = {0: {"ca1", "ca2"}}
+        names = cluster_app.generate_cluster_names(clusters, hierarchy_df)
+        # First occurrence gets suffix "1"
+        assert names[0].endswith("1")
 
 
 # ---------------------------------------------------------------------------
@@ -1534,9 +1510,9 @@ class TestPlantClusteringHelpers:
         ]
         result = cluster_app._candidate_svg(plant_data, 2)
         colors_present = [c for c in bubble_colors if c in result]
-        assert len(colors_present) >= 2, (
-            f"Expected ≥2 distinct colors for 2-cluster SVG, found: {colors_present}"
-        )
+        assert (
+            len(colors_present) >= 2
+        ), f"Expected ≥2 distinct colors for 2-cluster SVG, found: {colors_present}"
 
     def test_candidate_svg_ends_with_svg_close_tag(self, cluster_app):
         """The returned SVG string ends with </svg>."""
@@ -1683,9 +1659,9 @@ class TestPlantClusteringHelpers:
             yaml_str, _total, _budget = cluster_app.suggest_plant_clusters()
             state.plant_cluster_settings = yaml.safe_load(yaml_str)
 
-            assert len(state.plant_groups) == 2, (
-                f"Expected 2 groups (one per region), got {len(state.plant_groups)}"
-            )
+            assert (
+                len(state.plant_groups) == 2
+            ), f"Expected 2 groups (one per region), got {len(state.plant_groups)}"
 
             # Force both to num_clusters=1 so the tech default is 1.
             for grp in state.plant_groups:
@@ -1705,9 +1681,9 @@ class TestPlantClusteringHelpers:
             alt = result["alt_num_clusters"]
             region = target["model_region"]
             tech = target["tech_group"]
-            assert region in alt, (
-                f"Expected region '{region}' in alt_num_clusters, got: {alt}"
-            )
+            assert (
+                region in alt
+            ), f"Expected region '{region}' in alt_num_clusters, got: {alt}"
             assert alt[region].get(tech) == 2, (
                 f"Expected override value 2 for tech '{tech}' in region '{region}', "
                 f"got: {alt[region]}"
@@ -3370,7 +3346,15 @@ class TestFuelChartHelpers:
         orig = cluster_app.state.fuel_prices_df
         try:
             cluster_app.state.fuel_prices_df = pd.DataFrame(
-                columns=["year", "price", "data_year", "scenario", "fuel", "region", "dollar_year"]
+                columns=[
+                    "year",
+                    "price",
+                    "data_year",
+                    "scenario",
+                    "fuel",
+                    "region",
+                    "dollar_year",
+                ]
             )
             result = cluster_app._build_fuel_chart_data(2025)
             assert result == {}

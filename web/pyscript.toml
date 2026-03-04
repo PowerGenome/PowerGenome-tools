@@ -9,3 +9,6 @@ packages = ["pandas", "networkx", "numpy", "pyyaml", "shapely"]
 "./fast_interconnection/fast_assign.py" = "./fast_interconnection/fast_assign.py"
 "./fast_interconnection/resource_groups.py" = "./fast_interconnection/resource_groups.py"
 "./renewables_utils.py" = "./renewables_utils.py"
+"./esr_utils.py" = "./esr_utils.py"
+"./visualization_utils.py" = "./visualization_utils.py"
+"./clustering_algorithms.py" = "./clustering_algorithms.py"

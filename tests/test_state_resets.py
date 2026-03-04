@@ -29,6 +29,7 @@ def cluster_app():
         "cluster_app",
     ]
     original_modules = {name: sys.modules.get(name) for name in module_names}
+    web_dir = None
 
     try:
         # Mock the js and pyodide.ffi modules
@@ -55,6 +56,7 @@ def cluster_app():
 
         # Load the module
         web_dir = Path(__file__).parent.parent / "web"
+        sys.path.insert(0, str(web_dir))
         module_path = web_dir / "cluster_app.py"
 
         spec = importlib.util.spec_from_file_location("cluster_app", module_path)
@@ -66,6 +68,8 @@ def cluster_app():
         yield module
     finally:
         # Restore original sys.modules entries
+        if web_dir is not None and str(web_dir) in sys.path:
+            sys.path.remove(str(web_dir))
         for name, original in original_modules.items():
             if original is None:
                 sys.modules.pop(name, None)
@@ -105,8 +109,12 @@ class TestResetRegionDependentState:
     def test_resets_renewables_capacity_attributes(self, cluster_app):
         """Test that all renewables capacity tracking attributes are reset."""
         cluster_app.state.renewables_region_capacity_mw = {"wind": {"region1": 1000}}
-        cluster_app.state.renewables_region_base_capacity_mw = {"wind": {"region1": 800}}
-        cluster_app.state.renewables_pending_region_capacity_mw = {"wind": {"region1": 1200}}
+        cluster_app.state.renewables_region_base_capacity_mw = {
+            "wind": {"region1": 800}
+        }
+        cluster_app.state.renewables_pending_region_capacity_mw = {
+            "wind": {"region1": 1200}
+        }
         cluster_app.state.renewables_region_available_mw = {"wind": {"region1": 5000}}
 
         cluster_app.reset_region_dependent_state()
@@ -135,7 +143,9 @@ class TestResetRegionDependentState:
         """Test that renewables curve data and UI state are reset."""
         cluster_app.state.renewables_curve_data = {"wind": {"region1": {}}}
         cluster_app.state.renewables_selected_region = "region1"
-        cluster_app.state.renewables_regions_geojson_cache = {"type": "FeatureCollection"}
+        cluster_app.state.renewables_regions_geojson_cache = {
+            "type": "FeatureCollection"
+        }
         cluster_app.state.renewables_regions_geojson_key = ("r1", "r2")
 
         cluster_app.reset_region_dependent_state()
@@ -372,12 +382,14 @@ class TestRenderESRResultsUIClearing:
         # Mock document.getElementById to return our mock elements
         mock_js = sys.modules["js"]
         original_get_elem = mock_js.document.getElementById
-        mock_js.document.getElementById = MagicMock(side_effect=lambda id: {
-            "esrCsvPreview": mock_csv_preview,
-            "esrZonesList": MagicMock(),
-            "esrRPSTechList": None,
-            "esrCESTechList": None
-        }.get(id))
+        mock_js.document.getElementById = MagicMock(
+            side_effect=lambda id: {
+                "esrCsvPreview": mock_csv_preview,
+                "esrZonesList": MagicMock(),
+                "esrRPSTechList": None,
+                "esrCESTechList": None,
+            }.get(id)
+        )
 
         try:
             cluster_app.render_esr_results()
@@ -395,11 +407,9 @@ class TestRenderESRResultsUIClearing:
         mock_csv_preview.value = ""
 
         # Setup state with emission policies
-        test_df = pd.DataFrame({
-            "region": ["region1"],
-            "year": [2030],
-            "policy": ["RPS"]
-        })
+        test_df = pd.DataFrame(
+            {"region": ["region1"], "year": [2030], "policy": ["RPS"]}
+        )
         cluster_app.state.emission_policies_df = test_df
         cluster_app.state.esr_map = {"ESR_1": ["region1"]}
         cluster_app.state.esr_type_map = {"ESR_1": "RPS"}
@@ -413,12 +423,14 @@ class TestRenderESRResultsUIClearing:
         mock_zones_list = MagicMock()
         mock_rps_list = MagicMock()
         mock_ces_list = MagicMock()
-        mock_js.document.getElementById = MagicMock(side_effect=lambda id: {
-            "esrCsvPreview": mock_csv_preview,
-            "esrZonesList": mock_zones_list,
-            "esrRPSTechList": mock_rps_list,
-            "esrCESTechList": mock_ces_list
-        }.get(id))
+        mock_js.document.getElementById = MagicMock(
+            side_effect=lambda id: {
+                "esrCsvPreview": mock_csv_preview,
+                "esrZonesList": mock_zones_list,
+                "esrRPSTechList": mock_rps_list,
+                "esrCESTechList": mock_ces_list,
+            }.get(id)
+        )
 
         try:
             cluster_app.render_esr_results()
@@ -442,12 +454,14 @@ class TestRenderESRResultsUIClearing:
         # Mock document.getElementById to return our mock elements
         mock_js = sys.modules["js"]
         original_get_elem = mock_js.document.getElementById
-        mock_js.document.getElementById = MagicMock(side_effect=lambda id: {
-            "esrCsvPreview": MagicMock(),
-            "esrZonesList": mock_zones_list,
-            "esrRPSTechList": None,
-            "esrCESTechList": None
-        }.get(id))
+        mock_js.document.getElementById = MagicMock(
+            side_effect=lambda id: {
+                "esrCsvPreview": MagicMock(),
+                "esrZonesList": mock_zones_list,
+                "esrRPSTechList": None,
+                "esrCESTechList": None,
+            }.get(id)
+        )
 
         try:
             cluster_app.render_esr_results()
@@ -464,18 +478,22 @@ class TestResetUploadedLcoeState:
         """reset_region_dependent_state() sets both uploaded LCOE attrs to None."""
         import pandas as pd
 
-        cluster_app.state.uploaded_lcoe_onshorewind = pd.DataFrame({
-            "region": ["r1", "r2"],
-            "cpa_mw": [100.0, 200.0],
-            "cf": [0.30, 0.35],
-            "lcoe": [40.0, 38.0],
-        })
-        cluster_app.state.uploaded_lcoe_solar = pd.DataFrame({
-            "region": ["s1"],
-            "cpa_mw": [300.0],
-            "cf": [0.22],
-            "lcoe": [35.0],
-        })
+        cluster_app.state.uploaded_lcoe_onshorewind = pd.DataFrame(
+            {
+                "region": ["r1", "r2"],
+                "cpa_mw": [100.0, 200.0],
+                "cf": [0.30, 0.35],
+                "lcoe": [40.0, 38.0],
+            }
+        )
+        cluster_app.state.uploaded_lcoe_solar = pd.DataFrame(
+            {
+                "region": ["s1"],
+                "cpa_mw": [300.0],
+                "cf": [0.22],
+                "lcoe": [35.0],
+            }
+        )
 
         cluster_app.reset_region_dependent_state()
 
