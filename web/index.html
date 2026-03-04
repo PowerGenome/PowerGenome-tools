@@ -1994,8 +1994,17 @@
                         </div>
                     </details>
 
-                    <button class="btn btn-secondary" id="addNewResourceBtn" type="button">Add New-build
-                        Resource</button>
+                    <div style="display: flex; align-items: center; gap: 10px; margin-top: 8px;">
+                        <button class="btn btn-secondary" id="addNewResourceBtn" type="button">Add New-build
+                            Resource</button>
+                        <label for="newResourceYearSelect" style="font-size: 12px; margin: 0;">Planning Year:</label>
+                        <select id="newResourceYearSelect" style="width: auto; min-width: 110px;">
+                            <option value="all" selected>All (default)</option>
+                        </select>
+                    </div>
+                    <div id="newResourceYearWarning"
+                        style="display: none; font-size: 11px; color: #856404; background: #fff3cd; padding: 4px 8px; border-radius: 3px; margin-top: 4px;">
+                    </div>
 
                     <div style="font-size: 11px; color: #666; margin-top: 8px; margin-bottom: 4px;">
                         Resources are listed below. Resources with attribute overrides are shown with a yellow
@@ -2133,8 +2142,17 @@
                         </label>
                     </div>
 
-                    <button class="btn btn-secondary" id="addModifiedResourceBtn" type="button">Add Modified
-                        Resource</button>
+                    <div style="display: flex; align-items: center; gap: 10px; margin-top: 8px;">
+                        <button class="btn btn-secondary" id="addModifiedResourceBtn" type="button">Add Modified
+                            Resource</button>
+                        <label style="font-size: 12px; margin: 0;">Planning Year:</label>
+                        <select id="modResourceYearSelect" style="width: auto; min-width: 110px;">
+                            <option value="all" selected>All (default)</option>
+                        </select>
+                    </div>
+                    <div id="modResourceYearWarning"
+                        style="display: none; font-size: 11px; color: #856404; background: #fff3cd; padding: 4px 8px; border-radius: 3px; margin-top: 4px;">
+                    </div>
                     <button class="btn btn-secondary" id="clearModifiedResourcesBtn" type="button">Clear Modified
                         Resources</button>
 

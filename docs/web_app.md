@@ -507,6 +507,30 @@ The Existing Plants step allows you to cluster existing generators within each m
 
 The New Resources step allows you to select new-build technologies from NREL's Annual Technology Baseline (ATB) and define custom modified resources.
 
+### Planning Year Tagging
+
+Each resource you add can optionally be tagged to a specific **planning year**. A **Planning Year** dropdown appears next to the "Add New-build Resource" and "Add Modified Resource" buttons. It is populated from the Model Years you entered in Step 2 (Model Setup), plus an "All (default)" option.
+
+* **All (default)**: The resource applies to every planning year. This is the base configuration written to `resources.yml`.
+* **Specific year** (e.g., 2030, 2035): The resource applies only to that year. Year-specific resources are written to `scenario_management.yml` as per-year overrides (see [Export](#step-9-export) for details).
+
+Resources tagged to a specific year show a blue **year badge** (e.g., "2030") next to their name in the resource list.
+
+!!! tip "Required: always add an 'All (default)' version"
+    If you add a year-specific resource but no "All (default)" version exists for the same technology/detail/case combination, a soft yellow warning appears: *"Consider also adding an 'All (default)' version…"*. The "All" version serves as the baseline; year-specific entries override or supplement it.
+
+#### Manual Text area Format
+
+The manual text area reflects year-specific resources with `# year:N` comments. For example:
+
+```text
+Natural Gas | CCCCSAvgCF | Mid | 500
+# year:2035
+Natural Gas | CCCCSAvgCF | Mid | 750
+```
+
+You can also type `# year:N` comments directly in the text area to tag resources to specific years.
+
 ### Standard ATB Resources
 
 If ATB data is available, use the dropdowns to select:
@@ -597,52 +621,112 @@ Heat Rate (MMBtu/MWh): mul:0.95
 
 ##### Generated Output
 
-When attribute overrides are provided, the web app generates a `resource_modifiers` section in `resources.yml`. This format matches PowerGenome's expected structure for modifying ATB resources:
+All new resources added to your model automatically generate entries in the `resource_modifiers` section of `resources.yml`. The web app includes the following for every new resource:
+
+* **technology** - The technology name you selected or entered
+* **tech_detail** - The technology detail/variant you selected or entered
+* **Automatic defaults** - For certain resource types (see [Automatic Battery Storage Defaults](#automatic-battery-storage-defaults))
+* **Attribute overrides** - Any cost/performance adjustments you specified
+
+This format matches PowerGenome's expected structure for modifying ATB resources.
 
 **Example output in resources.yml:**
 
 ```yaml
 resource_modifiers:
-  batteries:
+  utility_scale_battery_storage_lithium_ion:
     technology: Utility-Scale Battery Storage
     tech_detail: Lithium Ion
-    Var_OM_Cost_per_MWh: [add, 0.15]
-    Var_OM_Cost_per_MWh_In: 0.15
-    wacc_real: 0.0467
-    capex_mwh: [mul, 0.9]
+    Var_OM_Cost_per_MWh: 0.15                # Automatic default
+    Var_OM_Cost_per_MWh_In: 0.15            # Automatic default
+  solar_utc_mid:
+    technology: Solar Photovoltaic
+    tech_detail: Utility-scale
+    capex_mw: [mul, 0.95]                    # User-specified override
+  wind_mid:
+    technology: Onshore Wind
+    tech_detail: ""
+    capex_mw: 1250000                        # User-specified override
 ```
 
 In this example:
 
-* `Var_OM_Cost_per_MWh` uses a relative change (add $0.15/MWh to ATB value)
-* `Var_OM_Cost_per_MWh_In` and `wacc_real` use absolute values
-* `capex_mwh` uses a relative change (multiply ATB value by 0.9)
+* The Utility Battery entries automatically include variable O&M defaults
+* The Solar entry includes a user-specified relative adjustment (multiply CAPEX by 0.95)
+* The Wind entry includes a user-specified absolute CAPEX value
+* Attribute overrides can be either absolute values (e.g., `1250000`) or relative operations (e.g., `[add, 1000]`, `[mul, 1.1]`)
 
-##### Difference from Modified New Resources
+##### Automatic Battery Storage Defaults
 
-The attribute override feature serves a different purpose than the **Modified New Resources** section:
+Battery storage and other storage technologies automatically receive default variable O&M cost values. This simplifies the initial configuration of storage resources and ensures reasonable default operating costs.
 
-| Feature | Purpose | Use Case | Output Section |
-|---------|---------|----------|----------------|
-| **Attribute Overrides** | Adjust cost/performance of standard ATB resources | Minor tweaks to ATB values (e.g., regional cost multipliers, optimistic assumptions) | `resource_modifiers` in resources.yml |
-| **Modified New Resources** | Create entirely new resource types | New technologies not in ATB (e.g., Hydrogen CT, Ammonia-fired plants, novel storage) | `modified_new_resources` in resources.yml |
+**Detection Logic**:
+The web app identifies battery storage resources when:
 
-**Use attribute overrides when:**
+* The **technology** name contains "battery" or "storage" (case-insensitive), **AND**
+* The **tech_detail** contains "lithium" (case-insensitive, e.g., "Lithium Ion")
 
-* You want to use an ATB technology but adjust specific parameters
+**Automatic Default Values**:
+When a battery storage resource is detected, the following defaults are automatically:
+
+1. **Displayed in the UI** - The override attributes panel shows the default values ($0.15/MWh)
+2. **Added to the output** - These values are included in the generated `resource_modifiers` section
+
+The defaults are:
+
+* `Var_OM_Cost_per_MWh: 0.15` - Variable O&M cost per unit of energy discharged ($0.15/MWh)
+* `Var_OM_Cost_per_MWh_In: 0.15` - Variable O&M cost per unit of energy charged ($0.15/MWh)
+
+**Example**: If you add "Utility-Scale Battery Storage" with detail "Lithium Ion", these default values are automatically populated in the override panel, and they're included in the output even if you don't modify them.
+
+**Overriding Defaults**: If you want different values for battery storage:
+
+1. Expand the **"Optional: Override cost/performance attributes"** panel
+2. The default values ($0.15/MWh) will be automatically filled in the **Variable O&M ($/MWh)** and **Variable O&M In ($/MWh)** fields
+3. Simply clear these fields and enter your desired values, or modify the displayed defaults directly
+4. Your values will override the automatic defaults in the generated output
+
+##### Appearance in Scenario Files
+
+**Base Resources (resources.yml)**:
+All "All (default)" new resources generate entries in `resource_modifiers` within `resources.yml`.
+
+**Year-Specific Resources (scenario_management.yml)**:
+If you tag any resources to specific planning years (see [Planning Year Tagging](#planning-year-tagging)), the Export step generates `scenario_management.yml` with per-year `resource_modifiers` overrides.
+
+For each planning year, the generated `resource_modifiers` includes:
+
+* All "All (default)" entries (base configuration)
+* All year-specific entries for that year (which override the base by key)
+
+This allows you to adjust resource definitions across different planning years while maintaining a consistent base configuration. For example, you might tag a cheaper battery cost case to a specific future year to reflect anticipated technology cost reductions.
+
+##### Comparing Standard and Modified Resources
+
+The web app supports two ways to define new resources:
+
+| Feature | Purpose | When to Use | Output Sections |
+|---------|---------|-------------|-----------------|
+| **Standard New Resources** | Use ATB technologies with optional attribute adjustments | Most cases—when ATB covers your needs and you just want to tune parameters or accept defaults | `resource_modifiers` in resources.yml (or scenario_management.yml for year-specific) |
+| **Modified New Resources** | Create entirely new resource types with custom fuels | Only when you need completely new technologies, custom fuel types (hydrogen, ammonia), or entirely different resource definitions | `modified_new_resources` (and related updates to `fuels.yml` and `resource_tags.yml`) |
+
+**Use Standard Resources when:**
+
+* You want an ATB technology and are satisfied with defaults
+* You want to adjust cost/performance parameters (CAPEX, O&M, heat rate, etc.)
 * You need regional cost multipliers (e.g., "solar costs 15% more in this region")
-* You want to test sensitivity to specific cost/performance parameters
-* The technology exists in ATB but you have more accurate local data
+* You want to test sensitivity to specific cost/performance assumptions
+* The technology exists in ATB with the fuel type and characteristics you need
 
-**Use modified new resources when:**
+**Use Modified Resources when:**
 
 * You need a completely new fuel type (e.g., hydrogen, ammonia)
 * You're modeling a technology not in ATB
-* You need to change multiple fundamental characteristics at once
-* You want to give the resource a completely different name/classification
+* You need to change multiple fundamental characteristics (technology name, fuel type, resource class)
+* You want a completely different resource definition
 
 !!! tip
-    Resource attribute overrides provide a streamlined way to adjust ATB values without creating entirely new resource definitions. This is especially useful for scenario analysis where you want to test different cost assumptions while maintaining consistency with ATB data structure.
+    **Standard resources are simpler and faster to configure.** They use the ATB structure and automatically generate `resource_modifiers` entries. Only use Modified Resources when you genuinely need to create something outside ATB's scope.
 
 #### Manual Entry
 
@@ -662,7 +746,9 @@ Create custom resources by modifying existing ATB entries:
 6. **Attribute Modifiers**: Add custom YAML attributes to override base resource properties
 
 !!! note
-    Modified resources are added to the `modified_new_resources` section of `resources.yml` and automatically update related settings in `fuels.yml` and `resource_tags.yml`.
+    Modified resources are added to the `modified_new_resources` section of `resources.yml`. They also automatically update related settings in `fuels.yml` and `resource_tags.yml`.
+
+    For **simple attribute adjustments without identity changes**, these are also reflected in `resource_modifiers` (the same section generated for standard resources). This means you can use either standard resources or modified resources to adjust parameters—choose based on your complexity needs.
 
 ## Step 5: Fuels
 
@@ -896,7 +982,7 @@ The Export step generates complete PowerGenome settings files based on all previ
 
 ### Generated Files
 
-The app generates seven YAML files:
+The app always generates these seven YAML files:
 
 * `model_definition.yml` - Model regions, years, and financial settings
 * `resources.yml` - Existing plant clusters, new resources, resource attribute modifiers, and modified resources
@@ -906,13 +992,45 @@ The app generates seven YAML files:
 * `resource_tags.yml` - Resource classification tags
 * `startup_costs.yml` - Startup cost parameters
 
+#### Conditional Scenario Management Files
+
+If any New Resources (Step 4) are tagged to a **specific planning year** (rather than "All (default)"), the Export step additionally generates three files:
+
+* `scenario_management.yml` - Contains `settings_management` with per-year `new_resources`, `resource_modifiers`, and `modified_new_resources` overrides directly under `all_cases` (a PowerGenome special key that applies settings to every case).
+* `scenario_inputs.csv` - CSV with `case_id,year` columns, one row per planning year, all with case ID `baseline`.
+* `extra_inputs.yml` - YAML with `input_folder: extra_inputs` and `scenario_definitions_fn: scenario_inputs.csv`.
+
+If **all** resources use "All (default)", these three files are **not** generated and the export behaves exactly as before.
+
+##### How Per-Year Overrides Work
+
+The generated `scenario_management.yml` follows PowerGenome's `settings_management` structure:
+
+```yaml
+settings_management:
+  2030:
+    all_cases:
+      new_resources: [...]  # "all" list + 2030-specific additions
+      resource_modifiers:   # "all" modifiers merged with 2030-specific keys
+        ...
+  2035:
+    all_cases:
+      new_resources: [...]  # "all" list + 2035-specific additions
+      resource_modifiers:   # "all" modifiers merged with 2035-specific keys (if any)
+```
+
+* Resources tagged "All (default)" form the base `new_resources` list in `resources.yml`.
+* For each year that has year-specific resources, the generated `new_resources` list is the full "all" list **plus** year-specific additions.
+* Resource modifiers merge by key: year-specific keys override "all" keys for that year.
+
 The app intentionally **does not generate** these files (configure separately):
 
 * `data.yml`
-* `scenario_management.yml`
 * `time_clustering.yml`
-* `extra_inputs.yml`
 * `demand.yml`
+
+!!! note
+    `scenario_management.yml`, `scenario_inputs.csv`, and `extra_inputs.yml` are only generated when year-specific resources exist. If you later remove all year-specific resources, these files will no longer be included in the export.
 
 ### How to Export
 

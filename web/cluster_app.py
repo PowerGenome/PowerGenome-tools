@@ -132,6 +132,9 @@ class AppState:
 
         # Settings generation (Settings tab)
         self.settings_yamls = {}  # filename -> yaml string
+        self.new_resources = (
+            []
+        )  # list of dicts: {technology, tech_detail, cost_case, size_mw, planning_year}
         self.modified_new_resources = {}  # key -> metadata + schema for resources.yml
         self.atb_options = []  # list[dict] loaded from web/data/atb_options.json
         self.atb_index = {}  # year -> tech -> detail -> sorted(list(cost_case))
@@ -1910,9 +1913,40 @@ def on_model_years_change(event):
 
     This is called when the user modifies model years in the Model Setup step.
     It resets downstream state that depends on planning years and refreshes the ESR UI.
+    Also updates the planning-year dropdowns in the New Resources step.
     """
     # Clear ESR-related state that depends on planning years
     reset_planning_year_dependent_state()
+
+    # Update planning-year dropdowns for new resources
+    populate_resource_year_selects()
+
+    # Warn if any existing resources reference a year that was removed
+    model_years = _get_model_years_from_dom()
+    model_years_set = set(model_years)
+    orphaned_years = set()
+    for r in state.new_resources:
+        py = r.get("planning_year")
+        if py == "all":
+            continue
+        try:
+            py_int = int(py)
+        except (TypeError, ValueError):
+            # If planning_year is not a valid integer, skip orphaned-year checks for this resource
+            continue
+        if py_int not in model_years_set:
+            orphaned_years.add(py_int)
+    for v in state.modified_new_resources.values():
+        py = v.get("planning_year", "all")
+        if py == "all":
+            continue
+        try:
+            py_int = int(py)
+        except (TypeError, ValueError):
+            # If planning_year is not a valid integer, skip orphaned-year checks for this resource
+            continue
+        if py_int not in model_years_set:
+            orphaned_years.add(py_int)
 
     # Refresh ESR results UI so that any previously displayed constraints/zones/CSV
     # are cleared or updated to reflect the reset state.
@@ -1922,14 +1956,14 @@ def on_model_years_change(event):
         # If ESR UI rendering is not available in this context, skip UI refresh.
         pass
 
-    # Inform the user that ESR policies were reset due to the change in model years.
+    # Inform the user about resets
+    msg = "ESR policy state has been reset because model years changed. Please rerun ESR analysis."
+    if orphaned_years:
+        years_str = ", ".join(str(y) for y in sorted(orphaned_years))
+        msg += f" Warning: some resources target year(s) {years_str} which are no longer in your model years."
     try:
-        set_status(
-            "ESR policy state has been reset because model years changed. Please rerun ESR analysis.",
-            status_type="info",
-        )
+        set_status(msg, status_type="info")
     except NameError:
-        # If status messaging is not available, fail silently.
         pass
 
 
@@ -3856,6 +3890,7 @@ def populate_atb_picker():
     _set_select_options(case_el, cases, selected_value=selected_case)
     update_atb_ccs_cost_visibility()
     update_size_field_from_atb_size()
+    populate_default_battery_attributes()
 
 
 def on_atb_picker_change(event=None):
@@ -3956,6 +3991,52 @@ def update_size_field_from_atb_size():
         size_el.value = "100"
 
 
+def populate_default_battery_attributes():
+    """Auto-populate default battery O&M cost attributes in the override panel.
+
+    For battery storage with Lithium Ion, sets default values for:
+    - Variable O&M ($/MWh): 0.15
+    - Variable O&M In ($/MWh): 0.15
+
+    Clears these fields for non-battery technologies.
+    """
+    tech_el = document.getElementById("atbTechSelect")
+    detail_el = document.getElementById("atbTechDetailSelect")
+
+    if not (tech_el and detail_el):
+        return
+
+    tech = _get_select_value(tech_el, "").strip()
+    detail = _get_select_value(detail_el, "").strip()
+
+    # Get default modifiers
+    defaults = _get_default_resource_modifiers(tech, detail)
+
+    # Map ATB keys to input element IDs
+    atb_key_to_element_id = {
+        "Var_OM_Cost_per_MWh": "atbOverrideVarOM",
+        "Var_OM_Cost_per_MWh_In": "atbOverrideVarOMIn",
+    }
+
+    # First, clear any non-default values in battery fields
+    for atb_key, elem_id in atb_key_to_element_id.items():
+        elem = document.getElementById(elem_id)
+        if elem and atb_key not in defaults:
+            # Only clear if field is empty or contains a default value
+            if not elem.value or elem.value.strip() in ["", "0.15"]:
+                elem.value = ""
+
+    # Then populate fields that have defaults
+    for atb_key, value in defaults.items():
+        elem_id = atb_key_to_element_id.get(atb_key)
+        if elem_id:
+            elem = document.getElementById(elem_id)
+            if elem:
+                # Only set if the field is currently empty
+                if not elem.value or elem.value.strip() == "":
+                    elem.value = str(value)
+
+
 def update_atb_ccs_cost_visibility():
     """Show CCS disposal cost input only for CCS technologies in ATB picker."""
     detail_el = document.getElementById("atbTechDetailSelect")
@@ -3991,6 +4072,156 @@ def parse_int_list(text):
     return out
 
 
+def _get_model_years_from_dom():
+    """Read model years from the DOM input field."""
+    return parse_int_list(_get_select_value(document.getElementById("modelYears"), ""))
+
+
+def populate_resource_year_selects():
+    """Populate both planning-year dropdowns from Model Setup's model years.
+
+    Called on model year changes and at initial load. Preserves current
+    selection if still valid.
+    """
+    model_years = _get_model_years_from_dom()
+
+    for sel_id in ("newResourceYearSelect", "modResourceYearSelect"):
+        sel = document.getElementById(sel_id)
+        if not sel:
+            continue
+        current = _get_select_value(sel, "all")
+        options = ["All (default)"] + [str(y) for y in model_years]
+        values = ["all"] + [str(y) for y in model_years]
+        # Build option HTML manually to keep "all" as value for the display text
+        parts = []
+        for val, label in zip(values, options):
+            selected = "selected" if val == current else ""
+            parts.append(
+                f"<option value='{html.escape(val)}' {selected}>{html.escape(label)}</option>"
+            )
+        sel.innerHTML = "".join(parts)
+
+
+def _get_resource_planning_year(select_id):
+    """Read the selected planning year from a resource year dropdown.
+
+    Returns ``"all"`` or an ``int``.
+    """
+    val = _get_select_value(document.getElementById(select_id), "all")
+    if val == "all":
+        return "all"
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return "all"
+
+
+def sync_textarea_from_state():
+    """Rebuild the manual textarea from ``state.new_resources`` so users
+    can see/export the current list.  Year-specific resources get a
+    trailing comment.
+    """
+    raw_el = document.getElementById("newResourcesRaw")
+    if not raw_el:
+        return
+    lines = []
+    for r in state.new_resources:
+        line = f"{r['technology']} | {r['tech_detail']} | {r['cost_case']} | {r['size_mw']}"
+        if r.get("planning_year") != "all":
+            line += f"  # year:{r['planning_year']}"
+        lines.append(line)
+    raw_el.value = "\n".join(lines)
+
+
+def _on_textarea_input():
+    """Sync state.new_resources from the manual textarea.
+
+    Parses the textarea, extracting an optional ``# year:<N>`` comment at
+    the end of each line.  Resources without a year comment default to
+    ``planning_year="all"``.
+    """
+    raw_el = document.getElementById("newResourcesRaw")
+    if not raw_el:
+        return
+    text = raw_el.value or ""
+    new_list = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # Extract optional year comment
+        planning_year = "all"
+        if "# year:" in line:
+            main_part, _, year_part = line.partition("# year:")
+            line = main_part.strip()
+            year_str = year_part.strip()
+            try:
+                planning_year = int(year_str)
+            except (ValueError, TypeError):
+                planning_year = "all"
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) != 4:
+            continue
+        tech, detail, case, size = parts
+        if not tech or not detail or not case or not size:
+            continue
+        try:
+            size_val = int(float(size))
+        except Exception:
+            continue
+        new_list.append(
+            {
+                "technology": tech,
+                "tech_detail": detail,
+                "cost_case": case,
+                "size_mw": size_val,
+                "planning_year": planning_year,
+            }
+        )
+    state.new_resources = new_list
+    render_new_resources_list()
+
+
+def _check_year_default_warning(tech, detail, case, planning_year, warning_el_id):
+    """Show a soft warning if user adds a year-specific resource without an
+    'All (default)' counterpart.  Returns the warning element (may be hidden).
+    """
+    warn_el = document.getElementById(warning_el_id)
+    if not warn_el:
+        return
+    if planning_year == "all":
+        warn_el.style.display = "none"
+        return
+
+    # Check state.new_resources for an "all" version of same tech+detail+case
+    has_all = any(
+        r["technology"] == tech
+        and r["tech_detail"] == detail
+        and r["cost_case"] == case
+        and r.get("planning_year") == "all"
+        for r in state.new_resources
+    )
+    # Also check modified_new_resources
+    if not has_all:
+        has_all = any(
+            v.get("technology") == tech
+            and v.get("tech_detail") == detail
+            and v.get("cost_case") == case
+            and v.get("planning_year") == "all"
+            for v in state.modified_new_resources.values()
+        )
+    if not has_all:
+        warn_el.innerHTML = (
+            f"⚠ No <b>All (default)</b> entry for "
+            f"<em>{html.escape(tech)} — {html.escape(detail)} — {html.escape(case)}</em>. "
+            f"Other planning years will not include this resource unless you also add an "
+            f"'All (default)' version."
+        )
+        warn_el.style.display = "block"
+    else:
+        warn_el.style.display = "none"
+
+
 def parse_new_resources_text(text):
     """Parse manual new_resources lines.
 
@@ -4019,17 +4250,25 @@ def parse_new_resources_text(text):
     return items
 
 
+def _year_badge_html(planning_year):
+    """Return an inline HTML badge for a planning year, or empty string for 'all'."""
+    if planning_year == "all":
+        return ""
+    return (
+        f" <span style='display: inline-block; background: #0d6efd; color: white; "
+        f"font-size: 9px; padding: 1px 5px; border-radius: 8px; vertical-align: middle;'>"
+        f"{planning_year}</span>"
+    )
+
+
 def render_new_resources_list():
     """Render both regular and modified (attribute-override) new resources together."""
     container = document.getElementById("newResourcesList")
-    raw_el = document.getElementById("newResourcesRaw")
     if not container:
         return
 
-    # Parse regular resources from textarea
-    regular_items = []
-    if raw_el:
-        regular_items = parse_new_resources_text(raw_el.value)
+    # Use state.new_resources as the source of truth for regular resources
+    regular_items = list(state.new_resources)
 
     # Get resources with attribute modifiers
     modified_items = []
@@ -4052,8 +4291,14 @@ def render_new_resources_list():
 
     parts = []
 
-    # Render regular resources with delete buttons
-    for idx, (tech, detail, case, size) in enumerate(regular_items):
+    # Render regular resources with delete buttons and year badges
+    for idx, r in enumerate(regular_items):
+        tech = r["technology"]
+        detail = r["tech_detail"]
+        case = r["cost_case"]
+        size = r["size_mw"]
+        planning_year = r.get("planning_year", "all")
+
         ccs_fraction = _extract_ccs_capture_fraction(detail)
         ccs_note = ""
         if ccs_fraction is not None:
@@ -4066,9 +4311,10 @@ def render_new_resources_list():
                 f"<span style='color: #3b4a3f; font-size: 10px;'>"
                 f"(CCS disposal ${ccs_cost}/tCO2)</span>"
             )
+        year_badge = _year_badge_html(planning_year)
         parts.append(
             f"<div class='candidate-item' style='display: flex; justify-content: space-between; align-items: center;'>"
-            f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW{ccs_note}</span>"
+            f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW{ccs_note}{year_badge}</span>"
             f"<button onclick='window.deleteNewResource({idx})' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
             f"</div>"
         )
@@ -4079,6 +4325,7 @@ def render_new_resources_list():
         detail = item.get("tech_detail")
         case = item.get("cost_case")
         size = item.get("size_mw", 1)
+        planning_year = item.get("planning_year", "all")
 
         # Build modifier summary
         mod_summary = []
@@ -4101,10 +4348,11 @@ def render_new_resources_list():
                 f"(CCS disposal ${ccs_cost}/tCO2)</span>"
             )
 
+        year_badge = _year_badge_html(planning_year)
         parts.append(
             f"<div class='candidate-item' style='display: flex; justify-content: space-between; align-items: center; background-color: #fff3cd;'>"
             f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW{ccs_note} "
-            f"<span style='color: #856404; font-size: 10px;'>({html.escape(mod_text)})</span></span>"
+            f"<span style='color: #856404; font-size: 10px;'>({html.escape(mod_text)})</span>{year_badge}</span>"
             f"<button onclick='window.deleteModifiedNewResource(\"{html.escape(key, quote=True)}\")' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
             f"</div>"
         )
@@ -4133,6 +4381,32 @@ def on_add_new_resource(event):
 
     if not tech or not detail or not case:
         set_status("ATB index not available; add manually below.", "error")
+        return
+
+    # Read planning year from the dropdown
+    planning_year = _get_resource_planning_year("newResourceYearSelect")
+
+    # Reject duplicate (technology, tech_detail, planning_year) combinations.
+    # A given tech+detail slot may only appear once per planning year (or once
+    # for "all years") to avoid ambiguous cost-case assignments in the export.
+    duplicate = any(
+        r["technology"] == tech
+        and r["tech_detail"] == detail
+        and r.get("planning_year") == planning_year
+        for r in state.new_resources
+    ) or any(
+        v.get("technology") == tech
+        and v.get("tech_detail") == detail
+        and v.get("planning_year") == planning_year
+        for v in state.modified_new_resources.values()
+    )
+    if duplicate:
+        year_label = planning_year if planning_year != "all" else "all years"
+        set_status(
+            f"{tech} — {detail} is already added for {year_label}. "
+            f"Remove the existing entry before adding a different configuration.",
+            "error",
+        )
         return
 
     # Collect optional attribute overrides from the collapsible panel
@@ -4232,9 +4506,15 @@ def on_add_new_resource(event):
             "fuel_desc": fuel_desc,
             "ccs_capture_fraction": ccs_fraction,
             "ccs_disposal_cost": ccs_disposal_cost,
+            "planning_year": planning_year,
         }
         render_modified_resources_list()
         render_new_resources_list()  # Also update the main list to show this resource
+
+        # Show year-default warning if needed
+        _check_year_default_warning(
+            tech, detail, case, planning_year, "newResourceYearWarning"
+        )
 
         # Clear override fields for next entry
         for attr, el_id in override_fields:
@@ -4246,14 +4526,20 @@ def on_add_new_resource(event):
                     pass
 
         n = len(attr_overrides)
+        year_label = planning_year if planning_year != "all" else "all years"
         set_status(
-            f"Added '{key}' as a modified resource with {n} attribute override(s).",
+            f"Added '{key}' as a modified resource with {n} attribute override(s) for {year_label}.",
             "info",
         )
     else:
-        line = f"{tech} | {detail} | {case} | {size}"
-        existing = raw_el.value.strip()
-        raw_el.value = (existing + "\n" + line).strip() if existing else line
+        # Store in state.new_resources instead of directly in the textarea
+        resource_entry = {
+            "technology": tech,
+            "tech_detail": detail,
+            "cost_case": case,
+            "size_mw": size,
+            "planning_year": planning_year,
+        }
         ccs_fraction = _extract_ccs_capture_fraction(detail)
         if ccs_fraction is not None:
             cost_el = document.getElementById("atbCcsDisposalCost")
@@ -4266,46 +4552,32 @@ def on_add_new_resource(event):
                 return
             tech_name = f"{tech}_{detail}"
             state.ccs_disposal_cost_map[tech_name] = ccs_disposal_cost
+
+        state.new_resources.append(resource_entry)
+        sync_textarea_from_state()
         render_new_resources_list()
+
+        # Show year-default warning if needed
+        _check_year_default_warning(
+            tech, detail, case, planning_year, "newResourceYearWarning"
+        )
+
+        year_label = planning_year if planning_year != "all" else "all years"
+        set_status(
+            f"Added {tech} — {detail} — {case} — {size} MW for {year_label}.",
+            "info",
+        )
 
 
 def delete_new_resource(index):
-    """Delete a regular new resource by index.
-
-    The index refers to the N-th parsed resource line (as shown in the UI).
-    Operates on original textarea contents to preserve comments and any
-    non-conforming lines.
-    """
-    raw_el = document.getElementById("newResourcesRaw")
-    if not raw_el:
-        return
-
-    original_text = raw_el.value or ""
-    lines = original_text.splitlines()
-
-    new_lines = []
-    parsed_idx = 0
-    deleted = False
-
-    for line in lines:
-        parts = [p.strip() for p in line.split("|")]
-        is_resource_line = (
-            len(parts) == 4 and all(parts) and not line.strip().startswith("#")
-        )
-
-        if is_resource_line:
-            if parsed_idx == index and not deleted:
-                deleted = True
-                parsed_idx += 1
-                continue
-            parsed_idx += 1
-
-        new_lines.append(line)
-
-    if deleted:
-        raw_el.value = "\n".join(new_lines)
+    """Delete a regular new resource by index from ``state.new_resources``."""
+    if 0 <= index < len(state.new_resources):
+        state.new_resources.pop(index)
+        sync_textarea_from_state()
         render_new_resources_list()
         set_status("Resource deleted.", "success")
+    else:
+        set_status(f"Invalid resource index: {index}", "error")
 
 
 def delete_modified_new_resource(key):
@@ -4358,6 +4630,7 @@ def render_modified_resources_list():
         new_tech = item.get("new_technology")
         fuel_desc = item.get("fuel_desc", "")
         tag_class = item.get("tag_class", "")
+        planning_year = item.get("planning_year", "all")
 
         # Build a summary of attribute modifiers
         attr_mods = item.get("attr_modifiers") or {}
@@ -4371,9 +4644,10 @@ def render_modified_resources_list():
                 mod_summary.append(f"{attr}={val}")
 
         mod_text = "; ".join(mod_summary) if mod_summary else "no attr modifiers"
+        year_badge = _year_badge_html(planning_year)
         parts.append(
             f"<div class='candidate-item' style='display: flex; justify-content: space-between; align-items: center;'>"
-            f"<span><strong>{html.escape(key)}</strong> — {html.escape(str(new_tech))} — {html.escape(str(tag_class))} — {html.escape(str(fuel_desc))} — ({html.escape(mod_text)})</span>"
+            f"<span><strong>{html.escape(key)}</strong> — {html.escape(str(new_tech))} — {html.escape(str(tag_class))} — {html.escape(str(fuel_desc))} — ({html.escape(mod_text)}){year_badge}</span>"
             f"<button onclick='window.deleteModifiedNewResource(\"{html.escape(key, quote=True)}\")' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
             f"</div>"
         )
@@ -4456,6 +4730,30 @@ _UI_TO_ATB_KEY = {
     "variable_o_m_mwh": "Var_OM_Cost_per_MWh",
     "variable_o_m_mwh_in": "Var_OM_Cost_per_MWh_In",
 }
+
+
+def _get_default_resource_modifiers(technology, tech_detail):
+    """Get default modifier values for a resource.
+
+    Returns a dict with default attribute modifiers. Currently, utility-scale
+    battery storage gets variable O&M defaults.
+
+    Args:
+        technology: The technology name (e.g., "Utility-Scale Battery Storage")
+        tech_detail: The tech detail (e.g., "Lithium Ion")
+
+    Returns:
+        dict: Default modifiers to add to resource_modifiers entry
+    """
+    defaults = {}
+
+    # Default variable O&M for battery storage
+    if "battery" in technology.lower() or "storage" in technology.lower():
+        if "lithium" in tech_detail.lower():
+            defaults["Var_OM_Cost_per_MWh"] = 0.15
+            defaults["Var_OM_Cost_per_MWh_In"] = 0.15
+
+    return defaults
 
 
 def _auto_modified_key(tech, detail):
@@ -4606,6 +4904,9 @@ def on_add_modified_resource(event):
         new_detail
     ) or _extract_ccs_capture_fraction(base_detail)
 
+    # Read planning year from the dropdown
+    planning_year = _get_resource_planning_year("modResourceYearSelect")
+
     state.modified_new_resources[key] = {
         # resources.yml schema
         "technology": base_tech,
@@ -4626,6 +4927,7 @@ def on_add_modified_resource(event):
         "is_commit": bool(is_commit),
         "fuel_desc": fuel_desc,
         "ccs_capture_fraction": ccs_fraction,
+        "planning_year": planning_year,
     }
 
     # Clear attribute override fields for next entry
@@ -4638,7 +4940,14 @@ def on_add_modified_resource(event):
                 pass
 
     render_modified_resources_list()
-    set_status(f"Added modified resource: {key}", "success")
+
+    # Show year-default warning if needed
+    _check_year_default_warning(
+        base_tech, base_detail, base_case, planning_year, "modResourceYearWarning"
+    )
+
+    year_label = planning_year if planning_year != "all" else "all years"
+    set_status(f"Added modified resource: {key} for {year_label}", "success")
 
 
 def _get_region_aggregations_or_raise():
@@ -6368,9 +6677,12 @@ def generate_resources_settings():
     if not isinstance(alt_num_clusters, dict) or not alt_num_clusters:
         alt_num_clusters = None
 
-    # New-build resources come from textarea
-    raw_el = document.getElementById("newResourcesRaw")
-    new_resources = parse_new_resources_text(raw_el.value if raw_el else "")
+    # New-build resources from state — only "all" year (base) resources go into resources.yml
+    new_resources = [
+        [r["technology"], r["tech_detail"], r["cost_case"], r["size_mw"]]
+        for r in state.new_resources
+        if r.get("planning_year") == "all"
+    ]
     if not new_resources:
         # Seed a minimal starter set
         new_resources = [
@@ -6435,13 +6747,36 @@ def generate_resources_settings():
         ),
     }
 
-    # Build resource_modifiers from modified_new_resources.
-    # Only include attribute-only overrides (no identity or fuel changes) with
-    # a non-empty attr_modifiers dict. Keys are translated from internal UI names
-    # to ATB column-style names (e.g. variable_o_m_mwh → Var_OM_Cost_per_MWh).
+    # Build resource_modifiers from state.new_resources and modified_new_resources.
+    # Every new resource gets an entry with at least "technology" and "tech_detail".
+    # Additionally, apply default modifiers (e.g., battery storage O&M defaults).
+    # For modified_new_resources, only include attribute-only overrides (no identity
+    # or fuel changes) with a non-empty attr_modifiers dict. Keys are translated from
+    # internal UI names to ATB column-style names (e.g. variable_o_m_mwh → Var_OM_Cost_per_MWh).
+    resource_modifiers = {}
+
+    # First, add all "all" year new_resources with default modifiers
+    for r in state.new_resources:
+        if r.get("planning_year") == "all":
+            tech = r["technology"]
+            detail = r["tech_detail"]
+            # Generate a default key from tech and detail
+            key = _auto_modified_key(tech, detail)
+            modifier_dict = {
+                "technology": tech,
+                "tech_detail": detail,
+            }
+            # Add any default modifiers for this resource type
+            defaults = _get_default_resource_modifiers(tech, detail)
+            modifier_dict.update(defaults)
+            resource_modifiers[key] = modifier_dict
+
+    # Then, add entries from modified_new_resources that have attribute modifiers
     if state.modified_new_resources:
-        resource_modifiers = {}
         for k, v in sorted(state.modified_new_resources.items()):
+            # Only include "all" year (base) entries in resources.yml
+            if v.get("planning_year", "all") != "all":
+                continue
             attr_mods = v.get("attr_modifiers")
             if not isinstance(attr_mods, dict) or not attr_mods:
                 continue
@@ -6463,14 +6798,19 @@ def generate_resources_settings():
             for ui_key, val in attr_mods.items():
                 atb_key = _UI_TO_ATB_KEY.get(ui_key, ui_key)
                 modifier_dict[atb_key] = val
+            # Override the entry if it already exists from new_resources
             resource_modifiers[k] = modifier_dict
-        if resource_modifiers:
-            out["resource_modifiers"] = resource_modifiers
+
+    if resource_modifiers:
+        out["resource_modifiers"] = resource_modifiers
 
     # Also output modified_new_resources for custom fuels (if any have new fuel types)
     modified_with_fuel = {}
     if state.modified_new_resources:
         for k, v in sorted(state.modified_new_resources.items()):
+            # Only include "all" year (base) entries in resources.yml
+            if v.get("planning_year", "all") != "all":
+                continue
             # Only include in modified_new_resources if it has custom fuel or needs the full structure
             if v.get("fuel_type") == "new" or (
                 v.get("new_technology") != v.get("technology")
@@ -6500,6 +6840,263 @@ def generate_resources_settings():
     resources_yaml = yaml.dump(out, default_flow_style=False, sort_keys=False)
     comment_block = _format_renewables_capacity_comments()
     return f"{comment_block}\n{resources_yaml}" if comment_block else resources_yaml
+
+
+# ---------------------------------------------------------------------------
+# Scenario management generation (per-year resource overrides)
+# ---------------------------------------------------------------------------
+
+
+def _has_year_specific_resources():
+    """Return True if any new or modified resources target a specific planning year."""
+    for r in state.new_resources:
+        if r.get("planning_year") != "all":
+            return True
+    for v in state.modified_new_resources.values():
+        if v.get("planning_year", "all") != "all":
+            return True
+    return False
+
+
+def _get_year_specific_years():
+    """Return the sorted set of specific planning years referenced by resources."""
+    years = set()
+    for r in state.new_resources:
+        py = r.get("planning_year")
+        if py != "all":
+            years.add(int(py))
+    for v in state.modified_new_resources.values():
+        py = v.get("planning_year", "all")
+        if py != "all":
+            years.add(int(py))
+    return sorted(years)
+
+
+def _build_new_resources_for_year(year):
+    """Build the ``new_resources`` list for a specific planning year.
+
+    Combines: all "all" resources + resources tagged to this year.
+    """
+    base = [
+        [r["technology"], r["tech_detail"], r["cost_case"], r["size_mw"]]
+        for r in state.new_resources
+        if r.get("planning_year") == "all"
+    ]
+    year_specific = [
+        [r["technology"], r["tech_detail"], r["cost_case"], r["size_mw"]]
+        for r in state.new_resources
+        if r.get("planning_year") == year
+    ]
+    return base + year_specific
+
+
+def _build_resource_modifiers_for_year(year):
+    """Build the ``resource_modifiers`` dict for a specific planning year.
+
+    Merges: all "all" entries + year-specific entries (which override by key).
+    Includes all new_resources with default modifiers, plus only attribute-only
+    overrides from modified_new_resources (no identity/fuel changes).
+    """
+    modifiers = {}
+
+    # First, add all "all" year new_resources with default modifiers
+    for r in state.new_resources:
+        if r.get("planning_year") == "all":
+            tech = r["technology"]
+            detail = r["tech_detail"]
+            # Generate a default key from tech and detail
+            key = _auto_modified_key(tech, detail)
+            modifier_dict = {
+                "technology": tech,
+                "tech_detail": detail,
+            }
+            # Add any default modifiers for this resource type
+            defaults = _get_default_resource_modifiers(tech, detail)
+            modifier_dict.update(defaults)
+            modifiers[key] = modifier_dict
+
+    # Add year-specific new_resources
+    for r in state.new_resources:
+        if r.get("planning_year") == year:
+            tech = r["technology"]
+            detail = r["tech_detail"]
+            # Generate a default key from tech and detail
+            key = _auto_modified_key(tech, detail)
+            modifier_dict = {
+                "technology": tech,
+                "tech_detail": detail,
+            }
+            # Add any default modifiers for this resource type
+            defaults = _get_default_resource_modifiers(tech, detail)
+            modifier_dict.update(defaults)
+            modifiers[key] = modifier_dict
+
+    # Then, add entries from modified_new_resources that have attribute modifiers
+    for k, v in sorted(state.modified_new_resources.items()):
+        py = v.get("planning_year", "all")
+        if py != "all" and py != year:
+            continue
+
+        attr_mods = v.get("attr_modifiers")
+        if not isinstance(attr_mods, dict) or not attr_mods:
+            continue
+        identity_changes = (
+            v.get("new_technology") != v.get("technology")
+            or v.get("new_tech_detail") != v.get("tech_detail")
+            or v.get("new_cost_case") != v.get("cost_case")
+        )
+        if identity_changes:
+            continue
+        if v.get("fuel_type") == "new":
+            continue
+
+        modifier_dict = {
+            "technology": v["technology"],
+            "tech_detail": v["tech_detail"],
+        }
+        for ui_key, val in attr_mods.items():
+            atb_key = _UI_TO_ATB_KEY.get(ui_key, ui_key)
+            modifier_dict[atb_key] = val
+        # Override the entry if it already exists from new_resources
+        modifiers[k] = modifier_dict
+
+    return modifiers if modifiers else None
+
+
+def _build_modified_new_resources_for_year(year):
+    """Build the ``modified_new_resources`` dict for a specific planning year.
+
+    Merges: all "all" entries + year-specific entries (which override by key).
+    Only includes entries with custom fuel or identity changes.
+    """
+    result = {}
+
+    for k, v in sorted(state.modified_new_resources.items()):
+        py = v.get("planning_year", "all")
+        if py != "all" and py != year:
+            continue
+
+        if not (
+            v.get("fuel_type") == "new"
+            or v.get("new_technology") != v.get("technology")
+            or v.get("new_tech_detail") != v.get("tech_detail")
+            or v.get("new_cost_case") != v.get("cost_case")
+        ):
+            continue
+
+        entry = {
+            "technology": v["technology"],
+            "tech_detail": v["tech_detail"],
+            "cost_case": v["cost_case"],
+            "size_mw": v["size_mw"],
+            "new_technology": v["new_technology"],
+            "new_tech_detail": v["new_tech_detail"],
+            "new_cost_case": v["new_cost_case"],
+        }
+        attr_mods = v.get("attr_modifiers")
+        if isinstance(attr_mods, dict) and attr_mods:
+            for ui_key, val in attr_mods.items():
+                atb_key = _UI_TO_ATB_KEY.get(ui_key, ui_key)
+                entry[atb_key] = val
+        result[k] = entry
+
+    return result if result else None
+
+
+def generate_scenario_management_settings():
+    """Generate ``scenario_management.yml`` content.
+
+    Returns the YAML string, or ``None`` if no year-specific resource overrides
+    exist (i.e. all resources are tagged 'all').
+
+    In PowerGenome, ``all_cases`` is a special key whose value is directly
+    merged into the settings for every case in that year — there is no
+    intermediate category/level nesting.
+
+    Structure::
+
+        settings_management:
+          <year>:
+            all_cases:
+              new_resources: [...]
+              resource_modifiers: {...}
+              modified_new_resources: {...}
+    """
+    if not _has_year_specific_resources():
+        return None
+
+    # Build the base (all-year) resource lists for comparison
+    base_new_resources = [
+        [r["technology"], r["tech_detail"], r["cost_case"], r["size_mw"]]
+        for r in state.new_resources
+        if r.get("planning_year") == "all"
+    ]
+
+    settings_management = {}
+
+    for year in _get_year_specific_years():
+        year_overrides = {}
+
+        # New resources for this year
+        year_new_resources = _build_new_resources_for_year(year)
+        if year_new_resources != base_new_resources:
+            year_overrides["new_resources"] = year_new_resources
+
+        # Resource modifiers for this year (merges all + year-specific)
+        year_modifiers = _build_resource_modifiers_for_year(year)
+        if year_modifiers is not None:
+            year_overrides["resource_modifiers"] = year_modifiers
+
+        # Modified new resources for this year
+        year_modified = _build_modified_new_resources_for_year(year)
+        if year_modified is not None:
+            year_overrides["modified_new_resources"] = year_modified
+
+        if year_overrides:
+            settings_management[year] = {
+                "all_cases": year_overrides,
+            }
+
+    if not settings_management:
+        return None
+
+    out = {"settings_management": settings_management}
+    return yaml.dump(out, default_flow_style=False, sort_keys=False)
+
+
+def generate_scenario_csv():
+    """Generate ``scenario_inputs.csv`` content.
+
+    Returns a CSV string with ``case_id`` and ``year`` columns, one row per
+    planning year, all with ``case_id=baseline``.  Returns ``None`` if no
+    year-specific overrides exist.
+    """
+    if not _has_year_specific_resources():
+        return None
+
+    model_years = _get_model_years_from_dom()
+    if not model_years:
+        return None
+
+    lines = ["case_id,year"]
+    for y in model_years:
+        lines.append(f"baseline,{y}")
+    return "\n".join(lines) + "\n"
+
+
+def generate_extra_inputs_settings():
+    """Generate ``extra_inputs.yml`` content.
+
+    Returns the YAML string, or ``None`` if no year-specific overrides exist.
+    """
+    if not _has_year_specific_resources():
+        return None
+
+    out = {
+        "input_folder": "extra_inputs",
+        "scenario_definitions_fn": "scenario_inputs.csv",
+    }
+    return yaml.dump(out, default_flow_style=False, sort_keys=False)
 
 
 def generate_fuels_settings():
@@ -6977,7 +7574,7 @@ def generate_model_definition_settings():
 
 
 def build_settings_yamls():
-    return {
+    result = {
         "model_definition.yml": generate_model_definition_settings(),
         "resources.yml": generate_resources_settings(),
         "fuels.yml": generate_fuels_settings(),
@@ -6986,6 +7583,19 @@ def build_settings_yamls():
         "resource_tags.yml": generate_resource_tags_settings(),
         "startup_costs.yml": generate_startup_costs_settings(),
     }
+
+    # Conditionally add scenario management files when per-year overrides exist
+    scenario_mgmt = generate_scenario_management_settings()
+    if scenario_mgmt is not None:
+        result["scenario_management.yml"] = scenario_mgmt
+        extra_inputs = generate_extra_inputs_settings()
+        if extra_inputs is not None:
+            result["extra_inputs.yml"] = extra_inputs
+        scenario_csv = generate_scenario_csv()
+        if scenario_csv is not None:
+            result["scenario_inputs.csv"] = scenario_csv
+
+    return result
 
 
 def populate_settings_file_select():
@@ -7024,7 +7634,8 @@ def on_generate_settings(event):
 
 
 def _download_text_file(filename, content):
-    blob = window.Blob.new([content], to_js({"type": "text/yaml"}))
+    mime = "text/csv" if filename.endswith(".csv") else "text/yaml"
+    blob = window.Blob.new([content], to_js({"type": mime}))
     url = window.URL.createObjectURL(blob)
     a = document.createElement("a")
     a.href = url
@@ -7873,7 +8484,7 @@ async def main():
             "click", create_proxy(on_add_new_resource)
         )
         document.getElementById("newResourcesRaw").addEventListener(
-            "input", create_proxy(lambda e: render_new_resources_list())
+            "input", create_proxy(lambda e: _on_textarea_input())
         )
         document.getElementById("addModifiedResourceBtn").addEventListener(
             "click", create_proxy(on_add_modified_resource)
@@ -8001,6 +8612,7 @@ async def main():
         # Initialize Settings tab widgets
         populate_atb_picker()
         populate_mod_resource_pickers()
+        populate_resource_year_selects()
         populate_fuel_data_year_select()
         populate_fuel_scenario_selects()
         render_new_resources_list()

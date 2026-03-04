@@ -314,6 +314,18 @@ class TestResetFunctionIntegration:
         """Test that on_model_years_change calls reset_planning_year_dependent_state."""
         cluster_app.state.esr_map = {"esr_1": ["region1"]}
 
+        # Mock the DOM element for modelYears so populate_resource_year_selects works
+        mock_model_years_el = MagicMock()
+        mock_model_years_el.value = "2030, 2040"
+        original_get = cluster_app.document.getElementById
+
+        def _mock_get(el_id):
+            if el_id == "modelYears":
+                return mock_model_years_el
+            return original_get(el_id)
+
+        cluster_app.document.getElementById = MagicMock(side_effect=_mock_get)
+
         event = MagicMock()
         cluster_app.on_model_years_change(event)
 

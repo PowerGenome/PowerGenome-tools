@@ -58,6 +58,13 @@ The web app has many AppState attributes that depend on upstream selections. Whe
 
 **Planning Year-Dependent State** (depends on model years from Model Setup):
 - ESR policies (`esr_map`, `esr_type_map`, `esr_policy_states`, `emission_policies_df`)
+- New Resource planning year dropdowns (populated via `populate_resource_year_selects()` called from `on_model_years_change()`)
+- Resources tagged to removed years trigger a warning (no automatic deletion)
+
+**New Resource State** (per-year scenario management):
+- `state.new_resources`: `list[dict]` with keys `technology`, `tech_detail`, `cost_case`, `size_mw`, `planning_year` (`"all"` or `int`). Replaces former textarea-only storage.
+- `state.modified_new_resources[key]`: Each entry now includes a `planning_year` field.
+- Year-specific resources conditionally generate `scenario_management.yml`, `scenario_inputs.csv`, and `extra_inputs.yml` during export (see `SCENARIO_FILENAMES` constant).
 
 ### Reset Functions
 
@@ -72,6 +79,7 @@ Two helper functions manage cascading resets:
 
 2. **`reset_planning_year_dependent_state()`**: Resets all state that depends on planning years. Called when:
    - Model years input changes (`on_model_years_change`)
+   - Also triggers `populate_resource_year_selects()` to refresh planning-year dropdowns in Step 4
 
 ### Adding New Dependencies
 
