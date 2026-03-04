@@ -8,7 +8,6 @@ Balancing Authorities (BAs) into model regions based on transmission topology.
 import networkx as nx
 import numpy as np
 import pandas as pd
-
 from esr_utils import can_states_trade, split_bas_by_trading_zones
 
 
@@ -694,7 +693,7 @@ def find_optimal_clusters(
     )
 
 
-def generate_cluster_names(clusters, groups, hierarchy_df):
+def generate_cluster_names(clusters, hierarchy_df):
     """Generate meaningful cluster names based on smallest containing grouping column.
 
     Naming rules allow only state plus one other grouping column:
@@ -706,7 +705,6 @@ def generate_cluster_names(clusters, groups, hierarchy_df):
 
     Args:
         clusters: dict mapping label -> set of BA ids
-        groups: dict mapping group_value -> set of BA ids
         hierarchy_df: DataFrame with BA hierarchy info
     """
     # Grouping columns ordered from smallest to largest geographic scope
@@ -724,9 +722,7 @@ def generate_cluster_names(clusters, groups, hierarchy_df):
 
     def common_value(nodes_set, column):
         vals = (
-            hierarchy_df[hierarchy_df["ba"].isin(nodes_set)][column]
-            .dropna()
-            .unique()
+            hierarchy_df[hierarchy_df["ba"].isin(nodes_set)][column].dropna().unique()
         )
         return vals[0] if len(vals) == 1 else None
 
@@ -775,9 +771,7 @@ def generate_cluster_names(clusters, groups, hierarchy_df):
         else:
             if naming_column and naming_column in hierarchy_df.columns:
                 vals = (
-                    hierarchy_df[hierarchy_df["ba"].isin(nodes)][
-                        naming_column
-                    ]
+                    hierarchy_df[hierarchy_df["ba"].isin(nodes)][naming_column]
                     .dropna()
                     .unique()
                 )
