@@ -3887,6 +3887,215 @@ def _get_select_value(el, default=None):
         return default
 
 
+def _build_atb_capex_chart_data(data_year: int, technology: str, tech_detail: str) -> dict:
+    """Build capex chart data for a given ATB data year, technology, and tech detail.
+
+    Returns a dict mapping cost_case -> list of (year, capex_mw) tuples sorted by year,
+    or an empty dict if no data is available.
+    """
+    options = getattr(state, "atb_options", [])
+    if not options:
+        return {}
+
+    result: dict = {}
+    for row in options:
+        if not isinstance(row, dict):
+            continue
+        if int(row.get("data_year", 0)) != data_year:
+            continue
+        if str(row.get("technology", "")) != technology:
+            continue
+        if str(row.get("tech_detail", "")) != tech_detail:
+            continue
+        case = str(row.get("cost_case", ""))
+        yr = row.get("year")
+        capex = row.get("capex_mw")
+        if not case or yr is None or capex is None:
+            continue
+        try:
+            yr_int = int(yr)
+            capex_float = float(capex)
+        except (TypeError, ValueError):
+            continue
+        result.setdefault(case, []).append((yr_int, capex_float))
+
+    # Sort each cost case by year
+    for case in result:
+        result[case].sort(key=lambda x: x[0])
+    return result
+
+
+def _render_atb_capex_chart_svg(chart_data: dict, selected_case: str | None) -> str:
+    """Render a minimal SVG line chart showing capex over time for all cost cases.
+
+    Args:
+        chart_data: dict mapping cost_case -> list of (year, capex_mw) sorted by year.
+        selected_case: the currently selected cost case name, drawn in blue on top;
+            all others are drawn in light gray.
+
+    Returns:
+        SVG markup string (320×65 px), or empty string if ``chart_data`` is empty.
+    """
+    if not chart_data:
+        return ""
+
+    width = 320
+    height = 65
+    ml = 44  # margin left (for y-axis labels — capex values are large)
+    mr = 6  # margin right
+    mt = 6  # margin top
+    mb = 18  # margin bottom (for x-axis labels)
+    pw = width - ml - mr
+    ph = height - mt - mb
+
+    # Collect all points to determine axis ranges
+    all_years = []
+    all_capex = []
+    for pts in chart_data.values():
+        for yr, capex in pts:
+            all_years.append(yr)
+            all_capex.append(capex)
+
+    if not all_years:
+        return ""
+
+    x_min = min(all_years)
+    x_max = max(all_years)
+    y_min = min(all_capex)
+    y_max = max(all_capex)
+
+    # Pad y-range slightly
+    y_range = y_max - y_min
+    if y_range < 1e-6:
+        y_min = max(0.0, y_min - 1000.0)
+        y_max = y_max + 1000.0
+        y_range = y_max - y_min
+    else:
+        pad = y_range * 0.08
+        y_min = max(0.0, y_min - pad)
+        y_max = y_max + pad
+        y_range = y_max - y_min
+
+    x_range = max(1, x_max - x_min)
+
+    def to_x(yr):
+        return ml + (yr - x_min) / x_range * pw
+
+    def to_y(capex):
+        return mt + ph - (capex - y_min) / y_range * ph
+
+    def _fmt_capex(val):
+        """Format capex ($/MW) as compact label: e.g. 1.2M or 500K."""
+        if val >= 1_000_000:
+            return f"{val / 1_000_000:.1f}M"
+        if val >= 1_000:
+            return f"{val / 1_000:.0f}K"
+        return f"{val:.0f}"
+
+    svg = [
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="CAPEX by cost case" style="display:block;">',
+        # Axes
+        f'<line x1="{ml}" y1="{mt}" x2="{ml}" y2="{mt + ph}" stroke="#ccc" stroke-width="1"/>',
+        f'<line x1="{ml}" y1="{mt + ph}" x2="{ml + pw}" y2="{mt + ph}" stroke="#ccc" stroke-width="1"/>',
+    ]
+
+    # Y-axis labels (min and max)
+    svg.append(
+        f'<text x="{ml - 3}" y="{mt + ph}" text-anchor="end" font-size="9" fill="#666">'
+        f"{_fmt_capex(y_min)}</text>"
+    )
+    svg.append(
+        f'<text x="{ml - 3}" y="{mt + 6}" text-anchor="end" font-size="9" fill="#666">'
+        f"{_fmt_capex(y_max)}</text>"
+    )
+
+    # X-axis labels (first and last year)
+    svg.append(
+        f'<text x="{ml}" y="{mt + ph + 11}" text-anchor="middle" font-size="9" fill="#666">'
+        f"{x_min}</text>"
+    )
+    if x_max != x_min:
+        svg.append(
+            f'<text x="{ml + pw}" y="{mt + ph + 11}" text-anchor="end" font-size="9" fill="#666">'
+            f"{x_max}</text>"
+        )
+
+    # Draw cost case lines — non-selected first (background), selected last (foreground)
+    SELECTED_COLOR = "#1a56c4"  # --blue
+    GRAY = "#c8cdd8"
+    SELECTED_WIDTH = "2"
+    GRAY_WIDTH = "1.25"
+
+    cases_sorted = sorted(
+        chart_data.keys(),
+        key=lambda c: (0 if c == selected_case else 1),
+        reverse=True,  # non-selected first
+    )
+    for case in cases_sorted:
+        pts = chart_data[case]
+        if len(pts) < 1:
+            continue
+        is_sel = case == selected_case
+        color = SELECTED_COLOR if is_sel else GRAY
+        stroke_w = SELECTED_WIDTH if is_sel else GRAY_WIDTH
+        opacity = "1" if is_sel else "0.85"
+
+        if len(pts) == 1:
+            cx = to_x(pts[0][0])
+            cy = to_y(pts[0][1])
+            svg.append(
+                f'<circle cx="{cx:.2f}" cy="{cy:.2f}" r="2.5" fill="{color}" opacity="{opacity}"/>'
+            )
+        else:
+            coords = " ".join(f"{to_x(yr):.2f},{to_y(capex):.2f}" for yr, capex in pts)
+            title = html.escape(case)
+            svg.append(
+                f'<polyline points="{coords}" fill="none" stroke="{color}" '
+                f'stroke-width="{stroke_w}" stroke-linejoin="round" '
+                f'stroke-linecap="round" opacity="{opacity}">'
+                f"<title>{title}</title></polyline>"
+            )
+
+    svg.append("</svg>")
+    return "".join(svg)
+
+
+def render_atb_capex_chart(event=None):
+    """Update the CAPEX mini-chart based on the current ATB picker selections.
+
+    Reads the selected ATB data year, technology, tech detail, and cost case
+    from the DOM, builds an SVG line chart, and injects it into ``atbCapexChart``.
+
+    Safe to call with an optional event argument (e.g., as a DOM event handler).
+    """
+    chart_el = document.getElementById("atbCapexChart")
+    if not chart_el:
+        return
+
+    year_el = document.getElementById("atbYearSelect")
+    tech_el = document.getElementById("atbTechSelect")
+    detail_el = document.getElementById("atbTechDetailSelect")
+    case_el = document.getElementById("atbCostCaseSelect")
+
+    try:
+        selected_year = int(_get_select_value(year_el, 0) or 0)
+    except (ValueError, TypeError):
+        selected_year = 0
+
+    technology = _get_select_value(tech_el, "")
+    tech_detail = _get_select_value(detail_el, "")
+    selected_case = _get_select_value(case_el, None)
+
+    if not technology or not tech_detail or not selected_year:
+        chart_el.innerHTML = ""
+        return
+
+    chart_data = _build_atb_capex_chart_data(selected_year, technology, tech_detail)
+    svg = _render_atb_capex_chart_svg(chart_data, selected_case)
+    chart_el.innerHTML = svg
+
+
 def populate_atb_picker():
     """Populate the ATB picker selects in the Settings tab."""
     year_el = document.getElementById("atbYearSelect")
@@ -3938,6 +4147,7 @@ def populate_atb_picker():
     update_atb_ccs_cost_visibility()
     update_size_field_from_atb_size()
     populate_default_battery_attributes()
+    render_atb_capex_chart()
 
 
 def on_atb_picker_change(event=None):
