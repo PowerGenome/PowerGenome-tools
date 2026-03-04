@@ -4386,6 +4386,29 @@ def on_add_new_resource(event):
     # Read planning year from the dropdown
     planning_year = _get_resource_planning_year("newResourceYearSelect")
 
+    # Reject duplicate (technology, tech_detail, planning_year) combinations.
+    # A given tech+detail slot may only appear once per planning year (or once
+    # for "all years") to avoid ambiguous cost-case assignments in the export.
+    duplicate = any(
+        r["technology"] == tech
+        and r["tech_detail"] == detail
+        and r.get("planning_year") == planning_year
+        for r in state.new_resources
+    ) or any(
+        v.get("technology") == tech
+        and v.get("tech_detail") == detail
+        and v.get("planning_year") == planning_year
+        for v in state.modified_new_resources.values()
+    )
+    if duplicate:
+        year_label = planning_year if planning_year != "all" else "all years"
+        set_status(
+            f"{tech} — {detail} is already added for {year_label}. "
+            f"Remove the existing entry before adding a different configuration.",
+            "error",
+        )
+        return
+
     # Collect optional attribute overrides from the collapsible panel
     attr_overrides = {}
     override_fields = [
