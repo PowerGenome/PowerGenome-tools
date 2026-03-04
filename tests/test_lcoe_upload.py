@@ -14,10 +14,10 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Fixture — mirrors the one in test_state_resets.py exactly
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def cluster_app():
@@ -33,6 +33,7 @@ def cluster_app():
         "cluster_app",
     ]
     original_modules = {name: sys.modules.get(name) for name in module_names}
+    web_dir = None
 
     try:
         mock_js = MagicMock()
@@ -67,7 +68,7 @@ def cluster_app():
 
         yield module
     finally:
-        if str(web_dir) in sys.path:
+        if web_dir is not None and str(web_dir) in sys.path:
             sys.path.remove(str(web_dir))
         for name, original in original_modules.items():
             if original is None:
@@ -80,33 +81,39 @@ def cluster_app():
 # Helper factories
 # ---------------------------------------------------------------------------
 
+
 def _make_assignments_df(techs=("onshorewind", "solar")):
     """Return a minimal resource_group_assignments DataFrame."""
     rows = []
     for i, tech in enumerate(techs):
-        rows.append({
-            "tech": tech,
-            "model_region": f"region_{i + 1}",
-            "cpa_mw": float((i + 1) * 100),
-            "cf": 0.30 + i * 0.05,
-            "lcoe": 40.0 + i * 5,
-        })
+        rows.append(
+            {
+                "tech": tech,
+                "model_region": f"region_{i + 1}",
+                "cpa_mw": float((i + 1) * 100),
+                "cf": 0.30 + i * 0.05,
+                "lcoe": 40.0 + i * 5,
+            }
+        )
     return pd.DataFrame(rows)
 
 
 def _make_uploaded_df():
     """Return a minimal uploaded LCOE DataFrame (region/cpa_mw/cf/lcoe)."""
-    return pd.DataFrame({
-        "region": ["region_A", "region_B"],
-        "cpa_mw": [200.0, 350.0],
-        "cf": [0.28, 0.32],
-        "lcoe": [38.0, 42.5],
-    })
+    return pd.DataFrame(
+        {
+            "region": ["region_A", "region_B"],
+            "cpa_mw": [200.0, 350.0],
+            "cf": [0.28, 0.32],
+            "lcoe": [38.0, 42.5],
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestLoadResourceGroupLcoeDF:
 
@@ -150,12 +157,14 @@ class TestLoadResourceGroupLcoeDF:
         cluster_app.state.resource_group_assignments = None
         cluster_app.state.uploaded_lcoe_onshorewind = None
 
-        solar_df = pd.DataFrame({
-            "region": ["solar_region_1", "solar_region_2", "solar_region_3"],
-            "cpa_mw": [500.0, 600.0, 700.0],
-            "cf": [0.22, 0.24, 0.26],
-            "lcoe": [35.0, 33.5, 31.0],
-        })
+        solar_df = pd.DataFrame(
+            {
+                "region": ["solar_region_1", "solar_region_2", "solar_region_3"],
+                "cpa_mw": [500.0, 600.0, 700.0],
+                "cf": [0.22, 0.24, 0.26],
+                "lcoe": [35.0, 33.5, 31.0],
+            }
+        )
         cluster_app.state.uploaded_lcoe_solar = solar_df
 
         result = cluster_app._load_resource_group_lcoe_df("solar")

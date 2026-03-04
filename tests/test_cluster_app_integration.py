@@ -40,6 +40,7 @@ def cluster_app_module():
         "cluster_app",
     ]
     original_modules = {name: sys.modules.get(name) for name in module_names}
+    web_dir = None
 
     try:
         # Create mock objects that will be imported by cluster_app
@@ -106,7 +107,7 @@ def cluster_app_module():
 
         yield module
     finally:
-        if str(web_dir) in sys.path:
+        if web_dir is not None and str(web_dir) in sys.path:
             sys.path.remove(str(web_dir))
         for name, original in original_modules.items():
             if original is None:
