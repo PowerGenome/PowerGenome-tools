@@ -36,6 +36,9 @@ def cluster_app():
         "fast_interconnection",
         "fast_interconnection.fast_assign",
         "fast_interconnection.resource_groups",
+        "esr_utils",
+        "clustering_algorithms",
+        "visualization_utils",
         "cluster_app",
     ]
     original_modules = {name: sys.modules.get(name) for name in module_names}
@@ -64,6 +67,30 @@ def cluster_app():
         mock_rg.build_resource_group_json = MagicMock(return_value={})
         sys.modules["fast_interconnection.resource_groups"] = mock_rg
 
+        # Load the new refactored modules from web/ directory
+        web_dir = Path(__file__).parent.parent / "web"
+
+        # Load esr_utils
+        esr_spec = importlib.util.spec_from_file_location("esr_utils", web_dir / "esr_utils.py")
+        esr_module = importlib.util.module_from_spec(esr_spec)
+        sys.modules["esr_utils"] = esr_module
+        assert esr_spec.loader is not None
+        esr_spec.loader.exec_module(esr_module)
+
+        # Load visualization_utils
+        viz_spec = importlib.util.spec_from_file_location("visualization_utils", web_dir / "visualization_utils.py")
+        viz_module = importlib.util.module_from_spec(viz_spec)
+        sys.modules["visualization_utils"] = viz_module
+        assert viz_spec.loader is not None
+        viz_spec.loader.exec_module(viz_module)
+
+        # Load clustering_algorithms
+        clustering_spec = importlib.util.spec_from_file_location("clustering_algorithms", web_dir / "clustering_algorithms.py")
+        clustering_module = importlib.util.module_from_spec(clustering_spec)
+        sys.modules["clustering_algorithms"] = clustering_module
+        assert clustering_spec.loader is not None
+        clustering_spec.loader.exec_module(clustering_module)
+
         mock_js.L = MagicMock()
         mock_js.document = MagicMock()
         mock_js.window = MagicMock()
@@ -71,7 +98,7 @@ def cluster_app():
         mock_js.Uint8Array = MagicMock()
         mock_js.globalThis = MagicMock()
 
-        web_dir = Path(__file__).parent.parent / "web"
+        # Load cluster_app last (it imports from the modules above)
         module_path = web_dir / "cluster_app.py"
         spec = importlib.util.spec_from_file_location("cluster_app", module_path)
         module = importlib.util.module_from_spec(spec)
