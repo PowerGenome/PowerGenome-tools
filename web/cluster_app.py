@@ -38,12 +38,6 @@ import numpy as np
 # Will be imported after PyScript loads packages
 import pandas as pd
 import yaml
-from fast_interconnection.fast_assign import fast_assign_cpas
-from fast_interconnection.resource_groups import (
-    DEFAULT_PROFILE_PATHS,
-    build_assigned_df,
-    build_resource_group_json,
-)
 from clustering_algorithms import (
     agglomerative_cluster,
     build_transmission_graph,
@@ -73,6 +67,12 @@ from esr_utils import (
     get_state_policy_value,
     get_states_in_region,
     split_bas_by_trading_zones,
+)
+from fast_interconnection.fast_assign import fast_assign_cpas
+from fast_interconnection.resource_groups import (
+    DEFAULT_PROFILE_PATHS,
+    build_assigned_df,
+    build_resource_group_json,
 )
 from visualization_utils import (
     CLUSTER_COLORS,
@@ -862,7 +862,6 @@ def update_no_cluster_options():
     container.innerHTML = html
 
 
-
 def run_clustering(
     selected_bas,
     grouping_column,
@@ -1003,7 +1002,7 @@ def run_clustering(
             info["modularity"] = modularity
 
         # Generate names
-        cluster_names = generate_cluster_names(clusters, groups, state.hierarchy_df)
+        cluster_names = generate_cluster_names(clusters, state.hierarchy_df)
 
         # Build output
         region_aggregations = {}
@@ -6399,7 +6398,11 @@ def generate_resources_settings():
     # Read interconnection cost from input field, defaulting to 100000 if not set
     interconnect_el = document.getElementById("interconnectCapexMw")
     try:
-        interconnect_capex_mw = int(interconnect_el.value) if interconnect_el and interconnect_el.value else 100000
+        interconnect_capex_mw = (
+            int(interconnect_el.value)
+            if interconnect_el and interconnect_el.value
+            else 100000
+        )
     except (ValueError, AttributeError):
         interconnect_capex_mw = 100000
 
