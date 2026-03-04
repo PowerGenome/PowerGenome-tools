@@ -1733,7 +1733,7 @@ class TestPlantClusteringHelpers:
 
 
 class TestSettingsHelpers:
-    """Tests for parse_int_list, parse_new_resources_text, build_fuel_scenario_index,
+    """Tests for parse_int_list, build_fuel_scenario_index,
     _prefix_from_new_technology, _default_scenario_for_fuel, _safe_float,
     _format_number_short, _extract_cluster_* helpers."""
 
@@ -1754,36 +1754,6 @@ class TestSettingsHelpers:
     def test_parse_int_list_invalid_raises(self, cluster_app):
         with pytest.raises((ValueError, Exception)):
             cluster_app.parse_int_list("2030,abc")
-
-    # --- parse_new_resources_text ---
-
-    def test_parse_new_resources_valid_line(self, cluster_app):
-        result = cluster_app.parse_new_resources_text(
-            "NaturalGas | CCS | moderate | 500"
-        )
-        assert result == [["NaturalGas", "CCS", "moderate", 500]]
-
-    def test_parse_new_resources_float_size_truncated(self, cluster_app):
-        result = cluster_app.parse_new_resources_text(
-            "NaturalGas | CCS | moderate | 500.7"
-        )
-        assert result == [["NaturalGas", "CCS", "moderate", 500]]
-
-    def test_parse_new_resources_comment_skipped(self, cluster_app):
-        result = cluster_app.parse_new_resources_text("# this is a comment")
-        assert result == []
-
-    def test_parse_new_resources_blank_lines_skipped(self, cluster_app):
-        result = cluster_app.parse_new_resources_text("\n\n  \n")
-        assert result == []
-
-    def test_parse_new_resources_fewer_parts_skipped(self, cluster_app):
-        result = cluster_app.parse_new_resources_text("NaturalGas | CCS | moderate")
-        assert result == []
-
-    def test_parse_new_resources_empty_field_skipped(self, cluster_app):
-        result = cluster_app.parse_new_resources_text("NaturalGas |  | moderate | 500")
-        assert result == []
 
     # --- build_fuel_scenario_index ---
 
@@ -3067,20 +3037,34 @@ class TestCCSFunctionality:
 
     def test_ccs_in_regular_new_resources(self, cluster_app):
         """Test that CCS technologies are correctly detected in regular new resources."""
+        orig_new_resources = cluster_app.state.new_resources
         orig_modified = cluster_app.state.modified_new_resources
-        orig_doc = cluster_app.document
 
         try:
-            # Mock document with new resources textarea containing CCS technologies
-            mock_doc = MagicMock()
-            mock_textarea = MagicMock()
-            mock_textarea.value = """
-NaturalGas | F-Frame CC 95% CCS | Mid | 500
-Coal | Supercritical 90% CCS | Mid | 800
-NaturalGas | H-Frame CC | Mid | 600
-"""
-            mock_doc.getElementById.return_value = mock_textarea
-            cluster_app.document = mock_doc
+            # Set new resources with CCS technologies directly in state
+            cluster_app.state.new_resources = [
+                {
+                    "technology": "NaturalGas",
+                    "tech_detail": "F-Frame CC 95% CCS",
+                    "cost_case": "Mid",
+                    "size_mw": 500,
+                    "planning_year": "all",
+                },
+                {
+                    "technology": "Coal",
+                    "tech_detail": "Supercritical 90% CCS",
+                    "cost_case": "Mid",
+                    "size_mw": 800,
+                    "planning_year": "all",
+                },
+                {
+                    "technology": "NaturalGas",
+                    "tech_detail": "H-Frame CC",
+                    "cost_case": "Mid",
+                    "size_mw": 600,
+                    "planning_year": "all",
+                },
+            ]
 
             # Clear modified resources to test only regular resources
             cluster_app.state.modified_new_resources = {}
@@ -3120,8 +3104,8 @@ NaturalGas | H-Frame CC | Mid | 600
             assert "NaturalGas_H-Frame CC" not in capture_fractions
 
         finally:
+            cluster_app.state.new_resources = orig_new_resources
             cluster_app.state.modified_new_resources = orig_modified
-            cluster_app.document = orig_doc
 
     def test_ccs_tags_not_present_without_ccs_technologies(self, cluster_app):
         """Test that CCS tags are not added when no CCS technologies are present."""
@@ -3167,8 +3151,8 @@ LandbasedWind, Class4, Mid, 200
 
     def test_ccs_mixed_sources(self, cluster_app):
         """Test CCS detection when technologies come from both modified and regular resources."""
+        orig_new_resources = cluster_app.state.new_resources
         orig_modified = cluster_app.state.modified_new_resources
-        orig_doc = cluster_app.document
 
         try:
             # Modified resource with CCS
@@ -3182,12 +3166,16 @@ LandbasedWind, Class4, Mid, 200
                 }
             }
 
-            # Regular resources with CCS
-            mock_doc = MagicMock()
-            mock_textarea = MagicMock()
-            mock_textarea.value = "NaturalGas | F-Frame CC 95% CCS | Mid | 500"
-            mock_doc.getElementById.return_value = mock_textarea
-            cluster_app.document = mock_doc
+            # Regular resources with CCS - populate directly in state
+            cluster_app.state.new_resources = [
+                {
+                    "technology": "NaturalGas",
+                    "tech_detail": "F-Frame CC 95% CCS",
+                    "cost_case": "Mid",
+                    "size_mw": 500,
+                    "planning_year": "all",
+                }
+            ]
 
             # Set disposal cost
             cluster_app.state.ccs_disposal_cost = 22
@@ -3213,8 +3201,8 @@ LandbasedWind, Class4, Mid, 200
             assert disposal_costs["NaturalGas_F-Frame CC 95% CCS"] == 22
 
         finally:
+            cluster_app.state.new_resources = orig_new_resources
             cluster_app.state.modified_new_resources = orig_modified
-            cluster_app.document = orig_doc
 
     def test_ccs_disposal_cost_default(self, cluster_app):
         """Test that default CCS disposal cost is applied correctly."""
