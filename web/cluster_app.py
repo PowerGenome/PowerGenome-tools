@@ -1934,12 +1934,26 @@ def on_model_years_change(event):
     orphaned_years = set()
     for r in state.new_resources:
         py = r.get("planning_year")
-        if py != "all" and int(py) not in model_years_set:
-            orphaned_years.add(py)
+        if py == "all":
+            continue
+        try:
+            py_int = int(py)
+        except (TypeError, ValueError):
+            # If planning_year is not a valid integer, skip orphaned-year checks for this resource
+            continue
+        if py_int not in model_years_set:
+            orphaned_years.add(py_int)
     for v in state.modified_new_resources.values():
         py = v.get("planning_year", "all")
-        if py != "all" and int(py) not in model_years_set:
-            orphaned_years.add(py)
+        if py == "all":
+            continue
+        try:
+            py_int = int(py)
+        except (TypeError, ValueError):
+            # If planning_year is not a valid integer, skip orphaned-year checks for this resource
+            continue
+        if py_int not in model_years_set:
+            orphaned_years.add(py_int)
 
     # Refresh ESR results UI so that any previously displayed constraints/zones/CSV
     # are cleared or updated to reflect the reset state.
