@@ -6,6 +6,13 @@ This module runs in the browser via PyScript and handles:
 2. Managing BA selection state
 3. Running clustering algorithms (agglomerative and Louvain)
 4. Generating YAML output
+
+Related modules:
+- clustering_algorithms.py: Pure network clustering algorithm functions
+- esr_utils.py: ESR (Energy Share Requirement) policy functions
+- visualization_utils.py: Color palette constants and color utility functions
+- renewables_utils.py: Renewables clustering utilities
+- fast_interconnection/: Interconnection resource group utilities
 """
 
 import asyncio
