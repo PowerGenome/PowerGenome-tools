@@ -219,13 +219,6 @@ SETTINGS_FILENAMES = [
     "startup_costs.yml",
 ]
 
-# Additional files conditionally generated when per-year resource overrides exist
-SCENARIO_FILENAMES = [
-    "scenario_management.yml",
-    "extra_inputs.yml",
-    "scenario_inputs.csv",
-]
-
 
 FUEL_PRICES_URLS = [
     # Prefer local copy if present
