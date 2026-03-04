@@ -7,7 +7,6 @@ Balancing Authorities (BAs) into model regions based on transmission topology.
 
 import networkx as nx
 import numpy as np
-import pandas as pd
 from esr_utils import can_states_trade, split_bas_by_trading_zones
 
 

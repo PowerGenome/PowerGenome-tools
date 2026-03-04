@@ -77,9 +77,7 @@ from fast_interconnection.resource_groups import (
 from visualization_utils import (
     CLUSTER_COLORS,
     GROUP_OUTLINE_COLORS,
-    hex_to_rgb,
     lighten_color,
-    rgb_to_hex,
 )
 
 # ============================================================================
