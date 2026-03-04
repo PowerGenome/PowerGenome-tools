@@ -1010,14 +1010,13 @@ The generated `scenario_management.yml` follows PowerGenome's `settings_manageme
 settings_management:
   2030:
     all_cases:
-      baseline:
-        new_resources: [...]  # "all" list + 2030-specific additions
-        resource_modifiers:   # "all" modifiers merged with 2030-specific keys
-          ...
+      new_resources: [...]  # "all" list + 2030-specific additions
+      resource_modifiers:   # "all" modifiers merged with 2030-specific keys
+        ...
   2035:
     all_cases:
-      baseline:
-        new_resources: [...]  # "all" list + 2035-specific additions
+      new_resources: [...]  # "all" list + 2035-specific additions
+      resource_modifiers:   # "all" modifiers merged with 2035-specific keys (if any)
 ```
 
 * Resources tagged "All (default)" form the base `new_resources` list in `resources.yml`.
