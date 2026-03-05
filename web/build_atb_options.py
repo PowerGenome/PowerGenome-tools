@@ -1,13 +1,18 @@
 """Build the in-browser ATB options index.
 
-The web app cannot read Parquet directly in PyScript/Pyodide, so we ship a
-precomputed JSON index under `web/data/atb_options.json`.
+Reads the source ATB parquet (technology_costs_atb.parquet) and writes a
+smaller parquet file (web/data/atb_options.parquet) with one row per unique
+(data_year, technology, tech_detail, cost_case) combination and two numeric
+columns: capex_mw and heat_rate (both stored as integers to reduce file size).
 
-This script extracts the unique combinations needed for the Settings tab:
+This script extracts:
 - data_year
 - technology
 - tech_detail
 - cost_case
+- capex_mw  (integer, $/MW, rounded to nearest whole number)
+- heat_rate (integer, MMBTU/MWh rounded to nearest whole number; 0 for
+             technologies without a heat rate such as wind and solar)
 
 Usage:
     # Use the default Parquet hosted on GitHub (PowerGenome-data, via Git LFS media URL)
@@ -16,12 +21,12 @@ Usage:
     # Or provide a local parquet
     python web/build_atb_options.py \
         --parquet /path/to/technology_costs_atb.parquet \
-        --out web/data/atb_options.json
+        --out web/data/atb_options.parquet
 
     # Or download from a specific GitHub repo/path/ref
     python web/build_atb_options.py \
         --github gschivley/PowerGenome-data:data/technology_costs_atb.parquet@main \
-        --out web/data/atb_options.json
+        --out web/data/atb_options.parquet
 
 Notes:
 - Requires pandas + a parquet engine (pyarrow recommended).
@@ -30,7 +35,6 @@ Notes:
 from __future__ import annotations
 
 import argparse
-import json
 import tempfile
 import urllib.error
 import urllib.request
@@ -158,33 +162,50 @@ def _pick_column(df: pd.DataFrame, candidates: list[str]) -> str:
     )
 
 
-def build_index(parquet_path: Path) -> list[dict]:
-    df = pd.read_parquet(parquet_path).query(
-        "parameter == 'capex_mw' and parameter_value > 0"
-    )
-    df["parameter_value"] = df["parameter_value"].astype(int)
+def build_index(parquet_path: Path) -> pd.DataFrame:
+    full_df = pd.read_parquet(parquet_path)
 
-    col_year = _pick_column(df, ["data_year", "atb_data_year", "atb_year", "year"])
-    col_tech = _pick_column(df, ["technology", "tech", "atb_technology"])
+    col_year = _pick_column(full_df, ["data_year", "atb_data_year", "atb_year", "year"])
+    col_tech = _pick_column(full_df, ["technology", "tech", "atb_technology"])
     col_detail = _pick_column(
-        df, ["tech_detail", "technology_detail", "detail", "atb_tech_detail"]
+        full_df, ["tech_detail", "technology_detail", "detail", "atb_tech_detail"]
     )
-    col_case = _pick_column(df, ["cost_case", "case", "atb_cost_case"])
+    col_case = _pick_column(full_df, ["cost_case", "case", "atb_cost_case"])
+    col_param = _pick_column(full_df, ["parameter"])
+    col_value = _pick_column(full_df, ["parameter_value"])
 
-    out = (
-        df[[col_year, col_tech, col_detail, col_case, "parameter_value"]]
-        .dropna()
+    key_cols = [col_year, col_tech, col_detail, col_case]
+
+    # Extract capex_mw rows
+    capex_df = (
+        full_df[full_df[col_param] == "capex_mw"]
+        .loc[lambda d: d[col_value] > 0, key_cols + [col_value]]
         .drop_duplicates()
-        .rename(
-            columns={
-                col_year: "data_year",
-                col_tech: "technology",
-                col_detail: "tech_detail",
-                col_case: "cost_case",
-                "parameter_value": "capex_mw",
-            }
-        )
+        .rename(columns={col_value: "capex_mw"})
     )
+
+    # Extract heat_rate rows (may be absent for some technologies)
+    heat_df = (
+        full_df[full_df[col_param] == "heat_rate"]
+        .loc[lambda d: d[col_value] > 0, key_cols + [col_value]]
+        .drop_duplicates()
+        .rename(columns={col_value: "heat_rate"})
+    )
+
+    # Merge capex and heat_rate; heat_rate is optional
+    out = capex_df.merge(heat_df, on=key_cols, how="left")
+
+    # Rename key columns to canonical names
+    out = out.rename(
+        columns={
+            col_year: "data_year",
+            col_tech: "technology",
+            col_detail: "tech_detail",
+            col_case: "cost_case",
+        }
+    )
+
+    out = out.dropna(subset=["data_year", "technology", "tech_detail", "cost_case"])
 
     # Normalize types / whitespace
     out["data_year"] = out["data_year"].astype(int)
@@ -198,22 +219,21 @@ def build_index(parquet_path: Path) -> list[dict]:
         & (out["cost_case"] != "")
     ]
 
-    records = out.to_dict(orient="records")
-    records.sort(
-        key=lambda r: (
-            r["data_year"],
-            r["technology"],
-            r["tech_detail"],
-            r["cost_case"],
-            r["capex_mw"],
-        )
-    )
-    return records
+    # Fill missing heat_rate with 0 and convert both numeric columns to int
+    out["heat_rate"] = out["heat_rate"].fillna(0).round().astype(int)
+    out["capex_mw"] = out["capex_mw"].round().astype(int)
+
+    out = out[["data_year", "technology", "tech_detail", "cost_case", "capex_mw", "heat_rate"]]
+    out = out.sort_values(
+        ["data_year", "technology", "tech_detail", "cost_case", "capex_mw"]
+    ).reset_index(drop=True)
+
+    return out
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Build web/data/atb_options.json from the ATB parquet"
+        description="Build web/data/atb_options.parquet from the ATB parquet"
     )
     source_group = parser.add_mutually_exclusive_group(required=False)
     source_group.add_argument(
@@ -232,8 +252,8 @@ def main() -> int:
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path("web/data/atb_options.json"),
-        help="Output JSON path (default: web/data/atb_options.json)",
+        default=Path("web/data/atb_options.parquet"),
+        help="Output parquet path (default: web/data/atb_options.parquet)",
     )
     args = parser.parse_args()
 
@@ -250,7 +270,7 @@ def main() -> int:
             temp_download = download_to_temp(url)
             parquet_path = temp_download
 
-        records = build_index(parquet_path)
+        df = build_index(parquet_path)
     finally:
         if temp_download is not None:
             try:
@@ -259,10 +279,9 @@ def main() -> int:
                 pass
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"options": records}
-    args.out.write_text(json.dumps(payload, indent=2) + "\n")
+    df.to_parquet(args.out, index=False)
 
-    print(f"Wrote {len(records):,} option rows to {args.out}")
+    print(f"Wrote {len(df):,} option rows to {args.out}")
     return 0
 
 
