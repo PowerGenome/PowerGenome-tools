@@ -7656,7 +7656,10 @@ def on_generate_settings(event):
         state.settings_yamls = build_settings_yamls()
         populate_settings_file_select()
         update_settings_preview()
-        set_status("Settings YAMLs generated.", "success")
+        set_status(
+            "Settings YAMLs generated. Ready to download individually or as ZIP.",
+            "success",
+        )
     except Exception as exc:
         state.settings_yamls = {}
         set_status(f"Settings generation error: {exc}", "error")
@@ -8048,6 +8051,36 @@ def on_download_resource_groups(event):
     zip_name = f"resource_groups_{_get_resource_group_name()}.zip"
     _download_binary_file(zip_name, buffer.getvalue(), "application/zip")
     set_resource_group_status(f"Downloaded {zip_name}", "success")
+
+
+def on_download_all_settings(event):
+    """
+    Download all generated settings files (everything in state.settings_yamls) plus
+    optional emission_policies.csv as a single ZIP.
+    """
+    if not state.settings_yamls:
+        set_status(
+            "Generate settings YAMLs first (click 'Generate Settings') before downloading the ZIP.",
+            "error",
+        )
+        return
+
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+        # Write all YAML/CSV files in deterministic order, rejecting unsafe names
+        for filename in sorted(state.settings_yamls):
+            if "/" in filename or "\\" in filename or ".." in filename:
+                continue  # skip path-traversal / absolute-path entries
+            zipf.writestr(filename, state.settings_yamls[filename])
+
+        # Write emission_policies.csv if it exists
+        if state.emission_policies_df is not None:
+            csv_content = state.emission_policies_df.to_csv(index=False)
+            zipf.writestr("emission_policies.csv", csv_content)
+
+    zip_name = "powergenome_settings.zip"
+    _download_binary_file(zip_name, buffer.getvalue(), "application/zip")
+    set_status(f"Downloaded {zip_name}", "success")
 
 
 _LCOE_REQUIRED_COLUMNS = {"region", "cpa_mw", "cf", "lcoe"}
@@ -8535,6 +8568,9 @@ async def main():
         document.getElementById("downloadSettingsFileBtn").addEventListener(
             "click", create_proxy(on_download_settings_file)
         )
+        document.getElementById("downloadAllSettingsZipBtn").addEventListener(
+            "click", create_proxy(on_download_all_settings)
+        )
 
         # Resource groups
         document.getElementById("generateResourceGroupsBtn").addEventListener(
@@ -8576,9 +8612,6 @@ async def main():
         # ESR step
         document.getElementById("runESRBtn").addEventListener(
             "click", create_proxy(on_run_esr_analysis)
-        )
-        document.getElementById("downloadEmissionPoliciesBtn").addEventListener(
-            "click", create_proxy(on_download_emission_policies)
         )
 
         # Fuel scenario options
