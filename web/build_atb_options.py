@@ -220,10 +220,12 @@ def build_index(parquet_path: Path) -> pd.DataFrame:
     ]
 
     # Fill missing heat_rate with 0 and convert both numeric columns to int
-    out["heat_rate"] = out["heat_rate"].fillna(0).round().astype(int)
+    out["heat_rate"] = out["heat_rate"].fillna(0)
     out["capex_mw"] = out["capex_mw"].round().astype(int)
 
-    out = out[["data_year", "technology", "tech_detail", "cost_case", "capex_mw", "heat_rate"]]
+    out = out[
+        ["data_year", "technology", "tech_detail", "cost_case", "capex_mw", "heat_rate"]
+    ]
     out = out.sort_values(
         ["data_year", "technology", "tech_detail", "cost_case", "capex_mw"]
     ).reset_index(drop=True)
