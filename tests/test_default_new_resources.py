@@ -10,7 +10,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Fixture
 # ---------------------------------------------------------------------------
@@ -116,6 +115,8 @@ EXPECTED_ENTRIES = [
         "tech_detail": "Lithium Ion",
         "cost_case": "Moderate",
         "size_mw": 60,
+        "variable_o_m_mwh": 0.15,
+        "variable_o_m_mwh_in": 0.15,
         "planning_year": "all",
     },
     {
@@ -127,7 +128,8 @@ EXPECTED_ENTRIES = [
     },
 ]
 
-EXPECTED_KEYS = {"technology", "tech_detail", "cost_case", "size_mw", "planning_year"}
+REQUIRED_KEYS = {"technology", "tech_detail", "cost_case", "size_mw", "planning_year"}
+BATTERY_OPTIONAL_KEYS = {"variable_o_m_mwh", "variable_o_m_mwh_in"}
 
 
 # ---------------------------------------------------------------------------
@@ -147,17 +149,55 @@ class TestDefaultNewResourcesConstant:
         for entry in cluster_app._DEFAULT_NEW_RESOURCES:
             assert isinstance(entry, dict), f"Expected dict, got {type(entry)}"
 
-    def test_each_entry_has_exactly_five_keys(self, cluster_app):
+    def test_each_entry_has_required_keys(self, cluster_app):
         for i, entry in enumerate(cluster_app._DEFAULT_NEW_RESOURCES):
-            assert set(entry.keys()) == EXPECTED_KEYS, (
-                f"Entry {i} has unexpected keys: {set(entry.keys())}"
-            )
+            assert REQUIRED_KEYS.issubset(
+                entry.keys()
+            ), f"Entry {i} is missing required keys: {REQUIRED_KEYS - set(entry.keys())}"
+
+    def test_only_battery_entry_has_variable_om_defaults(self, cluster_app):
+        for i, entry in enumerate(cluster_app._DEFAULT_NEW_RESOURCES):
+            extra_battery_keys = BATTERY_OPTIONAL_KEYS.intersection(entry.keys())
+            if (
+                entry["technology"] == "Utility-Scale Battery Storage"
+                and entry["tech_detail"] == "Lithium Ion"
+            ):
+                assert extra_battery_keys == BATTERY_OPTIONAL_KEYS
+                assert entry["variable_o_m_mwh"] == 0.15
+                assert entry["variable_o_m_mwh_in"] == 0.15
+            else:
+                assert (
+                    not extra_battery_keys
+                ), f"Entry {i} unexpectedly has battery-only keys: {extra_battery_keys}"
+
+    def test_no_unexpected_keys(self, cluster_app):
+        """Each entry must have only the expected keys (no extras beyond required + optional battery keys)."""
+        for i, entry in enumerate(cluster_app._DEFAULT_NEW_RESOURCES):
+            entry_keys = set(entry.keys())
+            if (
+                entry["technology"] == "Utility-Scale Battery Storage"
+                and entry["tech_detail"] == "Lithium Ion"
+            ):
+                # Battery entry can have required keys + battery optional keys
+                allowed_keys = REQUIRED_KEYS | BATTERY_OPTIONAL_KEYS
+                unexpected_keys = entry_keys - allowed_keys
+                assert not unexpected_keys, (
+                    f"Battery entry {i} has unexpected keys: {unexpected_keys}. "
+                    f"Expected keys: {allowed_keys}"
+                )
+            else:
+                # Non-battery entries should only have required keys
+                unexpected_keys = entry_keys - REQUIRED_KEYS
+                assert not unexpected_keys, (
+                    f"Entry {i} has unexpected keys: {unexpected_keys}. "
+                    f"Expected keys: {REQUIRED_KEYS}"
+                )
 
     def test_all_entries_have_planning_year_all(self, cluster_app):
         for i, entry in enumerate(cluster_app._DEFAULT_NEW_RESOURCES):
-            assert entry["planning_year"] == "all", (
-                f"Entry {i} has planning_year={entry['planning_year']!r}, expected 'all'"
-            )
+            assert (
+                entry["planning_year"] == "all"
+            ), f"Entry {i} has planning_year={entry['planning_year']!r}, expected 'all'"
 
     @pytest.mark.parametrize("index,expected", list(enumerate(EXPECTED_ENTRIES)))
     def test_entry_content(self, cluster_app, index, expected):
@@ -204,9 +244,9 @@ class TestAppStateNewResourcesInit:
         for i, (state_item, default_item) in enumerate(
             zip(state.new_resources, cluster_app._DEFAULT_NEW_RESOURCES)
         ):
-            assert state_item is not default_item, (
-                f"Entry {i} is the same object as _DEFAULT_NEW_RESOURCES[{i}]"
-            )
+            assert (
+                state_item is not default_item
+            ), f"Entry {i} is the same object as _DEFAULT_NEW_RESOURCES[{i}]"
 
     def test_mutating_instance_does_not_affect_defaults(self, cluster_app):
         """Mutating AppState.new_resources must not change _DEFAULT_NEW_RESOURCES."""
@@ -231,8 +271,15 @@ class TestAppStateNewResourcesInit:
         state_a = cluster_app.AppState()
         state_b = cluster_app.AppState()
 
-        state_a.new_resources.append({"technology": "Extra", "tech_detail": "X",
-                                       "cost_case": "Low", "size_mw": 1, "planning_year": "all"})
+        state_a.new_resources.append(
+            {
+                "technology": "Extra",
+                "tech_detail": "X",
+                "cost_case": "Low",
+                "size_mw": 1,
+                "planning_year": "all",
+            }
+        )
 
         assert len(state_a.new_resources) == 7
         assert len(state_b.new_resources) == 6
@@ -241,9 +288,9 @@ class TestAppStateNewResourcesInit:
         """Every default resource in a fresh AppState must have planning_year == 'all'."""
         state = cluster_app.AppState()
         for i, resource in enumerate(state.new_resources):
-            assert resource["planning_year"] == "all", (
-                f"new_resources[{i}] has planning_year={resource['planning_year']!r}"
-            )
+            assert (
+                resource["planning_year"] == "all"
+            ), f"new_resources[{i}] has planning_year={resource['planning_year']!r}"
 
     def test_new_resources_list_is_not_same_object_as_defaults(self, cluster_app):
         """The new_resources list itself must be a new list, not _DEFAULT_NEW_RESOURCES."""
@@ -260,3 +307,67 @@ class TestAppStateNewResourcesInit:
         assert actual["cost_case"] == expected["cost_case"]
         assert actual["size_mw"] == expected["size_mw"]
         assert actual["planning_year"] == expected["planning_year"]
+
+
+class TestNewResourcesListRendering:
+    def test_regular_battery_defaults_render_in_resource_list(self, cluster_app):
+        """Default battery modifier fields should be visible in the regular resource list."""
+        container = MagicMock()
+        container.innerHTML = ""
+
+        def _get_element_by_id(element_id):
+            if element_id == "newResourcesList":
+                return container
+            return None
+
+        cluster_app.document.getElementById.side_effect = _get_element_by_id
+
+        cluster_app.state.new_resources = [
+            {
+                "technology": "Utility-Scale Battery Storage",
+                "tech_detail": "Lithium Ion",
+                "cost_case": "Moderate",
+                "size_mw": 60,
+                "variable_o_m_mwh": 0.15,
+                "variable_o_m_mwh_in": 0.15,
+                "planning_year": "all",
+            }
+        ]
+        cluster_app.state.modified_new_resources = {}
+
+        cluster_app.render_new_resources_list()
+
+        assert "variable_o_m_mwh=0.15" in container.innerHTML
+        assert "variable_o_m_mwh_in=0.15" in container.innerHTML
+        assert "background-color: #fff3cd;" in container.innerHTML
+
+    def test_regular_resource_capex_override_renders_in_resource_list(
+        self, cluster_app
+    ):
+        """Regular resources should render supported inline overrides beyond battery defaults."""
+        container = MagicMock()
+        container.innerHTML = ""
+
+        def _get_element_by_id(element_id):
+            if element_id == "newResourcesList":
+                return container
+            return None
+
+        cluster_app.document.getElementById.side_effect = _get_element_by_id
+
+        cluster_app.state.new_resources = [
+            {
+                "technology": "NaturalGas",
+                "tech_detail": "Combustion Turbine (F-Frame)",
+                "cost_case": "Moderate",
+                "size_mw": 233,
+                "capex_mw": 1234.5,
+                "planning_year": "all",
+            }
+        ]
+        cluster_app.state.modified_new_resources = {}
+
+        cluster_app.render_new_resources_list()
+
+        assert "capex_mw=1234.5" in container.innerHTML
+        assert "background-color: #fff3cd;" in container.innerHTML

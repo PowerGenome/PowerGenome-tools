@@ -84,6 +84,12 @@ from visualization_utils import (
 # Global State
 # ============================================================================
 
+# Battery storage default variable O&M values ($/MWh).
+# Single source of truth for battery defaults used in _DEFAULT_NEW_RESOURCES
+# and _get_default_resource_modifiers().
+_BATTERY_DEFAULT_VAR_OM = 0.15
+_BATTERY_DEFAULT_VAR_OM_IN = 0.15
+
 # Default new-build resources (ATB 2024, planning_year="all").
 # Sizes are taken from web/data/atb_size.json where available.
 _DEFAULT_NEW_RESOURCES = [
@@ -120,6 +126,8 @@ _DEFAULT_NEW_RESOURCES = [
         "tech_detail": "Lithium Ion",
         "cost_case": "Moderate",
         "size_mw": 60,
+        "variable_o_m_mwh": _BATTERY_DEFAULT_VAR_OM,
+        "variable_o_m_mwh_in": _BATTERY_DEFAULT_VAR_OM_IN,
         "planning_year": "all",
     },
     {
@@ -3986,10 +3994,62 @@ def populate_mod_resource_pickers():
         selected_case = _get_default_cost_case(cases)
     _set_select_options(case_el, cases, selected_value=selected_case)
 
+    # Update size field to reflect the new ATB year/tech/detail selection
+    update_mod_size_field_from_atb_size()
+
 
 def on_mod_base_picker_change(event=None):
     populate_mod_resource_pickers()
     update_atb_ccs_cost_visibility()
+    update_mod_size_field_from_atb_size()
+
+
+def _lookup_atb_size(tech, detail, selected_year):
+    """Lookup size_mw from atb_size_map for a given technology, detail, and year.
+
+    Args:
+        tech: Technology name (e.g., "NaturalGas")
+        detail: Tech detail (e.g., "2-on-1 Combined Cycle (F-Frame)")
+        selected_year: ATB year to lookup
+
+    Returns:
+        size_mw value if found, None otherwise.
+    """
+    # Resolve the year-specific size map; fall back to the first available year
+    year_size_map = state.atb_size_map.get(selected_year)
+    if year_size_map is None and state.atb_size_map:
+        year_size_map = next(iter(state.atb_size_map.values()))
+    if year_size_map is None:
+        year_size_map = {}
+
+    # Try to find size: first with (tech, detail), then with (tech, None)
+    size_mw = None
+    if detail:
+        size_mw = year_size_map.get((tech, detail))
+    if size_mw is None:
+        size_mw = year_size_map.get((tech, None))
+
+    return size_mw
+
+
+def _format_size_for_field(size_mw):
+    """Format a size_mw value for display in an input field.
+
+    Args:
+        size_mw: Numeric size value or None
+
+    Returns:
+        String representation suitable for input field value.
+    """
+    if size_mw is None:
+        return "100"
+
+    # For sub-1 MW sizes, preserve the decimal value instead of truncating to 0.
+    # For >=1 MW, use a rounded integer representation.
+    if size_mw < 1:
+        return str(size_mw)
+    else:
+        return str(int(round(size_mw)))
 
 
 def update_size_field_from_atb_size():
@@ -4008,34 +4068,38 @@ def update_size_field_from_atb_size():
     if not tech:
         return
 
-    # Resolve the year-specific size map; fall back to the first available year
     try:
         selected_year = int(_get_select_value(year_el, None) or 0)
     except Exception:
         selected_year = 0
-    year_size_map = state.atb_size_map.get(selected_year)
-    if year_size_map is None and state.atb_size_map:
-        year_size_map = next(iter(state.atb_size_map.values()))
-    if year_size_map is None:
-        year_size_map = {}
 
-    # Try to find size: first with (tech, detail), then with (tech, None)
-    size_mw = None
-    if detail:
-        size_mw = year_size_map.get((tech, detail))
-    if size_mw is None:
-        size_mw = year_size_map.get((tech, None))
+    size_mw = _lookup_atb_size(tech, detail, selected_year)
+    size_el.value = _format_size_for_field(size_mw)
 
-    # If found, update the field; otherwise default to 100
-    if size_mw is not None:
-        # For sub-1 MW sizes, preserve the decimal value instead of truncating to 0.
-        # For >=1 MW, use a rounded integer representation.
-        if size_mw < 1:
-            size_el.value = str(size_mw)
-        else:
-            size_el.value = str(int(round(size_mw)))
-    else:
-        size_el.value = "100"
+
+def update_mod_size_field_from_atb_size():
+    """Auto-populate Size (MW) field for modified resources from atb_size.json based on selected technology and tech_detail."""
+    size_el = document.getElementById("modSizeMw")
+    tech_el = document.getElementById("modBaseTech")
+    detail_el = document.getElementById("modBaseTechDetail")
+    year_el = document.getElementById("atbYearSelect")
+
+    if not (size_el and tech_el and detail_el):
+        return
+
+    tech = _get_select_value(tech_el, "").strip()
+    detail = _get_select_value(detail_el, "").strip()
+
+    if not tech:
+        return
+
+    try:
+        selected_year = int(_get_select_value(year_el, None) or 0)
+    except Exception:
+        selected_year = 0
+
+    size_mw = _lookup_atb_size(tech, detail, selected_year)
+    size_el.value = _format_size_for_field(size_mw)
 
 
 def populate_default_battery_attributes():
@@ -4243,6 +4307,15 @@ def render_new_resources_list():
         return
 
     parts = []
+    resource_attr_keys = [
+        "capex_mw",
+        "capex_mwh",
+        "heat_rate",
+        "fixed_o_m_mw",
+        "variable_o_m_mwh",
+        "variable_o_m_mwh_in",
+        "wacc_real",
+    ]
 
     # Render regular resources with delete buttons and year badges
     for idx, r in enumerate(regular_items):
@@ -4251,6 +4324,24 @@ def render_new_resources_list():
         case = r["cost_case"]
         size = r["size_mw"]
         planning_year = r.get("planning_year", "all")
+
+        # Show inline attribute overrides for regular resources when present
+        # (for example, default battery variable O&M values).
+        inline_mods = []
+        for attr in resource_attr_keys:
+            if attr in r:
+                inline_mods.append(f"{attr}={r[attr]}")
+        inline_mod_text = ""
+        row_style = (
+            "display: flex; justify-content: space-between; align-items: center;"
+        )
+        if inline_mods:
+            inline_mod_text = (
+                " "
+                f"<span style='color: #856404; font-size: 10px;'>"
+                f"({html.escape('; '.join(inline_mods))})</span>"
+            )
+            row_style += " background-color: #fff3cd;"
 
         ccs_fraction = _extract_ccs_capture_fraction(detail)
         ccs_note = ""
@@ -4266,8 +4357,8 @@ def render_new_resources_list():
             )
         year_badge = _year_badge_html(planning_year)
         parts.append(
-            f"<div class='candidate-item' style='display: flex; justify-content: space-between; align-items: center;'>"
-            f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW{ccs_note}{year_badge}</span>"
+            f"<div class='candidate-item' style='{row_style}'>"
+            f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW{ccs_note}{inline_mod_text}{year_badge}</span>"
             f"<button onclick='window.deleteNewResource({idx})' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
             f"</div>"
         )
@@ -4697,8 +4788,8 @@ def _get_default_resource_modifiers(technology, tech_detail):
     # Default variable O&M for battery storage
     if "battery" in technology.lower() or "storage" in technology.lower():
         if "lithium" in tech_detail.lower():
-            defaults["Var_OM_Cost_per_MWh"] = 0.15
-            defaults["Var_OM_Cost_per_MWh_In"] = 0.15
+            defaults["Var_OM_Cost_per_MWh"] = _BATTERY_DEFAULT_VAR_OM
+            defaults["Var_OM_Cost_per_MWh_In"] = _BATTERY_DEFAULT_VAR_OM_IN
 
     return defaults
 
@@ -4724,7 +4815,7 @@ def on_add_modified_resource(event):
     base_tech_el = document.getElementById("modBaseTech")
     base_detail_el = document.getElementById("modBaseTechDetail")
     base_case_el = document.getElementById("modBaseCostCase")
-    base_size_el = document.getElementById("modBaseSizeMw")
+    base_size_el = document.getElementById("modSizeMw")
     new_tech_el = document.getElementById("modNewTech")
     new_detail_el = document.getElementById("modNewTechDetail")
 

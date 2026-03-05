@@ -536,6 +536,7 @@ Each resource you add can optionally be tagged to a specific **planning year**. 
 * **Specific year** (e.g., 2030, 2035): The resource applies only to that year. Year-specific resources are written to `scenario_management.yml` as per-year overrides (see [Export](#step-9-export) for details).
 
 Resources tagged to a specific year show a blue **year badge** (e.g., "2030") next to their name in the resource list.
+For standard (non-modified) resources, any inline attribute overrides are also shown directly in that same resource row so adjustments are visible at a glance (for example, battery `variable_o_m_mwh` and `variable_o_m_mwh_in`, which are $0 in ATB but we default to $0.15/MWh to prevent simultaneous charge/discharge in models).
 
 !!! tip "Required: always add an 'All (default)' version"
     If you add a year-specific resource but no "All (default)" version exists for the same technology/detail/case combination, a soft yellow warning appears: *"Consider also adding an 'All (default)' version…"*. The "All" version serves as the baseline; year-specific entries override or supplement it.
