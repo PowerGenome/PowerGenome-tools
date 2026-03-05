@@ -2,7 +2,7 @@
 
 build_index() reads an ATB parquet file and returns a compact DataFrame with
 one row per unique (data_year, technology, tech_detail, cost_case) combination
-plus integer capex_mw and heat_rate columns.
+plus integer capex_mw float heat_rate columns.
 
 Coverage addressed
 ------------------
@@ -168,7 +168,7 @@ class TestBuildIndexSchema:
         result = build_index(simple_parquet)
         assert pd.api.types.is_integer_dtype(result["capex_mw"])
 
-    def test_heat_rate_dtype_is_int(self, simple_parquet: Path):
+    def test_heat_rate_dtype_is_float(self, simple_parquet: Path):
         result = build_index(simple_parquet)
         assert pd.api.types.is_float_dtype(result["heat_rate"])
 

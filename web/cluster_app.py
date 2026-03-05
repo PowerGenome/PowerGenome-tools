@@ -3285,8 +3285,7 @@ async def load_atb_options():
 
     Expected to live at web/data/atb_options.parquet. This is designed to be
     regenerated offline from technology_costs_atb.parquet; the web app only
-    consumes the index. Columns: data_year, technology, tech_detail, cost_case,
-    capex_mw, heat_rate (all required; capex_mw and heat_rate are integers).
+    consumes the index. Columns: data_year, technology, tech_detail, cost_case.
     """
     try:
         df = await _fetch_parquet_df("./data/atb_options.parquet")

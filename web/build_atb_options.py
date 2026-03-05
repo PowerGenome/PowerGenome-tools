@@ -219,7 +219,7 @@ def build_index(parquet_path: Path) -> pd.DataFrame:
         & (out["cost_case"] != "")
     ]
 
-    # Fill missing heat_rate with 0 and convert both numeric columns to int
+    # Fill missing heat_rate with 0 and convert capex_mw to int
     out["heat_rate"] = out["heat_rate"].fillna(0)
     out["capex_mw"] = out["capex_mw"].round().astype(int)
 
