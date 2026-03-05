@@ -8059,9 +8059,15 @@ def on_download_resource_groups(event):
 
 
 def on_download_all_settings(event):
-    """Download all settings files (YAMLs + emission_policies.csv) as a single ZIP."""
+    """
+    Download all generated settings files (everything in state.settings_yamls) plus
+    optional emission_policies.csv as a single ZIP.
+    """
     if not state.settings_yamls:
-        set_status("Generate settings first.", "error")
+        set_status(
+            "Generate settings YAMLs first (click 'Generate Settings') before downloading the ZIP.",
+            "error",
+        )
         return
 
     buffer = BytesIO()
