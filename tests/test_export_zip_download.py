@@ -1,0 +1,334 @@
+"""Tests for the on_download_all_settings ZIP export functionality.
+
+Covers:
+- on_download_all_settings: all YAML files + optional emission_policies.csv
+  bundled into powgenome_settings.zip
+"""
+
+import importlib.util
+import sys
+import zipfile
+from io import BytesIO
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pandas as pd
+import pytest
+
+# ---------------------------------------------------------------------------
+# Fixture: load cluster_app with mocked browser globals
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def cluster_app():
+    """Load cluster_app module with mocked js/PyScript dependencies."""
+    module_names = [
+        "js",
+        "pyodide",
+        "pyodide.ffi",
+        "renewables_utils",
+        "visualization_utils",
+        "fast_interconnection",
+        "fast_interconnection.fast_assign",
+        "fast_interconnection.resource_groups",
+        "cluster_app",
+    ]
+    original_modules = {name: sys.modules.get(name) for name in module_names}
+    web_dir = None
+
+    try:
+        mock_js = MagicMock()
+        mock_ffi = MagicMock()
+        mock_ffi.create_proxy = lambda x: x
+        mock_ffi.to_js = lambda x: x
+        mock_ffi.JsProxy = object
+
+        sys.modules["js"] = mock_js
+        sys.modules["pyodide"] = MagicMock()
+        sys.modules["pyodide.ffi"] = mock_ffi
+
+        mock_ru = MagicMock()
+        mock_ru.optimize_cluster_allocation = lambda region_lcoe_data, bins, target: {
+            r: 1 for r in bins
+        }
+        sys.modules["renewables_utils"] = mock_ru
+        sys.modules["visualization_utils"] = MagicMock()
+        sys.modules["fast_interconnection"] = MagicMock()
+        sys.modules["fast_interconnection.fast_assign"] = MagicMock()
+
+        mock_rg = MagicMock()
+        mock_rg.DEFAULT_PROFILE_PATHS = {}
+        mock_rg.build_assigned_df = MagicMock(return_value=None)
+        mock_rg.build_resource_group_json = MagicMock(return_value={})
+        sys.modules["fast_interconnection.resource_groups"] = mock_rg
+
+        mock_js.L = MagicMock()
+        mock_js.document = MagicMock()
+        mock_js.window = MagicMock()
+        mock_js.fetch = MagicMock()
+        mock_js.Uint8Array = MagicMock()
+        mock_js.globalThis = MagicMock()
+
+        web_dir = Path(__file__).parent.parent / "web"
+        sys.path.insert(0, str(web_dir))
+        module_path = web_dir / "cluster_app.py"
+        spec = importlib.util.spec_from_file_location("cluster_app", module_path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["cluster_app"] = module
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        yield module
+    finally:
+        if web_dir is not None and str(web_dir) in sys.path:
+            sys.path.remove(str(web_dir))
+        for name, original in original_modules.items():
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _capture_zip_download(cluster_app):
+    """Patch _download_binary_file and return a list that collects calls.
+
+    Each call appends a dict with keys: filename, payload_bytes, mime_type.
+    """
+    calls = []
+
+    def _fake_download(filename, payload_bytes, mime_type):
+        calls.append(
+            {
+                "filename": filename,
+                "payload_bytes": payload_bytes,
+                "mime_type": mime_type,
+            }
+        )
+
+    cluster_app._download_binary_file = _fake_download
+    return calls
+
+
+def _open_zip_from_calls(calls, index=0):
+    """Open the ZIP bytes from a captured _download_binary_file call."""
+    buf = BytesIO(calls[index]["payload_bytes"])
+    return zipfile.ZipFile(buf, "r")
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+class TestOnDownloadAllSettings:
+
+    def test_happy_path_yaml_and_emissions_both_included(self, cluster_app):
+        """ZIP contains YAML files and emission_policies.csv when both are present."""
+        cluster_app.state.settings_yamls = {
+            "model_definition.yml": "foo: bar\n",
+            "resources.yml": "resources: []\n",
+        }
+        cluster_app.state.emission_policies_df = pd.DataFrame(
+            {"zone": ["zone1"], "rps_fraction": [0.5]}
+        )
+        calls = _capture_zip_download(cluster_app)
+
+        cluster_app.on_download_all_settings(None)
+
+        assert len(calls) == 1
+        zf = _open_zip_from_calls(calls)
+        names = zf.namelist()
+        assert "model_definition.yml" in names
+        assert "resources.yml" in names
+        assert "emission_policies.csv" in names
+
+    def test_yaml_only_no_emissions_csv(self, cluster_app):
+        """ZIP contains only YAML files when emission_policies_df is None."""
+        cluster_app.state.settings_yamls = {
+            "model_definition.yml": "regions: []\n",
+            "fuels.yml": "fuels: {}\n",
+        }
+        cluster_app.state.emission_policies_df = None
+        calls = _capture_zip_download(cluster_app)
+
+        cluster_app.on_download_all_settings(None)
+
+        assert len(calls) == 1
+        zf = _open_zip_from_calls(calls)
+        assert "emission_policies.csv" not in zf.namelist()
+        assert set(zf.namelist()) == {"model_definition.yml", "fuels.yml"}
+
+    def test_error_when_settings_yamls_empty(self, cluster_app):
+        """No download is triggered when settings_yamls is empty; error status shown."""
+        cluster_app.state.settings_yamls = {}
+        cluster_app.state.emission_policies_df = None
+        calls = _capture_zip_download(cluster_app)
+        status_calls = []
+        cluster_app.set_status = lambda msg, kind: status_calls.append((msg, kind))
+
+        cluster_app.on_download_all_settings(None)
+
+        assert calls == [], "No download should occur when settings_yamls is empty"
+        assert status_calls, "A status message should have been set"
+        assert status_calls[0][1] == "error"
+
+    def test_error_when_settings_yamls_none(self, cluster_app):
+        """No download is triggered when settings_yamls is None; error status shown."""
+        cluster_app.state.settings_yamls = None
+        cluster_app.state.emission_policies_df = None
+        calls = _capture_zip_download(cluster_app)
+        status_calls = []
+        cluster_app.set_status = lambda msg, kind: status_calls.append((msg, kind))
+
+        cluster_app.on_download_all_settings(None)
+
+        assert calls == [], "No download should occur when settings_yamls is None"
+        assert status_calls[0][1] == "error"
+
+    def test_all_yaml_files_present_in_zip(self, cluster_app):
+        """All seven standard YAML filenames appear in the ZIP."""
+        filenames = [
+            "model_definition.yml",
+            "resources.yml",
+            "fuels.yml",
+            "transmission.yml",
+            "distributed_gen.yml",
+            "resource_tags.yml",
+            "startup_costs.yml",
+        ]
+        cluster_app.state.settings_yamls = {f: f"# {f}\n" for f in filenames}
+        cluster_app.state.emission_policies_df = None
+        calls = _capture_zip_download(cluster_app)
+
+        cluster_app.on_download_all_settings(None)
+
+        zf = _open_zip_from_calls(calls)
+        assert set(zf.namelist()) == set(filenames)
+
+    def test_yaml_file_contents_preserved(self, cluster_app):
+        """The content of each YAML file is exactly preserved in the ZIP."""
+        cluster_app.state.settings_yamls = {
+            "model_definition.yml": "regions:\n  - RegionA\n  - RegionB\n",
+            "fuels.yml": "natural_gas:\n  price: 4.5\n",
+        }
+        cluster_app.state.emission_policies_df = None
+        calls = _capture_zip_download(cluster_app)
+
+        cluster_app.on_download_all_settings(None)
+
+        zf = _open_zip_from_calls(calls)
+        assert zf.read("model_definition.yml").decode() == (
+            "regions:\n  - RegionA\n  - RegionB\n"
+        )
+        assert zf.read("fuels.yml").decode() == "natural_gas:\n  price: 4.5\n"
+
+    def test_emissions_csv_content_matches_dataframe(self, cluster_app):
+        """The emission_policies.csv content in the ZIP matches df.to_csv(index=False)."""
+        df = pd.DataFrame(
+            {
+                "zone": ["zone1", "zone2"],
+                "rps_fraction": [0.5, 0.3],
+                "ces_fraction": [0.8, 0.6],
+            }
+        )
+        cluster_app.state.settings_yamls = {"model_definition.yml": "x: 1\n"}
+        cluster_app.state.emission_policies_df = df
+        calls = _capture_zip_download(cluster_app)
+
+        cluster_app.on_download_all_settings(None)
+
+        zf = _open_zip_from_calls(calls)
+        csv_bytes = zf.read("emission_policies.csv").decode()
+        assert csv_bytes == df.to_csv(index=False)
+
+    def test_zip_filename_is_powgenome_settings(self, cluster_app):
+        """The downloaded file is named exactly 'powgenome_settings.zip'."""
+        cluster_app.state.settings_yamls = {"model_definition.yml": "x: 1\n"}
+        cluster_app.state.emission_policies_df = None
+        calls = _capture_zip_download(cluster_app)
+
+        cluster_app.on_download_all_settings(None)
+
+        assert calls[0]["filename"] == "powgenome_settings.zip"
+
+    def test_zip_mime_type_is_application_zip(self, cluster_app):
+        """The MIME type passed to _download_binary_file is 'application/zip'."""
+        cluster_app.state.settings_yamls = {"model_definition.yml": "x: 1\n"}
+        cluster_app.state.emission_policies_df = None
+        calls = _capture_zip_download(cluster_app)
+
+        cluster_app.on_download_all_settings(None)
+
+        assert calls[0]["mime_type"] == "application/zip"
+
+    def test_zip_bytes_are_valid_zip(self, cluster_app):
+        """The bytes returned are a valid ZIP archive (no integrity errors)."""
+        cluster_app.state.settings_yamls = {"model_definition.yml": "x: 1\n"}
+        cluster_app.state.emission_policies_df = None
+        calls = _capture_zip_download(cluster_app)
+
+        cluster_app.on_download_all_settings(None)
+
+        buf = BytesIO(calls[0]["payload_bytes"])
+        assert zipfile.is_zipfile(buf), "Payload should be a valid ZIP file"
+        buf.seek(0)
+        zf = zipfile.ZipFile(buf)
+        assert zf.testzip() is None, "ZIP should have no corrupt entries"
+
+    def test_success_status_message_set(self, cluster_app):
+        """A success status message is set after a successful download."""
+        cluster_app.state.settings_yamls = {"model_definition.yml": "x: 1\n"}
+        cluster_app.state.emission_policies_df = None
+        _capture_zip_download(cluster_app)
+        status_calls = []
+        cluster_app.set_status = lambda msg, kind: status_calls.append((msg, kind))
+
+        cluster_app.on_download_all_settings(None)
+
+        assert status_calls, "set_status should have been called"
+        assert status_calls[0][1] == "success"
+        assert "powgenome_settings.zip" in status_calls[0][0]
+
+    def test_scenario_files_included_when_present(self, cluster_app):
+        """Optional scenario_management.yml, extra_inputs.yml and scenario_inputs.csv are included."""
+        cluster_app.state.settings_yamls = {
+            "model_definition.yml": "x: 1\n",
+            "scenario_management.yml": "scenarios: []\n",
+            "extra_inputs.yml": "extra: {}\n",
+            "scenario_inputs.csv": "tech,year\nWind,2030\n",
+        }
+        cluster_app.state.emission_policies_df = None
+        calls = _capture_zip_download(cluster_app)
+
+        cluster_app.on_download_all_settings(None)
+
+        zf = _open_zip_from_calls(calls)
+        names = set(zf.namelist())
+        assert "scenario_management.yml" in names
+        assert "extra_inputs.yml" in names
+        assert "scenario_inputs.csv" in names
+
+    @pytest.mark.parametrize(
+        "n_yamls,has_emissions",
+        [(1, False), (1, True), (3, False), (3, True), (7, True)],
+    )
+    def test_file_count_in_zip(self, cluster_app, n_yamls, has_emissions):
+        """ZIP contains exactly n_yamls + (1 if has_emissions) files."""
+        yamls = {f"file_{i}.yml": f"val: {i}\n" for i in range(n_yamls)}
+        cluster_app.state.settings_yamls = yamls
+        cluster_app.state.emission_policies_df = (
+            pd.DataFrame({"zone": ["z1"], "val": [1.0]}) if has_emissions else None
+        )
+        calls = _capture_zip_download(cluster_app)
+
+        cluster_app.on_download_all_settings(None)
+
+        zf = _open_zip_from_calls(calls)
+        expected = n_yamls + (1 if has_emissions else 0)
+        assert len(zf.namelist()) == expected
