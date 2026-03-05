@@ -3289,16 +3289,7 @@ async def load_atb_options():
     capex_mw, heat_rate (all required; capex_mw and heat_rate are integers).
     """
     try:
-        response = await fetch("./data/atb_options.parquet")
-        if not response.ok:
-            state.atb_options = []
-            state.atb_index = {}
-            state.atb_years = []
-            return
-
-        arraybuffer = await response.arrayBuffer()
-        data_bytes = bytes(Uint8Array.new(arraybuffer))
-        df = pd.read_parquet(BytesIO(data_bytes))
+        df = await _fetch_parquet_df("./data/atb_options.parquet")
 
         # Normalize to list of dicts containing at least data_year/technology/tech_detail/cost_case
         required_cols = {"data_year", "technology", "tech_detail", "cost_case"}
