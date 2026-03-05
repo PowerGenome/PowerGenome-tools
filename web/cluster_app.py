@@ -3992,6 +3992,7 @@ def populate_mod_resource_pickers():
 def on_mod_base_picker_change(event=None):
     populate_mod_resource_pickers()
     update_atb_ccs_cost_visibility()
+    update_mod_size_field_from_atb_size()
 
 
 def update_size_field_from_atb_size():
@@ -3999,6 +4000,52 @@ def update_size_field_from_atb_size():
     size_el = document.getElementById("atbSizeMw")
     tech_el = document.getElementById("atbTechSelect")
     detail_el = document.getElementById("atbTechDetailSelect")
+    year_el = document.getElementById("atbYearSelect")
+
+    if not (size_el and tech_el and detail_el):
+        return
+
+    tech = _get_select_value(tech_el, "").strip()
+    detail = _get_select_value(detail_el, "").strip()
+
+    if not tech:
+        return
+
+    # Resolve the year-specific size map; fall back to the first available year
+    try:
+        selected_year = int(_get_select_value(year_el, None) or 0)
+    except Exception:
+        selected_year = 0
+    year_size_map = state.atb_size_map.get(selected_year)
+    if year_size_map is None and state.atb_size_map:
+        year_size_map = next(iter(state.atb_size_map.values()))
+    if year_size_map is None:
+        year_size_map = {}
+
+    # Try to find size: first with (tech, detail), then with (tech, None)
+    size_mw = None
+    if detail:
+        size_mw = year_size_map.get((tech, detail))
+    if size_mw is None:
+        size_mw = year_size_map.get((tech, None))
+
+    # If found, update the field; otherwise default to 100
+    if size_mw is not None:
+        # For sub-1 MW sizes, preserve the decimal value instead of truncating to 0.
+        # For >=1 MW, use a rounded integer representation.
+        if size_mw < 1:
+            size_el.value = str(size_mw)
+        else:
+            size_el.value = str(int(round(size_mw)))
+    else:
+        size_el.value = "100"
+
+
+def update_mod_size_field_from_atb_size():
+    """Auto-populate Size (MW) field for modified resources from atb_size.json based on selected technology and tech_detail."""
+    size_el = document.getElementById("modSizeMw")
+    tech_el = document.getElementById("modBaseTech")
+    detail_el = document.getElementById("modBaseTechDetail")
     year_el = document.getElementById("atbYearSelect")
 
     if not (size_el and tech_el and detail_el):
@@ -4753,7 +4800,7 @@ def on_add_modified_resource(event):
     base_tech_el = document.getElementById("modBaseTech")
     base_detail_el = document.getElementById("modBaseTechDetail")
     base_case_el = document.getElementById("modBaseCostCase")
-    base_size_el = document.getElementById("modBaseSizeMw")
+    base_size_el = document.getElementById("modSizeMw")
     new_tech_el = document.getElementById("modNewTech")
     new_detail_el = document.getElementById("modNewTechDetail")
 

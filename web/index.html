@@ -1913,9 +1913,13 @@
                 <div class="section">
                     <label>New-build Resources</label>
                     <div style="font-size: 12px; color: #666; margin-bottom: 8px;">
-                        Options from ATB are provided. A set of default technologies are pre-selected. You can
+                        Select new-build options from ATB. A set of common technologies are pre-selected. You can
                         override any cost or performance attribute for specific planning years, or remove the defaults
                         and replace them. Added resources will appear in the list below.
+                        <!-- Add a paragraph break -->
+                        <br><br>
+                        See <a href="https://atb.nrel.gov/electricity/2024b/technologies" target="_blank">ATB
+                            documentation</a> for information on technologies and assumptions.
                     </div>
 
                     <label style="font-size: 12px;">ATB Data Year</label>
@@ -2013,7 +2017,7 @@
                         background.
                     </div>
                     <div id="newResourcesList" class="ba-list"
-                        style="margin-top: 8px; max-height: 180px; resize: vertical; overflow: auto;">
+                        style="margin-top: 8px; min-height: 180px; max-height: none; resize: vertical; overflow: auto;">
                         <em>No new-build resources selected yet.</em>
                     </div>
                 </div>
@@ -2021,138 +2025,154 @@
                 <div class="section">
                     <label>Modified New Resources (Advanced)</label>
                     <div style="font-size: 11px; color: #666; margin-bottom: 8px;">
-                        Create custom resources with new fuels or changed technology identity.
+                        Create custom resources with new fuels or changed technology identity (e.g., hydrogen combustion
+                        turbines).
                         <strong>Note:</strong> For simple attribute overrides (cost/performance adjustments),
                         use the "Optional: Override cost/performance attributes" panel above instead.
                     </div>
 
-                    <label style="font-size: 12px;">Copy from: Technology</label>
-                    <select id="modBaseTech"></select>
-
-                    <label style="font-size: 12px; margin-top: 8px;">Copy from: Tech Detail</label>
-                    <select id="modBaseTechDetail"></select>
-
-                    <label style="font-size: 12px; margin-top: 8px;">Copy from: Cost Case</label>
-                    <select id="modBaseCostCase"></select>
-
-                    <label style="font-size: 12px; margin-top: 8px;">Copy from: Size (MW)</label>
-                    <input id="modBaseSizeMw" type="number" value="100" min="1" step="1" />
-
-                    <label style="font-size: 12px; margin-top: 8px;">New: Technology</label>
-                    <input id="modNewTech" type="text" placeholder="e.g., hydrogen" />
-
-                    <label style="font-size: 12px; margin-top: 8px;">New: Tech Detail</label>
-                    <input id="modNewTechDetail" type="text" placeholder="e.g., 1-on-1 Combined Cycle (H-Frame)" />
-
-                    <details style="margin-top: 8px;">
-                        <summary style="font-weight: 600; cursor: pointer; font-size: 12px;">Optional: Override
-                            cost/performance attributes</summary>
-                        <div style="margin-top: 10px; padding: 10px; background: #f5f5f5; border-radius: 4px;">
-                            <div style="font-size: 10px; color: #555; margin-bottom: 8px;">
-                                Leave blank to use ATB default. Use operators for relative changes:
-                                <code>add:value</code>, <code>mul:value</code>, <code>truediv:value</code>,
-                                <code>sub:value</code>
-                            </div>
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-                                <div>
-                                    <label style="font-size: 11px; display: block;">CapEx ($/MW)</label>
-                                    <input id="modOverrideCapexMw" type="text" placeholder="ATB default"
-                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
-                                </div>
-                                <div>
-                                    <label style="font-size: 11px; display: block;">CapEx ($/MWh)</label>
-                                    <input id="modOverrideCapexMwh" type="text" placeholder="ATB default"
-                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
-                                </div>
-                                <div>
-                                    <label style="font-size: 11px; display: block;">Heat Rate (MMBtu/MWh)</label>
-                                    <input id="modOverrideHeatRate" type="text" placeholder="ATB default"
-                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
-                                </div>
-                                <div>
-                                    <label style="font-size: 11px; display: block;">Fixed O&amp;M ($/MW-yr)</label>
-                                    <input id="modOverrideFixedOM" type="text" placeholder="ATB default"
-                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
-                                </div>
-                                <div>
-                                    <label style="font-size: 11px; display: block;">Variable O&amp;M ($/MWh)</label>
-                                    <input id="modOverrideVarOM" type="text" placeholder="ATB default"
-                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
-                                </div>
-                                <div>
-                                    <label style="font-size: 11px; display: block;">Variable O&amp;M In ($/MWh)</label>
-                                    <input id="modOverrideVarOMIn" type="text" placeholder="For batteries only"
-                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
-                                </div>
-                                <div style="grid-column: 1 / -1;">
-                                    <label style="font-size: 11px; display: block;">WACC real (0–1)</label>
-                                    <input id="modOverrideWacc" type="text" placeholder="ATB default"
-                                        style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
-                                </div>
-                            </div>
-                        </div>
-                    </details>
-
-                    <label style="font-size: 12px; margin-top: 8px;">Fuel Type</label>
-                    <select id="modFuelType">
-                        <option value="standard" selected>Standard fuel</option>
-                        <option value="new">New fuel</option>
-                    </select>
-
-                    <div id="modStandardFuelRow" style="margin-top: 8px;">
-                        <label style="font-size: 12px;">Standard Fuel</label>
-                        <select id="modStandardFuel">
-                            <option value="naturalgas" selected>naturalgas</option>
-                            <option value="coal">coal</option>
-                            <option value="distillate">distillate</option>
-                            <option value="uranium">uranium</option>
-                        </select>
+                    <div class="collapsible-header"
+                        onclick="toggleCollapsible('modifiedResourcesContent', 'modifiedResourcesToggle')">
+                        <span style="font-size: 12px;">Add custom resources with new fuels</span>
+                        <span class="collapsible-toggle" id="modifiedResourcesToggle">▶ Show</span>
                     </div>
+                    <div id="modifiedResourcesContent" class="collapsible-content hidden">
+                        <label style="font-size: 12px;">Copy from: Technology</label>
+                        <select id="modBaseTech"></select>
 
-                    <div id="modNewFuelRow" style="display:none; margin-top: 8px;">
-                        <label style="font-size: 12px;">New Fuel Name</label>
-                        <input id="modNewFuelName" type="text" placeholder="e.g., hydrogen" />
+                        <label style="font-size: 12px; margin-top: 8px;">Copy from: Tech Detail</label>
+                        <select id="modBaseTechDetail"></select>
 
-                        <label style="font-size: 12px; margin-top: 8px;">Fuel Price ($/MMBtu)</label>
-                        <input id="modNewFuelPrice" type="number" value="16" min="0" step="0.01" />
+                        <label style="font-size: 12px; margin-top: 8px;">Copy from: Cost Case</label>
+                        <select id="modBaseCostCase"></select>
 
-                        <label style="font-size: 12px; margin-top: 8px;">Emission Factor (metric ton CO₂/MMBtu)</label>
-                        <input id="modNewFuelEf" type="number" value="0" min="0" step="0.00001" />
-                    </div>
+                        <label style="font-size: 12px; margin-top: 8px;">New: Technology</label>
+                        <input id="modNewTech" type="text" placeholder="e.g., hydrogen" />
 
-                    <label style="font-size: 12px; margin-top: 8px;">Resource Class</label>
-                    <select id="modTagClass">
-                        <option value="THERM" selected>THERM</option>
-                        <option value="HYDRO">HYDRO</option>
-                        <option value="MUST_RUN">MUST_RUN</option>
-                        <option value="VRE">VRE</option>
-                        <option value="STOR">STOR</option>
-                        <option value="LDS">LDS</option>
-                    </select>
+                        <label style="font-size: 12px; margin-top: 8px;">New: Tech Detail</label>
+                        <input id="modNewTechDetail" type="text" placeholder="e.g., 1-on-1 Combined Cycle (H-Frame)" />
 
-                    <div id="modCommitRow" style="margin-top: 8px;">
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px;">
-                            <input type="checkbox" id="modIsCommit" style="width: auto; margin: 0;" checked>
-                            Also Commit (only relevant for THERM)
+                        <label style="font-size: 12px; margin-top: 8px;">Size (MW)
+                            <span class="info-icon"
+                                data-tooltip="Only used for thermal resources with unit commitment constraints.">?</span>
                         </label>
-                    </div>
+                        <input id="modSizeMw" type="number" value="100" min="1" step="1" />
 
-                    <div style="display: flex; align-items: center; gap: 10px; margin-top: 8px;">
-                        <button class="btn btn-secondary" id="addModifiedResourceBtn" type="button">Add Modified
-                            Resource</button>
-                        <label style="font-size: 12px; margin: 0;">Planning Year:</label>
-                        <select id="modResourceYearSelect" style="width: auto; min-width: 110px;">
-                            <option value="all" selected>All (default)</option>
+                        <details style="margin-top: 8px;">
+                            <summary style="font-weight: 600; cursor: pointer; font-size: 12px;">Optional: Override
+                                cost/performance attributes</summary>
+                            <div style="margin-top: 10px; padding: 10px; background: #f5f5f5; border-radius: 4px;">
+                                <div style="font-size: 10px; color: #555; margin-bottom: 8px;">
+                                    Leave blank to use ATB default. Use operators for relative changes:
+                                    <code>add:value</code>, <code>mul:value</code>, <code>truediv:value</code>,
+                                    <code>sub:value</code>
+                                </div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                                    <div>
+                                        <label style="font-size: 11px; display: block;">CapEx ($/MW)</label>
+                                        <input id="modOverrideCapexMw" type="text" placeholder="ATB default"
+                                            style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                    </div>
+                                    <div>
+                                        <label style="font-size: 11px; display: block;">CapEx ($/MWh)</label>
+                                        <input id="modOverrideCapexMwh" type="text" placeholder="ATB default"
+                                            style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                    </div>
+                                    <div>
+                                        <label style="font-size: 11px; display: block;">Heat Rate (MMBtu/MWh)</label>
+                                        <input id="modOverrideHeatRate" type="text" placeholder="ATB default"
+                                            style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                    </div>
+                                    <div>
+                                        <label style="font-size: 11px; display: block;">Fixed O&amp;M ($/MW-yr)</label>
+                                        <input id="modOverrideFixedOM" type="text" placeholder="ATB default"
+                                            style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                    </div>
+                                    <div>
+                                        <label style="font-size: 11px; display: block;">Variable O&amp;M ($/MWh)</label>
+                                        <input id="modOverrideVarOM" type="text" placeholder="ATB default"
+                                            style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                    </div>
+                                    <div>
+                                        <label style="font-size: 11px; display: block;">Variable O&amp;M In
+                                            ($/MWh)</label>
+                                        <input id="modOverrideVarOMIn" type="text" placeholder="For batteries only"
+                                            style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                    </div>
+                                    <div style="grid-column: 1 / -1;">
+                                        <label style="font-size: 11px; display: block;">WACC real (0–1)</label>
+                                        <input id="modOverrideWacc" type="text" placeholder="ATB default"
+                                            style="width: 100%; padding: 4px; font-size: 11px; border: 1px solid #ddd; border-radius: 3px;" />
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
+
+                        <label style="font-size: 12px; margin-top: 8px;">Fuel Type</label>
+                        <select id="modFuelType">
+                            <option value="standard" selected>Standard fuel</option>
+                            <option value="new">New fuel</option>
                         </select>
-                    </div>
-                    <div id="modResourceYearWarning"
-                        style="display: none; font-size: 11px; color: #856404; background: #fff3cd; padding: 4px 8px; border-radius: 3px; margin-top: 4px;">
-                    </div>
-                    <button class="btn btn-secondary" id="clearModifiedResourcesBtn" type="button">Clear Modified
-                        Resources</button>
 
-                    <div id="modifiedResourcesList" class="ba-list" style="margin-top: 8px;">
-                        <em>No modified resources added yet.</em>
+                        <div id="modStandardFuelRow" style="margin-top: 8px;">
+                            <label style="font-size: 12px;">Standard Fuel</label>
+                            <select id="modStandardFuel">
+                                <option value="naturalgas" selected>naturalgas</option>
+                                <option value="coal">coal</option>
+                                <option value="distillate">distillate</option>
+                                <option value="uranium">uranium</option>
+                            </select>
+                        </div>
+
+                        <div id="modNewFuelRow" style="display:none; margin-top: 8px;">
+                            <label style="font-size: 12px;">New Fuel Name</label>
+                            <input id="modNewFuelName" type="text" placeholder="e.g., hydrogen" />
+
+                            <label style="font-size: 12px; margin-top: 8px;">Fuel Price ($/MMBtu)</label>
+                            <input id="modNewFuelPrice" type="number" value="16" min="0" step="0.01" />
+
+                            <label style="font-size: 12px; margin-top: 8px;">Emission Factor (metric ton
+                                CO₂/MMBtu)</label>
+                            <input id="modNewFuelEf" type="number" value="0" min="0" step="0.00001" />
+                        </div>
+
+                        <label style="font-size: 12px; margin-top: 8px;">Resource Class
+                            <span class="info-icon" data-tooltip="These align with GenX resource categories.">?</span>
+                        </label>
+                        <select id="modTagClass">
+                            <option value="THERM" selected>THERM</option>
+                            <option value="HYDRO">HYDRO</option>
+                            <option value="MUST_RUN">MUST_RUN</option>
+                            <option value="VRE">VRE</option>
+                            <option value="STOR">STOR</option>
+                            <option value="LDS">LDS</option>
+                        </select>
+
+                        <div id="modCommitRow" style="margin-top: 8px;">
+                            <label
+                                style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px;">
+                                <input type="checkbox" id="modIsCommit" style="width: auto; margin: 0;" checked>
+                                Also Commit (only relevant for THERM)
+                            </label>
+                        </div>
+
+                        <div style="display: flex; align-items: center; gap: 10px; margin-top: 8px;">
+                            <button class="btn btn-secondary" id="addModifiedResourceBtn" type="button">Add Modified
+                                Resource</button>
+                            <label style="font-size: 12px; margin: 0;">Planning Year:</label>
+                            <select id="modResourceYearSelect" style="width: auto; min-width: 110px;">
+                                <option value="all" selected>All (default)</option>
+                            </select>
+                        </div>
+                        <div id="modResourceYearWarning"
+                            style="display: none; font-size: 11px; color: #856404; background: #fff3cd; padding: 4px 8px; border-radius: 3px; margin-top: 4px;">
+                        </div>
+                        <button class="btn btn-secondary" id="clearModifiedResourcesBtn" type="button">Clear Modified
+                            Resources</button>
+
+                        <div id="modifiedResourcesList" class="ba-list" style="margin-top: 8px;">
+                            <em>No modified resources added yet.</em>
+                        </div>
                     </div>
                 </div>
 
