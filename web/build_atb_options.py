@@ -162,32 +162,48 @@ def build_index(parquet_path: Path) -> list[dict]:
     df = pd.read_parquet(parquet_path).query(
         "parameter == 'capex_mw' and parameter_value > 0"
     )
-    df["parameter_value"] = df["parameter_value"].astype(int)
 
-    col_year = _pick_column(df, ["data_year", "atb_data_year", "atb_year", "year"])
+    col_year = _pick_column(df, ["data_year", "atb_data_year", "atb_year"])
+    col_basis_year = _pick_column(df, ["basis_year", "year", "model_year", "planning_year"])
     col_tech = _pick_column(df, ["technology", "tech", "atb_technology"])
     col_detail = _pick_column(
         df, ["tech_detail", "technology_detail", "detail", "atb_tech_detail"]
     )
     col_case = _pick_column(df, ["cost_case", "case", "atb_cost_case"])
 
+    # Filter to Market financial case for representative cost projections.
+    # If the column doesn't exist, skip filtering.
+    try:
+        col_financial = _pick_column(df, ["financial_case", "financial"])
+        df = df[df[col_financial] == "Market"]
+    except KeyError:
+        pass
+
+    # Average capex over cap_recovery_years (and any other remaining dimensions)
+    # so each (data_year, basis_year, technology, tech_detail, cost_case) has one value.
+    group_cols = [col_year, col_basis_year, col_tech, col_detail, col_case]
     out = (
-        df[[col_year, col_tech, col_detail, col_case, "parameter_value"]]
+        df[group_cols + ["parameter_value"]]
         .dropna()
-        .drop_duplicates()
-        .rename(
-            columns={
-                col_year: "data_year",
-                col_tech: "technology",
-                col_detail: "tech_detail",
-                col_case: "cost_case",
-                "parameter_value": "capex_mw",
-            }
-        )
+        .groupby(group_cols, as_index=False)["parameter_value"]
+        .mean()
+    )
+    out["parameter_value"] = out["parameter_value"].astype(int)
+
+    out = out.rename(
+        columns={
+            col_year: "data_year",
+            col_basis_year: "year",
+            col_tech: "technology",
+            col_detail: "tech_detail",
+            col_case: "cost_case",
+            "parameter_value": "capex_mw",
+        }
     )
 
     # Normalize types / whitespace
     out["data_year"] = out["data_year"].astype(int)
+    out["year"] = out["year"].astype(int)
     out["technology"] = out["technology"].astype(str).str.strip()
     out["tech_detail"] = out["tech_detail"].astype(str).str.strip()
     out["cost_case"] = out["cost_case"].astype(str).str.strip()
@@ -205,7 +221,7 @@ def build_index(parquet_path: Path) -> list[dict]:
             r["technology"],
             r["tech_detail"],
             r["cost_case"],
-            r["capex_mw"],
+            r["year"],
         )
     )
     return records
