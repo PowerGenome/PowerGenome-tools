@@ -8066,16 +8066,18 @@ def on_download_all_settings(event):
 
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
-        # Write all YAML files
-        for filename, content in state.settings_yamls.items():
-            zipf.writestr(filename, content)
+        # Write all YAML/CSV files in deterministic order, rejecting unsafe names
+        for filename in sorted(state.settings_yamls):
+            if "/" in filename or "\\" in filename or ".." in filename:
+                continue  # skip path-traversal / absolute-path entries
+            zipf.writestr(filename, state.settings_yamls[filename])
 
         # Write emission_policies.csv if it exists
         if state.emission_policies_df is not None:
             csv_content = state.emission_policies_df.to_csv(index=False)
             zipf.writestr("emission_policies.csv", csv_content)
 
-    zip_name = "powgenome_settings.zip"
+    zip_name = "powergenome_settings.zip"
     _download_binary_file(zip_name, buffer.getvalue(), "application/zip")
     set_status(f"Downloaded {zip_name}", "success")
 

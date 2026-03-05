@@ -5,6 +5,7 @@ Covers:
   bundled into powgenome_settings.zip
 """
 
+import contextlib
 import importlib.util
 import sys
 import zipfile
@@ -115,10 +116,12 @@ def _capture_zip_download(cluster_app):
     return calls
 
 
+@contextlib.contextmanager
 def _open_zip_from_calls(calls, index=0):
-    """Open the ZIP bytes from a captured _download_binary_file call."""
+    """Context manager that opens the ZIP bytes from a captured _download_binary_file call."""
     buf = BytesIO(calls[index]["payload_bytes"])
-    return zipfile.ZipFile(buf, "r")
+    with zipfile.ZipFile(buf, "r") as zf:
+        yield zf
 
 
 # ---------------------------------------------------------------------------
@@ -142,8 +145,8 @@ class TestOnDownloadAllSettings:
         cluster_app.on_download_all_settings(None)
 
         assert len(calls) == 1
-        zf = _open_zip_from_calls(calls)
-        names = zf.namelist()
+        with _open_zip_from_calls(calls) as zf:
+            names = zf.namelist()
         assert "model_definition.yml" in names
         assert "resources.yml" in names
         assert "emission_policies.csv" in names
@@ -160,9 +163,10 @@ class TestOnDownloadAllSettings:
         cluster_app.on_download_all_settings(None)
 
         assert len(calls) == 1
-        zf = _open_zip_from_calls(calls)
-        assert "emission_policies.csv" not in zf.namelist()
-        assert set(zf.namelist()) == {"model_definition.yml", "fuels.yml"}
+        with _open_zip_from_calls(calls) as zf:
+            names = set(zf.namelist())
+        assert "emission_policies.csv" not in names
+        assert names == {"model_definition.yml", "fuels.yml"}
 
     def test_error_when_settings_yamls_empty(self, cluster_app):
         """No download is triggered when settings_yamls is empty; error status shown."""
@@ -208,8 +212,8 @@ class TestOnDownloadAllSettings:
 
         cluster_app.on_download_all_settings(None)
 
-        zf = _open_zip_from_calls(calls)
-        assert set(zf.namelist()) == set(filenames)
+        with _open_zip_from_calls(calls) as zf:
+            assert set(zf.namelist()) == set(filenames)
 
     def test_yaml_file_contents_preserved(self, cluster_app):
         """The content of each YAML file is exactly preserved in the ZIP."""
@@ -222,11 +226,11 @@ class TestOnDownloadAllSettings:
 
         cluster_app.on_download_all_settings(None)
 
-        zf = _open_zip_from_calls(calls)
-        assert zf.read("model_definition.yml").decode() == (
-            "regions:\n  - RegionA\n  - RegionB\n"
-        )
-        assert zf.read("fuels.yml").decode() == "natural_gas:\n  price: 4.5\n"
+        with _open_zip_from_calls(calls) as zf:
+            assert zf.read("model_definition.yml").decode() == (
+                "regions:\n  - RegionA\n  - RegionB\n"
+            )
+            assert zf.read("fuels.yml").decode() == "natural_gas:\n  price: 4.5\n"
 
     def test_emissions_csv_content_matches_dataframe(self, cluster_app):
         """The emission_policies.csv content in the ZIP matches df.to_csv(index=False)."""
@@ -243,19 +247,19 @@ class TestOnDownloadAllSettings:
 
         cluster_app.on_download_all_settings(None)
 
-        zf = _open_zip_from_calls(calls)
-        csv_bytes = zf.read("emission_policies.csv").decode()
+        with _open_zip_from_calls(calls) as zf:
+            csv_bytes = zf.read("emission_policies.csv").decode()
         assert csv_bytes == df.to_csv(index=False)
 
-    def test_zip_filename_is_powgenome_settings(self, cluster_app):
-        """The downloaded file is named exactly 'powgenome_settings.zip'."""
+    def test_zip_filename_is_powergenome_settings(self, cluster_app):
+        """The downloaded file is named exactly 'powergenome_settings.zip'."""
         cluster_app.state.settings_yamls = {"model_definition.yml": "x: 1\n"}
         cluster_app.state.emission_policies_df = None
         calls = _capture_zip_download(cluster_app)
 
         cluster_app.on_download_all_settings(None)
 
-        assert calls[0]["filename"] == "powgenome_settings.zip"
+        assert calls[0]["filename"] == "powergenome_settings.zip"
 
     def test_zip_mime_type_is_application_zip(self, cluster_app):
         """The MIME type passed to _download_binary_file is 'application/zip'."""
@@ -278,8 +282,8 @@ class TestOnDownloadAllSettings:
         buf = BytesIO(calls[0]["payload_bytes"])
         assert zipfile.is_zipfile(buf), "Payload should be a valid ZIP file"
         buf.seek(0)
-        zf = zipfile.ZipFile(buf)
-        assert zf.testzip() is None, "ZIP should have no corrupt entries"
+        with zipfile.ZipFile(buf) as zf:
+            assert zf.testzip() is None, "ZIP should have no corrupt entries"
 
     def test_success_status_message_set(self, cluster_app):
         """A success status message is set after a successful download."""
@@ -293,7 +297,7 @@ class TestOnDownloadAllSettings:
 
         assert status_calls, "set_status should have been called"
         assert status_calls[0][1] == "success"
-        assert "powgenome_settings.zip" in status_calls[0][0]
+        assert "powergenome_settings.zip" in status_calls[0][0]
 
     def test_scenario_files_included_when_present(self, cluster_app):
         """Optional scenario_management.yml, extra_inputs.yml and scenario_inputs.csv are included."""
@@ -308,8 +312,8 @@ class TestOnDownloadAllSettings:
 
         cluster_app.on_download_all_settings(None)
 
-        zf = _open_zip_from_calls(calls)
-        names = set(zf.namelist())
+        with _open_zip_from_calls(calls) as zf:
+            names = set(zf.namelist())
         assert "scenario_management.yml" in names
         assert "extra_inputs.yml" in names
         assert "scenario_inputs.csv" in names
@@ -329,6 +333,7 @@ class TestOnDownloadAllSettings:
 
         cluster_app.on_download_all_settings(None)
 
-        zf = _open_zip_from_calls(calls)
+        with _open_zip_from_calls(calls) as zf:
+            actual_count = len(zf.namelist())
         expected = n_yamls + (1 if has_emissions else 0)
-        assert len(zf.namelist()) == expected
+        assert actual_count == expected
