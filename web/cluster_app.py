@@ -120,6 +120,8 @@ _DEFAULT_NEW_RESOURCES = [
         "tech_detail": "Lithium Ion",
         "cost_case": "Moderate",
         "size_mw": 60,
+        "variable_o_m_mwh": 0.15,
+        "variable_o_m_mwh_in": 0.15,
         "planning_year": "all",
     },
     {
@@ -4243,6 +4245,15 @@ def render_new_resources_list():
         return
 
     parts = []
+    resource_attr_keys = [
+        "capex_mw",
+        "capex_mwh",
+        "heat_rate",
+        "fixed_o_m_mw",
+        "variable_o_m_mwh",
+        "variable_o_m_mwh_in",
+        "wacc_real",
+    ]
 
     # Render regular resources with delete buttons and year badges
     for idx, r in enumerate(regular_items):
@@ -4251,6 +4262,24 @@ def render_new_resources_list():
         case = r["cost_case"]
         size = r["size_mw"]
         planning_year = r.get("planning_year", "all")
+
+        # Show inline attribute overrides for regular resources when present
+        # (for example, default battery variable O&M values).
+        inline_mods = []
+        for attr in resource_attr_keys:
+            if attr in r:
+                inline_mods.append(f"{attr}={r[attr]}")
+        inline_mod_text = ""
+        row_style = (
+            "display: flex; justify-content: space-between; align-items: center;"
+        )
+        if inline_mods:
+            inline_mod_text = (
+                " "
+                f"<span style='color: #856404; font-size: 10px;'>"
+                f"({html.escape('; '.join(inline_mods))})</span>"
+            )
+            row_style += " background-color: #fff3cd;"
 
         ccs_fraction = _extract_ccs_capture_fraction(detail)
         ccs_note = ""
@@ -4266,8 +4295,8 @@ def render_new_resources_list():
             )
         year_badge = _year_badge_html(planning_year)
         parts.append(
-            f"<div class='candidate-item' style='display: flex; justify-content: space-between; align-items: center;'>"
-            f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW{ccs_note}{year_badge}</span>"
+            f"<div class='candidate-item' style='{row_style}'>"
+            f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW{ccs_note}{inline_mod_text}{year_badge}</span>"
             f"<button onclick='window.deleteNewResource({idx})' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
             f"</div>"
         )

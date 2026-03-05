@@ -16,7 +16,7 @@ The web application guides you through a 9-step workflow to build complete Power
 
 3. **Existing Plants** - Cluster existing generators within model regions to reduce model complexity while preserving operational diversity. Use heat rate variability and capacity thresholds to determine optimal cluster counts.
 
-4. **New Resources** - Select new-build technologies from NREL's Annual Technology Baseline (ATB), specify resource sizes, and optionally override cost/performance attributes. Create custom modified resources for technologies not in the ATB (e.g., hydrogen combustion turbines).
+4. **New Resources** - Select new-build technologies from NREL's Annual Technology Baseline (ATB), specify resource sizes, and optionally override cost/performance attributes. In the New Resources list, inline overrides for standard resources are shown directly in each resource row (for example, default battery variable O&M fields). Create custom modified resources for technologies not in the ATB (e.g., hydrogen combustion turbines).
 
 5. **Fuels** - Choose fuel price scenarios for coal, natural gas, distillate, and uranium from EIA projections or other data sources. Fuel prices are automatically aligned to your target dollar-year.
 
