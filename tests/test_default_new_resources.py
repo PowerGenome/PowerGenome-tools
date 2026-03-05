@@ -170,6 +170,29 @@ class TestDefaultNewResourcesConstant:
                     not extra_battery_keys
                 ), f"Entry {i} unexpectedly has battery-only keys: {extra_battery_keys}"
 
+    def test_no_unexpected_keys(self, cluster_app):
+        """Each entry must have only the expected keys (no extras beyond required + optional battery keys)."""
+        for i, entry in enumerate(cluster_app._DEFAULT_NEW_RESOURCES):
+            entry_keys = set(entry.keys())
+            if (
+                entry["technology"] == "Utility-Scale Battery Storage"
+                and entry["tech_detail"] == "Lithium Ion"
+            ):
+                # Battery entry can have required keys + battery optional keys
+                allowed_keys = REQUIRED_KEYS | BATTERY_OPTIONAL_KEYS
+                unexpected_keys = entry_keys - allowed_keys
+                assert not unexpected_keys, (
+                    f"Battery entry {i} has unexpected keys: {unexpected_keys}. "
+                    f"Expected keys: {allowed_keys}"
+                )
+            else:
+                # Non-battery entries should only have required keys
+                unexpected_keys = entry_keys - REQUIRED_KEYS
+                assert not unexpected_keys, (
+                    f"Entry {i} has unexpected keys: {unexpected_keys}. "
+                    f"Expected keys: {REQUIRED_KEYS}"
+                )
+
     def test_all_entries_have_planning_year_all(self, cluster_app):
         for i, entry in enumerate(cluster_app._DEFAULT_NEW_RESOURCES):
             assert (

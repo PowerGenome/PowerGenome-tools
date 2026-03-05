@@ -84,6 +84,12 @@ from visualization_utils import (
 # Global State
 # ============================================================================
 
+# Battery storage default variable O&M values ($/MWh).
+# Single source of truth for battery defaults used in _DEFAULT_NEW_RESOURCES
+# and _get_default_resource_modifiers().
+_BATTERY_DEFAULT_VAR_OM = 0.15
+_BATTERY_DEFAULT_VAR_OM_IN = 0.15
+
 # Default new-build resources (ATB 2024, planning_year="all").
 # Sizes are taken from web/data/atb_size.json where available.
 _DEFAULT_NEW_RESOURCES = [
@@ -120,8 +126,8 @@ _DEFAULT_NEW_RESOURCES = [
         "tech_detail": "Lithium Ion",
         "cost_case": "Moderate",
         "size_mw": 60,
-        "variable_o_m_mwh": 0.15,
-        "variable_o_m_mwh_in": 0.15,
+        "variable_o_m_mwh": _BATTERY_DEFAULT_VAR_OM,
+        "variable_o_m_mwh_in": _BATTERY_DEFAULT_VAR_OM_IN,
         "planning_year": "all",
     },
     {
@@ -3988,11 +3994,62 @@ def populate_mod_resource_pickers():
         selected_case = _get_default_cost_case(cases)
     _set_select_options(case_el, cases, selected_value=selected_case)
 
+    # Update size field to reflect the new ATB year/tech/detail selection
+    update_mod_size_field_from_atb_size()
+
 
 def on_mod_base_picker_change(event=None):
     populate_mod_resource_pickers()
     update_atb_ccs_cost_visibility()
     update_mod_size_field_from_atb_size()
+
+
+def _lookup_atb_size(tech, detail, selected_year):
+    """Lookup size_mw from atb_size_map for a given technology, detail, and year.
+
+    Args:
+        tech: Technology name (e.g., "NaturalGas")
+        detail: Tech detail (e.g., "2-on-1 Combined Cycle (F-Frame)")
+        selected_year: ATB year to lookup
+
+    Returns:
+        size_mw value if found, None otherwise.
+    """
+    # Resolve the year-specific size map; fall back to the first available year
+    year_size_map = state.atb_size_map.get(selected_year)
+    if year_size_map is None and state.atb_size_map:
+        year_size_map = next(iter(state.atb_size_map.values()))
+    if year_size_map is None:
+        year_size_map = {}
+
+    # Try to find size: first with (tech, detail), then with (tech, None)
+    size_mw = None
+    if detail:
+        size_mw = year_size_map.get((tech, detail))
+    if size_mw is None:
+        size_mw = year_size_map.get((tech, None))
+
+    return size_mw
+
+
+def _format_size_for_field(size_mw):
+    """Format a size_mw value for display in an input field.
+
+    Args:
+        size_mw: Numeric size value or None
+
+    Returns:
+        String representation suitable for input field value.
+    """
+    if size_mw is None:
+        return "100"
+
+    # For sub-1 MW sizes, preserve the decimal value instead of truncating to 0.
+    # For >=1 MW, use a rounded integer representation.
+    if size_mw < 1:
+        return str(size_mw)
+    else:
+        return str(int(round(size_mw)))
 
 
 def update_size_field_from_atb_size():
@@ -4011,34 +4068,13 @@ def update_size_field_from_atb_size():
     if not tech:
         return
 
-    # Resolve the year-specific size map; fall back to the first available year
     try:
         selected_year = int(_get_select_value(year_el, None) or 0)
     except Exception:
         selected_year = 0
-    year_size_map = state.atb_size_map.get(selected_year)
-    if year_size_map is None and state.atb_size_map:
-        year_size_map = next(iter(state.atb_size_map.values()))
-    if year_size_map is None:
-        year_size_map = {}
 
-    # Try to find size: first with (tech, detail), then with (tech, None)
-    size_mw = None
-    if detail:
-        size_mw = year_size_map.get((tech, detail))
-    if size_mw is None:
-        size_mw = year_size_map.get((tech, None))
-
-    # If found, update the field; otherwise default to 100
-    if size_mw is not None:
-        # For sub-1 MW sizes, preserve the decimal value instead of truncating to 0.
-        # For >=1 MW, use a rounded integer representation.
-        if size_mw < 1:
-            size_el.value = str(size_mw)
-        else:
-            size_el.value = str(int(round(size_mw)))
-    else:
-        size_el.value = "100"
+    size_mw = _lookup_atb_size(tech, detail, selected_year)
+    size_el.value = _format_size_for_field(size_mw)
 
 
 def update_mod_size_field_from_atb_size():
@@ -4057,34 +4093,13 @@ def update_mod_size_field_from_atb_size():
     if not tech:
         return
 
-    # Resolve the year-specific size map; fall back to the first available year
     try:
         selected_year = int(_get_select_value(year_el, None) or 0)
     except Exception:
         selected_year = 0
-    year_size_map = state.atb_size_map.get(selected_year)
-    if year_size_map is None and state.atb_size_map:
-        year_size_map = next(iter(state.atb_size_map.values()))
-    if year_size_map is None:
-        year_size_map = {}
 
-    # Try to find size: first with (tech, detail), then with (tech, None)
-    size_mw = None
-    if detail:
-        size_mw = year_size_map.get((tech, detail))
-    if size_mw is None:
-        size_mw = year_size_map.get((tech, None))
-
-    # If found, update the field; otherwise default to 100
-    if size_mw is not None:
-        # For sub-1 MW sizes, preserve the decimal value instead of truncating to 0.
-        # For >=1 MW, use a rounded integer representation.
-        if size_mw < 1:
-            size_el.value = str(size_mw)
-        else:
-            size_el.value = str(int(round(size_mw)))
-    else:
-        size_el.value = "100"
+    size_mw = _lookup_atb_size(tech, detail, selected_year)
+    size_el.value = _format_size_for_field(size_mw)
 
 
 def populate_default_battery_attributes():
@@ -4773,8 +4788,8 @@ def _get_default_resource_modifiers(technology, tech_detail):
     # Default variable O&M for battery storage
     if "battery" in technology.lower() or "storage" in technology.lower():
         if "lithium" in tech_detail.lower():
-            defaults["Var_OM_Cost_per_MWh"] = 0.15
-            defaults["Var_OM_Cost_per_MWh_In"] = 0.15
+            defaults["Var_OM_Cost_per_MWh"] = _BATTERY_DEFAULT_VAR_OM
+            defaults["Var_OM_Cost_per_MWh_In"] = _BATTERY_DEFAULT_VAR_OM_IN
 
     return defaults
 
