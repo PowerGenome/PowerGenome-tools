@@ -3283,41 +3283,36 @@ def on_run_plant_clustering(event):
 async def load_atb_options():
     """Load ATB new-build options index (if present).
 
-    Expected to live at web/data/atb_options.json. This is designed to be regenerated
-    offline from technology_costs_atb.parquet; the web app only consumes the index.
+    Expected to live at web/data/atb_options.parquet. This is designed to be
+    regenerated offline from technology_costs_atb.parquet; the web app only
+    consumes the index. Columns: data_year, technology, tech_detail, cost_case.
     """
     try:
-        response = await fetch("./data/atb_options.json")
-        if not response.ok:
+        df = await _fetch_parquet_df("./data/atb_options.parquet")
+
+        # Normalize to list of dicts containing at least data_year/technology/tech_detail/cost_case
+        required_cols = {"data_year", "technology", "tech_detail", "cost_case"}
+        if not required_cols.issubset(set(df.columns)):
             state.atb_options = []
             state.atb_index = {}
             state.atb_years = []
             return
 
-        txt = await response.text()
-        payload = json.loads(txt)
-        options = payload.get("options", []) if isinstance(payload, dict) else []
+        df["data_year"] = df["data_year"].astype(int)
+        df["technology"] = df["technology"].astype(str).str.strip()
+        df["tech_detail"] = df["tech_detail"].astype(str).str.strip()
+        df["cost_case"] = df["cost_case"].astype(str).str.strip()
 
-        # Normalize to list of dicts containing at least data_year/technology/tech_detail/cost_case
-        normalized = []
-        for row in options:
-            if not isinstance(row, dict):
-                continue
-            if not all(
-                k in row
-                for k in ("data_year", "technology", "tech_detail", "cost_case")
-            ):
-                continue
-            normalized.append(row)
+        df = df[
+            (df["technology"] != "")
+            & (df["tech_detail"] != "")
+            & (df["cost_case"] != "")
+        ]
+
+        normalized = df.to_dict(orient="records")
 
         state.atb_options = normalized
-        years = sorted(
-            {
-                int(r["data_year"])
-                for r in normalized
-                if str(r.get("data_year", "")).isdigit()
-            }
-        )
+        years = sorted({int(r["data_year"]) for r in normalized})
         state.atb_years = years
 
         idx = {}
