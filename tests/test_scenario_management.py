@@ -1435,6 +1435,7 @@ class TestAtbYearConstraint:
         """
         overlay_el = _mock_dom_element("")
         overlay_el.classList = _ClassListSpy("hidden")
+        ok_button_el = _mock_dom_element("")
 
         return {
             "atbYearSelect": _mock_dom_element(atb_year_str),
@@ -1448,6 +1449,7 @@ class TestAtbYearConstraint:
             # ATB year-conflict overlay elements
             "atbYearConflictMessage": _mock_dom_element(""),
             "atbYearConflictOverlay": overlay_el,
+            "atbYearConflictOkButton": ok_button_el,
             # Override fields (empty → no attr overrides)
             "atbOverrideCapex": _mock_dom_element(""),
             "atbOverrideCapexMwh": _mock_dom_element(""),
@@ -1470,6 +1472,66 @@ class TestAtbYearConstraint:
         cluster_app.render_modified_resources_list = MagicMock()
         cluster_app._check_year_default_warning = MagicMock()
         cluster_app.on_add_new_resource(None)
+
+    def _make_modified_dom_map(
+        self,
+        base_tech="NaturalGas",
+        base_detail="CC",
+        base_case="Moderate",
+        base_size="500",
+        new_tech="CustomGas",
+        new_detail="Custom Detail",
+        fuel_type="standard",
+        std_fuel="naturalgas",
+        new_fuel_name="",
+        new_fuel_price="0",
+        new_fuel_ef="0",
+        tag_class="THERM",
+        is_commit=True,
+        year_str="all",
+        atb_year_str="2024",
+    ):
+        """Return a dict mapping modified-resource form element IDs to mocks."""
+        overlay_el = _mock_dom_element("")
+        overlay_el.classList = _ClassListSpy("hidden")
+        is_commit_el = _mock_dom_element("")
+        is_commit_el.checked = is_commit
+
+        return {
+            "atbYearSelect": _mock_dom_element(atb_year_str),
+            "modBaseTech": _mock_dom_element(base_tech),
+            "modBaseTechDetail": _mock_dom_element(base_detail),
+            "modBaseCostCase": _mock_dom_element(base_case),
+            "modSizeMw": _mock_dom_element(base_size),
+            "modNewTech": _mock_dom_element(new_tech),
+            "modNewTechDetail": _mock_dom_element(new_detail),
+            "modFuelType": _mock_dom_element(fuel_type),
+            "modStandardFuel": _mock_dom_element(std_fuel),
+            "modNewFuelName": _mock_dom_element(new_fuel_name),
+            "modNewFuelPrice": _mock_dom_element(new_fuel_price),
+            "modNewFuelEf": _mock_dom_element(new_fuel_ef),
+            "modTagClass": _mock_dom_element(tag_class),
+            "modIsCommit": is_commit_el,
+            "modResourceYearSelect": _mock_dom_element(year_str),
+            "statusBox": _mock_dom_element(""),
+            "atbYearConflictMessage": _mock_dom_element(""),
+            "atbYearConflictOverlay": overlay_el,
+            "modOverrideCapexMw": _mock_dom_element(""),
+            "modOverrideCapexMwh": _mock_dom_element(""),
+            "modOverrideHeatRate": _mock_dom_element(""),
+            "modOverrideFixedOM": _mock_dom_element(""),
+            "modOverrideVarOM": _mock_dom_element(""),
+            "modOverrideVarOMIn": _mock_dom_element(""),
+            "modOverrideWacc": _mock_dom_element(""),
+        }
+
+    def _call_add_modified(self, cluster_app, dom_map):
+        """Wire DOM, stub render helpers, then invoke on_add_modified_resource."""
+        self._wire_dom(cluster_app, dom_map)
+        cluster_app.render_new_resources_list = MagicMock()
+        cluster_app.render_modified_resources_list = MagicMock()
+        cluster_app._check_year_default_warning = MagicMock()
+        cluster_app.on_add_modified_resource(None)
 
     # ------------------------------------------------------------------
     # 1. _get_current_resources_atb_year – empty state
@@ -1515,6 +1577,24 @@ class TestAtbYearConstraint:
 
         assert result == 2023
 
+    def test_get_current_resources_atb_year_falls_back_for_legacy_modified_entries(
+        self, cluster_app
+    ):
+        """Legacy modified resources without stored data_year fall back to the
+        currently selected ATB year."""
+        cluster_app.state.new_resources = []
+        cluster_app.state.modified_new_resources = {
+            "legacy": _make_modified("legacy"),
+        }
+        self._wire_dom(
+            cluster_app,
+            {"atbYearSelect": _mock_dom_element("2024")},
+        )
+
+        result = cluster_app._get_current_resources_atb_year()
+
+        assert result == 2024
+
     # ------------------------------------------------------------------
     # 4. _get_current_resources_atb_year – new_resources takes priority
     # ------------------------------------------------------------------
@@ -1532,8 +1612,48 @@ class TestAtbYearConstraint:
 
         assert result == 2024
 
+    def test_get_current_resources_atb_year_prefers_explicit_modified_year(
+        self, cluster_app
+    ):
+        """Stored modified-resource years take precedence over the DOM fallback."""
+        cluster_app.state.new_resources = []
+        cluster_app.state.modified_new_resources = {
+            "ng_cc": {**_make_modified("ng_cc"), "data_year": 2023},
+            "legacy": _make_modified("legacy"),
+        }
+        self._wire_dom(
+            cluster_app,
+            {"atbYearSelect": _mock_dom_element("2024")},
+        )
+
+        result = cluster_app._get_current_resources_atb_year()
+
+        assert result == 2023
+
     # ------------------------------------------------------------------
-    # 5. on_add_new_resource blocks mismatched ATB year
+    # 5. show_atb_year_conflict_overlay reveals dialog and focuses OK
+    # ------------------------------------------------------------------
+
+    def test_show_atb_year_conflict_overlay_reveals_overlay_and_focuses_ok_button(
+        self, cluster_app
+    ):
+        """Showing the conflict overlay should populate its message, reveal it,
+        and move focus to the OK button."""
+        dom = self._make_dom_map()
+        message_el = dom["atbYearConflictMessage"]
+        overlay_el = dom["atbYearConflictOverlay"]
+        ok_button_el = dom["atbYearConflictOkButton"]
+
+        self._wire_dom(cluster_app, dom)
+        cluster_app.show_atb_year_conflict_overlay(2024, 2023)
+
+        assert "ATB <strong>2024</strong>" in message_el.innerHTML
+        assert "ATB <strong>2023</strong>" in message_el.innerHTML
+        assert "hidden" in overlay_el.classList.removed
+        ok_button_el.focus.assert_called_once()
+
+    # ------------------------------------------------------------------
+    # 6. on_add_new_resource blocks mismatched ATB year
     # ------------------------------------------------------------------
 
     def test_add_resource_from_different_atb_year_is_blocked(self, cluster_app):
@@ -1558,8 +1678,29 @@ class TestAtbYearConstraint:
         # The overlay's "hidden" class must have been removed
         assert "hidden" in overlay_el.classList.removed
 
+    def test_add_resource_from_different_atb_year_is_blocked_by_modified_resource(
+        self, cluster_app
+    ):
+        """Modified resources with stored data_year enforce the same conflict guard."""
+        cluster_app.state.new_resources = []
+        cluster_app.state.modified_new_resources = {
+            "custom_gas": {**_make_modified("custom_gas"), "data_year": 2024},
+        }
+
+        dom = self._make_dom_map(
+            tech="LandbasedWind",
+            detail="Class3",
+            atb_year_str="2023",
+        )
+        overlay_el = dom["atbYearConflictOverlay"]
+
+        self._call_add(cluster_app, dom)
+
+        assert cluster_app.state.new_resources == []
+        assert "hidden" in overlay_el.classList.removed
+
     # ------------------------------------------------------------------
-    # 6. on_add_new_resource allows same ATB year
+    # 7. on_add_new_resource allows same ATB year
     # ------------------------------------------------------------------
 
     def test_add_resource_from_same_atb_year_is_allowed(self, cluster_app):
@@ -1585,7 +1726,7 @@ class TestAtbYearConstraint:
         assert "hidden" not in overlay_el.classList.removed
 
     # ------------------------------------------------------------------
-    # 7. First resource stores data_year in its entry
+    # 8. First resource stores data_year in its entry
     # ------------------------------------------------------------------
 
     def test_add_resource_to_empty_list_stores_data_year(self, cluster_app):
@@ -1604,8 +1745,39 @@ class TestAtbYearConstraint:
         assert len(cluster_app.state.new_resources) == 1
         assert cluster_app.state.new_resources[0]["data_year"] == 2024
 
+    def test_add_modified_resource_to_empty_list_stores_data_year(self, cluster_app):
+        """Modified resources created from the custom-resource flow persist
+        the selected ATB data year."""
+        cluster_app.state.new_resources = []
+        cluster_app.state.modified_new_resources = {}
+
+        dom = self._make_modified_dom_map(atb_year_str="2024")
+
+        self._call_add_modified(cluster_app, dom)
+
+        assert len(cluster_app.state.modified_new_resources) == 1
+        stored = next(iter(cluster_app.state.modified_new_resources.values()))
+        assert stored["data_year"] == 2024
+
+    def test_add_modified_resource_from_different_atb_year_is_blocked(
+        self, cluster_app
+    ):
+        """Modified-resource additions must also honor the single-year ATB rule."""
+        cluster_app.state.new_resources = [
+            {**_make_resource(tech="UtilityPV", detail="Class1"), "data_year": 2024},
+        ]
+        cluster_app.state.modified_new_resources = {}
+
+        dom = self._make_modified_dom_map(atb_year_str="2023")
+        overlay_el = dom["atbYearConflictOverlay"]
+
+        self._call_add_modified(cluster_app, dom)
+
+        assert cluster_app.state.modified_new_resources == {}
+        assert "hidden" in overlay_el.classList.removed
+
     # ------------------------------------------------------------------
-    # 8. delete_all_new_resources clears both stores
+    # 9. delete_all_new_resources clears both stores
     # ------------------------------------------------------------------
 
     def test_delete_all_new_resources(self, cluster_app):
@@ -1613,7 +1785,10 @@ class TestAtbYearConstraint:
         call set_status with a success-level message."""
         cluster_app.state.new_resources = [
             {**_make_resource(tech="UtilityPV", detail="Class1"), "data_year": 2024},
-            {**_make_resource(tech="LandbasedWind", detail="Class3"), "data_year": 2024},
+            {
+                **_make_resource(tech="LandbasedWind", detail="Class3"),
+                "data_year": 2024,
+            },
         ]
         cluster_app.state.modified_new_resources = {
             "ng_cc": {**_make_modified("ng_cc"), "data_year": 2024},
@@ -1626,7 +1801,9 @@ class TestAtbYearConstraint:
         # Wire a real statusBox so we can assert on the message
         status_el = _mock_dom_element("")
         cluster_app.document.getElementById = MagicMock(
-            side_effect=lambda id_: status_el if id_ == "statusBox" else _mock_dom_element("")
+            side_effect=lambda id_: (
+                status_el if id_ == "statusBox" else _mock_dom_element("")
+            )
         )
 
         cluster_app.delete_all_new_resources()
@@ -1646,9 +1823,7 @@ class TestAtbYearConstraint:
 
         assert len(defaults) > 0, "_DEFAULT_NEW_RESOURCES must not be empty"
         for entry in defaults:
-            assert "data_year" in entry, (
-                f"Entry {entry!r} is missing 'data_year'"
-            )
-            assert entry["data_year"] == 2024, (
-                f"Expected data_year=2024, got {entry['data_year']!r} in {entry!r}"
-            )
+            assert "data_year" in entry, f"Entry {entry!r} is missing 'data_year'"
+            assert (
+                entry["data_year"] == 2024
+            ), f"Expected data_year=2024, got {entry['data_year']!r} in {entry!r}"

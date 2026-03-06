@@ -3896,6 +3896,15 @@ def _get_select_value(el, default=None):
         return default
 
 
+def _get_selected_atb_data_year():
+    """Read the currently selected ATB data year from the picker."""
+    year_el = document.getElementById("atbYearSelect")
+    try:
+        return int(_get_select_value(year_el, 0) or 0)
+    except (ValueError, TypeError):
+        return 0
+
+
 def populate_atb_picker():
     """Populate the ATB picker selects in the Settings tab."""
     year_el = document.getElementById("atbYearSelect")
@@ -4432,17 +4441,25 @@ def _get_current_resources_atb_year():
     """Return the ATB data_year already in use across all selected resources, or None.
 
     Looks at both ``state.new_resources`` and ``state.modified_new_resources``.
-    Returns the first ``data_year`` value found, or ``None`` if no resources
-    have a ``data_year`` recorded.
+    Returns the first ``data_year`` value found. As a best-effort fallback for
+    legacy modified resources created before ``data_year`` was persisted, uses
+    the current ATB picker year when modified resources exist but none record a
+    year.
     """
     for r in state.new_resources:
         yr = r.get("data_year")
         if yr is not None:
             return yr
+    has_modified_resources = False
     for r in state.modified_new_resources.values():
+        has_modified_resources = True
         yr = r.get("data_year")
         if yr is not None:
             return yr
+    if has_modified_resources:
+        fallback_year = _get_selected_atb_data_year()
+        if fallback_year:
+            return fallback_year
     return None
 
 
@@ -4459,10 +4476,12 @@ def show_atb_year_conflict_overlay(existing_year, new_year):
     overlay = document.getElementById("atbYearConflictOverlay")
     if overlay:
         overlay.classList.remove("hidden")
+    ok_button = document.getElementById("atbYearConflictOkButton")
+    if ok_button and hasattr(ok_button, "focus"):
+        ok_button.focus()
 
 
 def on_add_new_resource(event):
-    year_el = document.getElementById("atbYearSelect")
     tech_el = document.getElementById("atbTechSelect")
     detail_el = document.getElementById("atbTechDetailSelect")
     case_el = document.getElementById("atbCostCaseSelect")
@@ -4481,10 +4500,7 @@ def on_add_new_resource(event):
         return
 
     # Read ATB data year from the picker
-    try:
-        atb_data_year = int(_get_select_value(year_el, 0) or 0)
-    except (ValueError, TypeError):
-        atb_data_year = 0
+    atb_data_year = _get_selected_atb_data_year()
 
     # Reject if the selected ATB data year differs from what is already in use.
     if atb_data_year:
@@ -5082,6 +5098,7 @@ def on_add_modified_resource(event):
     new_tech = str(_get_select_value(new_tech_el, "")).strip()
     new_detail = str(_get_select_value(new_detail_el, "")).strip()
     new_case = base_case  # automatically use the same cost case as the base resource
+    atb_data_year = _get_selected_atb_data_year()
 
     # Auto-generate the key from the new technology and tech detail
     key = _auto_modified_key(new_tech, new_detail)
@@ -5144,6 +5161,12 @@ def on_add_modified_resource(event):
             "error",
         )
         return
+
+    if atb_data_year:
+        existing_year = _get_current_resources_atb_year()
+        if existing_year is not None and existing_year != atb_data_year:
+            show_atb_year_conflict_overlay(existing_year, atb_data_year)
+            return
 
     fuel_type = str(_get_select_value(fuel_type_el, "standard"))
     std_fuel = str(_get_select_value(std_fuel_el, "naturalgas"))
@@ -5209,6 +5232,7 @@ def on_add_modified_resource(event):
         "fuel_desc": fuel_desc,
         "ccs_capture_fraction": ccs_fraction,
         "planning_year": planning_year,
+        "data_year": atb_data_year if atb_data_year else None,
     }
 
     # Clear attribute override fields for next entry
