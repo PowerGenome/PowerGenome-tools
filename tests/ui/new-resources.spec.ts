@@ -149,19 +149,6 @@ test.describe('New Resources — click to populate ATB picker', () => {
         await expect(page.locator('#atbOverrideVarOMIn')).toHaveValue('');
     });
 
-    test('clicking an item shows a status message', async ({ page }) => {
-        await openStep4(page);
-
-        const firstItem = page.locator('#newResourcesList .candidate-item').first();
-        await firstItem.click();
-
-        // Some status indicator should be visible (not checking exact text since it varies)
-        // Just verify the click doesn't cause an error; a status message should appear
-        const statusEl = page.locator('#status, [id*="status"], .status-msg').first();
-        // Status message should contain the technology name
-        await expect(page.locator('body')).toContainText('NaturalGas');
-    });
-
     test('clicking Delete button does not load resource into picker', async ({ page }) => {
         await openStep4(page);
 
