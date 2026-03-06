@@ -1490,7 +1490,7 @@
 
     <!-- ATB Year Conflict Overlay -->
     <div id="atbYearConflictOverlay" class="hidden" role="alertdialog" aria-modal="true"
-        aria-labelledby="atbYearConflictTitle">
+        aria-labelledby="atbYearConflictTitle" aria-describedby="atbYearConflictMessage">
         <div class="welcome-dialog" style="max-width: 480px;" onclick="event.stopPropagation()">
             <div class="welcome-header error-header">
                 <button type="button" id="atbYearConflictCloseButton" class="atb-conflict-close-x"
@@ -1505,7 +1505,7 @@
                     then add resources from your desired ATB data year.
                 </p>
                 <div style="margin-top: 16px; text-align: right;">
-                    <button class="btn btn-secondary"
+                    <button class="btn btn-secondary" id="atbYearConflictOkButton" type="button"
                         onclick="document.getElementById('atbYearConflictOverlay').classList.add('hidden')">
                         OK
                     </button>

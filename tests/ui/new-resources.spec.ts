@@ -16,6 +16,26 @@ async function openStep4(page: Page) {
     }, { timeout: 30000 });
 }
 
+async function triggerAtbYearConflict(page: Page) {
+    await openStep4(page);
+
+    const yearSelect = page.locator('#atbYearSelect');
+    const yearOptions = await yearSelect.locator('option').evaluateAll((options) =>
+        options
+            .map((option) => (option as HTMLOptionElement).value)
+            .filter((value) => value && value !== '2024')
+    );
+
+    test.skip(yearOptions.length === 0, 'ATB index only exposes one data year in this environment.');
+
+    await yearSelect.selectOption(yearOptions[0]);
+    await page.locator('#addNewResourceBtn').click();
+
+    const conflictOverlay = page.locator('#atbYearConflictOverlay');
+    await expect(conflictOverlay).toBeVisible();
+    return conflictOverlay;
+}
+
 test.describe('New Resources — click to populate ATB picker', () => {
 
     test('resource list contains clickable items with cursor pointer', async ({ page }) => {
@@ -159,25 +179,16 @@ test.describe('New Resources — click to populate ATB picker', () => {
     });
 
     test('ATB year conflict dialog can be dismissed with its dedicated close button', async ({ page }) => {
-        await openStep4(page);
-
-        const yearSelect = page.locator('#atbYearSelect');
-        const yearOptions = await yearSelect.locator('option').evaluateAll((options) =>
-            options
-                .map((option) => (option as HTMLOptionElement).value)
-                .filter((value) => value && value !== '2024')
-        );
-
-        test.skip(yearOptions.length === 0, 'ATB index only exposes one data year in this environment.');
-
-        await yearSelect.selectOption(yearOptions[0]);
-        await page.locator('#addNewResourceBtn').click();
-
-        const conflictOverlay = page.locator('#atbYearConflictOverlay');
-        await expect(conflictOverlay).toBeVisible();
+        const conflictOverlay = await triggerAtbYearConflict(page);
 
         await page.getByLabel('Close ATB conflict dialog').click();
         await expect(conflictOverlay).toHaveClass('hidden');
+    });
+
+    test('ATB year conflict dialog exposes its description and focuses OK when opened', async ({ page }) => {
+        const conflictOverlay = await triggerAtbYearConflict(page);
+        await expect(conflictOverlay).toHaveAttribute('aria-describedby', 'atbYearConflictMessage');
+        await expect(conflictOverlay.getByRole('button', { name: 'OK' })).toBeFocused();
     });
 
 });
