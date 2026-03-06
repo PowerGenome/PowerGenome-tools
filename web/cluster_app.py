@@ -4708,7 +4708,7 @@ def delete_all_new_resources(event=None):
     render_modified_resources_list()
     render_new_resources_list()
     set_status("All new resources have been removed.", "success")
-    
+
 
 def _populate_atb_picker_from_resource(
     tech, detail, case, planning_year, size, attr_overrides=None
@@ -6958,12 +6958,6 @@ def generate_resources_settings():
         for r in state.new_resources
         if r.get("planning_year") == "all"
     ]
-    if not new_resources:
-        # Seed a minimal starter set (should normally be pre-populated via _DEFAULT_NEW_RESOURCES)
-        new_resources = [
-            [r["technology"], r["tech_detail"], r["cost_case"], r["size_mw"]]
-            for r in _DEFAULT_NEW_RESOURCES
-        ]
 
     # Hydro defaults
     hydro_factor = 2

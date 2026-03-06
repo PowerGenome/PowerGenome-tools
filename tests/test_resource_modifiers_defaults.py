@@ -552,6 +552,96 @@ class TestBuildSettingsYamlResourceModifiers:
         resource_modifiers = parsed.get("resource_modifiers", {})
         assert "custom_fuel" not in resource_modifiers
 
+    def test_empty_selection_exports_no_base_new_resources(self, cluster_app):
+        """An intentionally empty selection should stay empty in resources.yml."""
+        cluster_app.state.new_resources = []
+        cluster_app.state.modified_new_resources = {}
+        cluster_app.state.region_aggregations = {"R1": ["ba1"]}
+        cluster_app.state.is_clustered = True
+        cluster_app.state.ba_to_region = {"ba1": "R1"}
+        cluster_app.state.plant_cluster_settings = {}
+        cluster_app.state.renewables_clusters = None
+
+        el_map = {
+            "modelYears": _mock_dom_element("2030"),
+            "targetUsdYear": _mock_dom_element("2024"),
+            "atbYearSelect": _mock_dom_element("2024"),
+        }
+        cluster_app.document.getElementById = MagicMock(
+            side_effect=lambda id_: el_map.get(id_, _mock_dom_element(""))
+        )
+
+        result = cluster_app.generate_resources_settings()
+        parsed = yaml.safe_load(result)
+
+        assert parsed["new_resources"] == []
+        assert parsed.get("resource_modifiers") is None
+
+    def test_year_specific_only_resources_do_not_fallback_to_defaults(
+        self, cluster_app
+    ):
+        """Year-specific resources alone should not resurrect default base resources."""
+        cluster_app.state.new_resources = [
+            _make_resource(tech="UtilityPV", detail="Class1", year=2030),
+            _make_resource(tech="LandbasedWind", detail="Class3", year=2040),
+        ]
+        cluster_app.state.modified_new_resources = {}
+        cluster_app.state.region_aggregations = {"R1": ["ba1"]}
+        cluster_app.state.is_clustered = True
+        cluster_app.state.ba_to_region = {"ba1": "R1"}
+        cluster_app.state.plant_cluster_settings = {}
+        cluster_app.state.renewables_clusters = None
+
+        el_map = {
+            "modelYears": _mock_dom_element("2030, 2040"),
+            "targetUsdYear": _mock_dom_element("2024"),
+            "atbYearSelect": _mock_dom_element("2024"),
+        }
+        cluster_app.document.getElementById = MagicMock(
+            side_effect=lambda id_: el_map.get(id_, _mock_dom_element(""))
+        )
+
+        result = cluster_app.generate_resources_settings()
+        parsed = yaml.safe_load(result)
+
+        assert parsed["new_resources"] == []
+        assert parsed.get("resource_modifiers") is None
+
+    def test_all_year_modified_resources_export_without_base_new_resources(
+        self, cluster_app
+    ):
+        """Attribute-only modified resources still export without base new_resources."""
+        cluster_app.state.new_resources = []
+        cluster_app.state.modified_new_resources = {
+            "gas_cc": _make_modified(
+                "gas_cc",
+                tech="NaturalGas",
+                detail="CC",
+                year="all",
+                attr_modifiers={"heat_rate": 6.5},
+            ),
+        }
+        cluster_app.state.region_aggregations = {"R1": ["ba1"]}
+        cluster_app.state.is_clustered = True
+        cluster_app.state.ba_to_region = {"ba1": "R1"}
+        cluster_app.state.plant_cluster_settings = {}
+        cluster_app.state.renewables_clusters = None
+
+        el_map = {
+            "modelYears": _mock_dom_element("2030"),
+            "targetUsdYear": _mock_dom_element("2024"),
+            "atbYearSelect": _mock_dom_element("2024"),
+        }
+        cluster_app.document.getElementById = MagicMock(
+            side_effect=lambda id_: el_map.get(id_, _mock_dom_element(""))
+        )
+
+        result = cluster_app.generate_resources_settings()
+        parsed = yaml.safe_load(result)
+
+        assert parsed["new_resources"] == []
+        assert parsed["resource_modifiers"]["gas_cc"]["Heat_Rate_MMBTU_per_MWh"] == 6.5
+
     def test_year_specific_resources_excluded_from_resources_yml(self, cluster_app):
         """Year-specific resources (year != 'all') don't appear in resources.yml."""
         cluster_app.state.new_resources = [
