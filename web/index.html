@@ -791,6 +791,11 @@
             color: var(--text-muted);
         }
 
+        .candidate-item[role="button"]:focus-visible {
+            outline: 2px solid var(--blue);
+            outline-offset: 2px;
+        }
+
         /* ── Info icon tooltips ───────────────────────────────── */
         .info-icon {
             display: inline-flex;
@@ -2201,7 +2206,7 @@
 
                     <div style="font-size: 11px; color: #666; margin-top: 8px; margin-bottom: 4px;">
                         Resources are listed below. Resources with attribute overrides are shown with a yellow
-                        background.
+                        background. <strong>Click any resource</strong> to load it into the ATB picker above.
                     </div>
                     <div id="newResourcesList" class="ba-list"
                         style="margin-top: 8px; min-height: 180px; max-height: none; resize: vertical; overflow: auto;">
