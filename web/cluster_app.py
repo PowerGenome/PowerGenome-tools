@@ -4273,6 +4273,16 @@ def _year_badge_html(planning_year):
     )
 
 
+def _resource_row_keydown_handler(js_call: str) -> str:
+    """Return an inline keydown handler for keyboard activation."""
+    return (
+        'if(event.key==="Enter"||event.key===" "||event.key==="Spacebar")'
+        "{event.preventDefault();"
+        f"{js_call};"
+        "}"
+    )
+
+
 def render_new_resources_list():
     """Render both regular and modified (attribute-override) new resources together."""
     container = document.getElementById("newResourcesList")
@@ -4351,10 +4361,16 @@ def render_new_resources_list():
                 f"(CCS disposal ${ccs_cost}/tCO2)</span>"
             )
         year_badge = _year_badge_html(planning_year)
+        populate_call = f"window.populatePickerFromResource({idx})"
+        keydown_handler = _resource_row_keydown_handler(populate_call)
         parts.append(
-            f"<div class='candidate-item' style='{row_style}'>"
+            f"<div class='candidate-item' style='{row_style} cursor: pointer;'"
+            f" role='button' tabindex='0'"
+            f" title='Click to load into ATB picker'"
+            f" onclick='{populate_call}'"
+            f" onkeydown='{keydown_handler}'>"
             f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW{ccs_note}{inline_mod_text}{year_badge}</span>"
-            f"<button onclick='window.deleteNewResource({idx})' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
+            f"<button onclick='event.stopPropagation(); window.deleteNewResource({idx})' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
             f"</div>"
         )
 
@@ -4388,11 +4404,18 @@ def render_new_resources_list():
             )
 
         year_badge = _year_badge_html(planning_year)
+        escaped_key = html.escape(key, quote=True)
+        populate_call = f'window.populatePickerFromModifiedResource("{escaped_key}")'
+        keydown_handler = _resource_row_keydown_handler(populate_call)
         parts.append(
-            f"<div class='candidate-item' style='display: flex; justify-content: space-between; align-items: center; background-color: #fff3cd;'>"
+            f"<div class='candidate-item' style='display: flex; justify-content: space-between; align-items: center; background-color: #fff3cd; cursor: pointer;'"
+            f" role='button' tabindex='0'"
+            f" title='Click to load into ATB picker'"
+            f" onclick='{populate_call}'"
+            f" onkeydown='{keydown_handler}'>"
             f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW{ccs_note} "
             f"<span style='color: #856404; font-size: 10px;'>({html.escape(mod_text)})</span>{year_badge}</span>"
-            f"<button onclick='window.deleteModifiedNewResource(\"{html.escape(key, quote=True)}\")' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
+            f"<button onclick='event.stopPropagation(); window.deleteModifiedNewResource(\"{escaped_key}\")' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
             f"</div>"
         )
 
@@ -4624,9 +4647,164 @@ def delete_modified_new_resource(key):
         set_status(f"Resource not found: {key}", "error")
 
 
+def _populate_atb_picker_from_resource(
+    tech, detail, case, planning_year, size, attr_overrides=None
+):
+    """Populate ATB picker dropdowns and override fields to match the given resource.
+
+    Args:
+        tech: Technology name (e.g., "NaturalGas").
+        detail: Tech detail (e.g., "2-on-1 Combined Cycle (F-Frame)").
+        case: Cost case (e.g., "Moderate").
+        planning_year: Planning year value ("all" or an int/str year).
+        size: Size in MW.
+        attr_overrides: Optional dict of UI-key → value for attribute overrides.
+            Values may be plain floats or [operator, float] lists.
+    """
+    if attr_overrides is None:
+        attr_overrides = {}
+
+    year_el = document.getElementById("atbYearSelect")
+    tech_el = document.getElementById("atbTechSelect")
+    detail_el = document.getElementById("atbTechDetailSelect")
+    case_el = document.getElementById("atbCostCaseSelect")
+    size_el = document.getElementById("atbSizeMw")
+    year_select_el = document.getElementById("newResourceYearSelect")
+
+    # Use the currently selected ATB data year (do not change it)
+    try:
+        selected_year = int(_get_select_value(year_el, None) or 0)
+    except Exception:
+        selected_year = 0
+    if not selected_year and state.atb_years:
+        selected_year = max(state.atb_years)
+
+    year_data = state.atb_index.get(selected_year, {})
+
+    # Rebuild and set the Technology dropdown with the target tech selected
+    techs = sorted(year_data.keys())
+    _set_select_options(tech_el, techs, selected_value=tech)
+
+    # Rebuild and set the Tech Detail dropdown for the selected tech
+    details = sorted(year_data.get(tech, {}).keys())
+    _set_select_options(detail_el, details, selected_value=detail)
+
+    # Rebuild and set the Cost Case dropdown for the selected tech+detail
+    cases = year_data.get(tech, {}).get(detail, [])
+    _set_select_options(case_el, cases, selected_value=case)
+
+    # Set the size field
+    if size_el:
+        size_el.value = str(size)
+
+    # Set the planning year dropdown to match the resource
+    if year_select_el:
+        try:
+            year_select_el.value = str(planning_year)
+        except Exception:
+            pass
+
+    # Attribute override field mapping (UI key → input element ID)
+    attr_field_map = [
+        ("capex_mw", "atbOverrideCapex"),
+        ("capex_mwh", "atbOverrideCapexMwh"),
+        ("heat_rate", "atbOverrideHeatRate"),
+        ("fixed_o_m_mw", "atbOverrideFixedOM"),
+        ("variable_o_m_mwh", "atbOverrideVarOM"),
+        ("variable_o_m_mwh_in", "atbOverrideVarOMIn"),
+        ("wacc_real", "atbOverrideWacc"),
+    ]
+
+    # Clear all override fields, then populate any that have values
+    has_overrides = False
+    for attr_key, elem_id in attr_field_map:
+        elem = document.getElementById(elem_id)
+        if not elem:
+            continue
+        val = attr_overrides.get(attr_key)
+        if val is not None:
+            has_overrides = True
+            if isinstance(val, list) and len(val) == 2:
+                elem.value = f"{val[0]}:{val[1]}"
+            else:
+                elem.value = str(val)
+        else:
+            elem.value = ""
+
+    # Auto-expand the override panel when overrides are present
+    if has_overrides:
+        details_el = document.getElementById("atbAttrsOverride")
+        if details_el:
+            details_el.open = True
+
+    update_atb_ccs_cost_visibility()
+    set_status(
+        f"Loaded \u2018{tech} \u2014 {detail} \u2014 {case}\u2019 into the ATB picker.",
+        "info",
+    )
+
+
+def populate_picker_from_resource_index(idx):
+    """Populate ATB picker from the resource at index *idx* in state.new_resources.
+
+    Called from JavaScript via ``window.populatePickerFromResource(idx)`` when a
+    user clicks a resource row in the new-resources list.
+    """
+    try:
+        idx = int(idx)
+    except Exception:
+        return
+    if idx < 0 or idx >= len(state.new_resources):
+        return
+    r = state.new_resources[idx]
+    resource_attr_keys = [
+        "capex_mw",
+        "capex_mwh",
+        "heat_rate",
+        "fixed_o_m_mw",
+        "variable_o_m_mwh",
+        "variable_o_m_mwh_in",
+        "wacc_real",
+    ]
+    attr_overrides = {k: r[k] for k in resource_attr_keys if k in r}
+    _populate_atb_picker_from_resource(
+        r["technology"],
+        r["tech_detail"],
+        r["cost_case"],
+        r.get("planning_year", "all"),
+        r["size_mw"],
+        attr_overrides,
+    )
+
+
+def populate_picker_from_modified_resource_key(key):
+    """Populate ATB picker from the modified resource with the given *key*.
+
+    Called from JavaScript via ``window.populatePickerFromModifiedResource(key)``
+    when a user clicks a modified resource row in the new-resources list.
+    """
+    item = state.modified_new_resources.get(str(key))
+    if not item:
+        return
+    _populate_atb_picker_from_resource(
+        item.get("technology", ""),
+        item.get("tech_detail", ""),
+        item.get("cost_case", ""),
+        item.get("planning_year", "all"),
+        item.get("size_mw", 1),
+        item.get("attr_modifiers") or {},
+    )
+
+
 # Export delete functions to JavaScript (must be after function definitions)
 window.deleteNewResource = create_proxy(delete_new_resource)
 window.deleteModifiedNewResource = create_proxy(delete_modified_new_resource)
+
+# Export populate-picker functions to JavaScript
+window.populatePickerFromResource = create_proxy(populate_picker_from_resource_index)
+window.populatePickerFromModifiedResource = create_proxy(
+    populate_picker_from_modified_resource_key
+)
 
 
 def render_modified_resources_list():
