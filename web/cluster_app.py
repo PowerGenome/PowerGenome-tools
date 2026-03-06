@@ -8462,6 +8462,150 @@ def on_download_all_settings(event):
     set_status(f"Downloaded {zip_name}", "success")
 
 
+def _set_model_setup_status(message, status_type="info"):
+    """Update the Model Setup step status box."""
+    el = document.getElementById("modelSetupStatus")
+    if el:
+        el.textContent = message
+        el.className = f"status {status_type}"
+        el.style.display = "block"
+
+
+async def _load_settings_zip(event):
+    """Read a user-uploaded settings ZIP and restore configuration.
+
+    Extracts YAML and CSV files from the ZIP, stores them in state, and
+    pre-populates UI fields from model_definition.yml when present.
+    """
+    files = event.target.files
+    if not files or files.length == 0:
+        return
+
+    file_obj = files.item(0)
+    filename = file_obj.name
+
+    _set_model_setup_status(f"Loading {filename}…", "info")
+
+    try:
+        array_buffer = await file_obj.arrayBuffer()
+        data = bytes(Uint8Array.new(array_buffer).to_py())
+
+        with zipfile.ZipFile(BytesIO(data), "r") as zf:
+            names = zf.namelist()
+            settings_yamls = {}
+            emission_df = None
+
+            for name in names:
+                # Use only the basename to prevent any path-traversal confusion
+                basename = name.replace("\\", "/").split("/")[-1]
+                if not basename or ".." in basename:
+                    continue
+                content_bytes = zf.read(name)
+                lower = basename.lower()
+                if lower == "emission_policies.csv":
+                    try:
+                        emission_df = pd.read_csv(BytesIO(content_bytes))
+                    except Exception as csv_exc:
+                        _set_model_setup_status(
+                            f"Warning: could not parse emission_policies.csv: {csv_exc}",
+                            "error",
+                        )
+                elif lower.endswith((".yml", ".yaml", ".csv")):
+                    settings_yamls[basename] = content_bytes.decode("utf-8")
+
+        state.settings_yamls = settings_yamls
+        if emission_df is not None:
+            state.emission_policies_df = emission_df
+
+        loaded_fields = []
+
+        # Populate UI from model_definition.yml
+        if "model_definition.yml" in settings_yamls:
+            try:
+                model_def = yaml.safe_load(settings_yamls["model_definition.yml"])
+            except yaml.YAMLError as yaml_exc:
+                raise ValueError(
+                    f"Could not parse model_definition.yml: {yaml_exc}"
+                ) from yaml_exc
+
+            if not isinstance(model_def, dict):
+                raise ValueError("model_definition.yml must contain a YAML mapping.")
+
+            if "target_usd_year" in model_def:
+                el = document.getElementById("targetUsdYear")
+                if el:
+                    el.value = str(model_def["target_usd_year"])
+                    loaded_fields.append("Target USD Year")
+
+            if "utc_offset" in model_def:
+                el = document.getElementById("utcOffset")
+                if el:
+                    el.value = str(model_def["utc_offset"])
+                    loaded_fields.append("UTC Offset")
+
+            model_years = model_def.get("model_year", [])
+            planning_years = model_def.get("model_first_planning_year", [])
+            if (
+                isinstance(model_years, list)
+                and isinstance(planning_years, list)
+                and model_years
+                and planning_years
+                and len(model_years) == len(planning_years)
+            ):
+                window.loadPlanningPeriodsFromData(
+                    to_js(list(map(str, planning_years))),
+                    to_js(list(map(str, model_years))),
+                )
+                loaded_fields.append("Planning Periods")
+
+            region_aggs = model_def.get("region_aggregations", {})
+            if isinstance(region_aggs, dict) and region_aggs:
+                # Validate that values are lists before processing
+                if all(isinstance(v, list) for v in region_aggs.values()):
+                    state.region_aggregations = region_aggs
+                    reset_region_dependent_state()
+                    update_map_cluster_colors(region_aggs)
+                    # Select all BAs that appear in the loaded region aggregations
+                    all_ba_ids = {ba for bas in region_aggs.values() for ba in bas}
+                    state.selected_bas = all_ba_ids & set(state.all_bas)
+                    update_selected_display()
+                    update_transmission_lines()
+                    update_tooltips()
+                    # Show the loaded YAML in the regions tab output
+                    yaml_el = document.getElementById("yamlOut")
+                    if yaml_el:
+                        region_list = sorted(region_aggs.keys())
+                        yaml_el.value = yaml.dump(
+                            {
+                                "model_regions": region_list,
+                                "region_aggregations": region_aggs,
+                            },
+                            default_flow_style=False,
+                            sort_keys=False,
+                        )
+                    loaded_fields.append("Regions")
+
+        file_count = len(settings_yamls) + (1 if emission_df is not None else 0)
+        field_summary = (
+            f" ({', '.join(loaded_fields)} pre-populated)" if loaded_fields else ""
+        )
+        _set_model_setup_status(
+            f"Loaded {file_count} file(s) from {filename}{field_summary}.",
+            "success",
+        )
+
+    except Exception as exc:
+        _set_model_setup_status(f"Error loading {filename}: {exc}", "error")
+
+    finally:
+        # Reset the file input so the same file can be re-uploaded if needed
+        event.target.value = ""
+
+
+def on_upload_settings_zip(event):
+    asyncio.create_task(_load_settings_zip(event))
+
+
 _LCOE_REQUIRED_COLUMNS = {"region", "cpa_mw", "cf", "lcoe"}
 _LCOE_TECH_LABELS = {"onshorewind": "Wind", "solar": "Solar"}
 
@@ -8920,6 +9064,11 @@ async def main():
         # Model Setup - planning years change
         document.getElementById("modelYears").addEventListener(
             "input", create_proxy(on_model_years_change)
+        )
+
+        # Model Setup - settings ZIP upload
+        document.getElementById("loadSettingsZipInput").addEventListener(
+            "change", create_proxy(on_upload_settings_zip)
         )
 
         # Settings tab

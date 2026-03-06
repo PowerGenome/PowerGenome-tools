@@ -1572,8 +1572,8 @@
     <div id="navbar">
         <h1>PowerGenome System Design</h1>
         <div class="nav-steps">
-            <div class="nav-step active" onclick="goToStep(1)"><span class="step-num">1</span> Regions</div>
-            <div class="nav-step" onclick="goToStep(2)"><span class="step-num">2</span> Model Setup</div>
+            <div class="nav-step active" onclick="goToStep(1)"><span class="step-num">1</span> Model Setup</div>
+            <div class="nav-step" onclick="goToStep(2)"><span class="step-num">2</span> Regions</div>
             <div class="nav-step" onclick="goToStep(3)"><span class="step-num">3</span> Existing Plants</div>
             <div class="nav-step" onclick="goToStep(4)"><span class="step-num">4</span> New Resources</div>
             <div class="nav-step" onclick="goToStep(5)"><span class="step-num">5</span> Fuels</div>
@@ -1586,8 +1586,8 @@
     </div>
 
     <div id="wizard-content">
-        <!-- Step 1: Regions -->
-        <div id="step-1" class="step-pane active">
+        <!-- Step 2: Regions -->
+        <div id="step-2" class="step-pane">
             <div id="step1-layout">
                 <div id="step1-sidebar">
                     <div id="sidebarResizer" title="Drag to resize sidebar"></div>
@@ -1848,8 +1848,8 @@
                     </div>
 
                     <div class="step-footer">
-                        <div></div>
-                        <button class="btn btn-primary" onclick="goToStep(2)">Next: Model Setup &rarr;</button>
+                        <button class="btn btn-secondary" onclick="goToStep(1)">&larr; Back</button>
+                        <button class="btn btn-primary" onclick="goToStep(3)">Next: Existing Plants &rarr;</button>
                     </div>
                 </div>
                 <div id="step1-map-container">
@@ -1858,26 +1858,43 @@
             </div>
         </div>
 
-        <!-- Step 2: Model Setup -->
-        <div id="step-2" class="step-pane">
+        <!-- Step 1: Model Setup -->
+        <div id="step-1" class="step-pane active">
             <div class="centered-step">
                 <div class="step-header">
                     <h2>Model Setup</h2>
                 </div>
 
                 <div class="section">
+                    <h3 style="margin: 0 0 8px 0; font-size: 14px; font-weight: 600;">Getting Started</h3>
+                    <p style="font-size: 13px; color: var(--text-muted); line-height: 1.5; margin: 0 0 8px 0;">
+                        Use the tabs above to configure your PowerGenome model:
+                    </p>
+                    <ol style="font-size: 13px; color: var(--text-muted); line-height: 1.8; padding-left: 20px; margin: 0 0 8px 0;">
+                        <li>Select and cluster balancing authorities into model regions on the <strong>Regions</strong> tab.</li>
+                        <li>Configure existing plants, new resources, fuels, and ESR policies on the respective tabs.</li>
+                        <li>Download resource group files on the <strong>Interconnection</strong> tab.</li>
+                        <li>Download all settings as a ZIP on the <strong>Export</strong> tab.</li>
+                    </ol>
+                    <p style="font-size: 13px; color: var(--text-muted); line-height: 1.5; margin: 0;">
+                        Have a previous settings ZIP? Upload it below to reload your configuration.
+                    </p>
+                </div>
+
+                <div class="section">
+                    <label>Load Previous Settings</label>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 8px;">
+                        Upload a previously downloaded settings ZIP to restore your configuration.
+                    </div>
+                    <input type="file" id="loadSettingsZipInput" accept=".zip" style="display:none">
+                    <button class="btn btn-secondary" id="loadSettingsZipBtn" type="button"
+                        aria-label="Upload settings ZIP file"
+                        onclick="document.getElementById('loadSettingsZipInput').click()">Upload Settings ZIP</button>
+                    <div id="modelSetupStatus" class="status info" style="display:none; margin-top: 8px;"></div>
+                </div>
+
+                <div class="section">
                     <label>Model Definition</label>
-                    <label style="font-size: 12px; margin-top: 8px;">Target USD Year
-                        <span class="info-icon" data-tooltip="Convert all inputs to a single dollar-year">?</span>
-                    </label>
-                    <input id="targetUsdYear" type="number" value="2024" min="1900" max="2100" />
-
-                    <label style="font-size: 12px; margin-top: 8px;">UTC Offset
-                        <span class="info-icon"
-                            data-tooltip="Shift all timeseries from UTC. Only needed for plotting hourly data, does not affect CEM results.">?</span>
-                    </label>
-                    <input id="utcOffset" type="number" value="-5" min="-12" max="14" step="1" />
-
                     <label style="font-size: 12px; margin-top: 8px;">Planning Periods
                         <span class="info-icon"
                             data-tooltip="Demand and fuel prices are based on the Planning Year. Resources costs are an average of all years from Period Start to Planning Year.">?</span>
@@ -1903,11 +1920,22 @@
                     </div>
                     <div id="yearsValidationError"
                         style="font-size: 12px; color: #d32f2f; margin-top: 4px; display: none;"></div>
+
+                    <label style="font-size: 12px; margin-top: 16px;">Target USD Year
+                        <span class="info-icon" data-tooltip="Convert all inputs to a single dollar-year">?</span>
+                    </label>
+                    <input id="targetUsdYear" type="number" value="2024" min="1900" max="2100" />
+
+                    <label style="font-size: 12px; margin-top: 8px;">UTC Offset
+                        <span class="info-icon"
+                            data-tooltip="Shift all timeseries from UTC. Only needed for plotting hourly data, does not affect CEM results.">?</span>
+                    </label>
+                    <input id="utcOffset" type="number" value="-5" min="-12" max="14" step="1" />
                 </div>
 
                 <div class="step-footer">
-                    <button class="btn btn-secondary" onclick="goToStep(1)">&larr; Back</button>
-                    <button class="btn btn-primary" onclick="goToStep(3)">Next: Existing Plants &rarr;</button>
+                    <div></div>
+                    <button class="btn btn-primary" onclick="goToStep(2)">Next: Regions &rarr;</button>
                 </div>
             </div>
         </div>
@@ -2847,7 +2875,7 @@
             document.getElementById('step-' + stepNum).classList.add('active');
 
             // Map handling
-            if (stepNum === 1) {
+            if (stepNum === 2) {
                 setTimeout(() => {
                     if (window.appMap && typeof window.appMap.invalidateSize === 'function') {
                         window.appMap.invalidateSize(false);
@@ -3167,6 +3195,26 @@
 
         window.resetPlanningPeriodEditorForTests = function () {
             initializePlanningPeriodEditor();
+        };
+
+        window.loadPlanningPeriodsFromData = function (starts, modelYears) {
+            const rowsContainer = document.getElementById('planningPeriodRows');
+            if (!rowsContainer) return;
+
+            try {
+                const startsArr = Array.from(starts).map(String);
+                const yearsArr = Array.from(modelYears).map(String);
+                const count = Math.min(startsArr.length, yearsArr.length);
+                if (count === 0) return;
+
+                rowsContainer.innerHTML = '';
+                for (let i = 0; i < count; i++) {
+                    addPlanningPeriodRow(startsArr[i], yearsArr[i]);
+                }
+                syncPlanningPeriodInputs();
+            } catch (e) {
+                console.error('loadPlanningPeriodsFromData error:', e);
+            }
         };
 
         function validateModelYears() {

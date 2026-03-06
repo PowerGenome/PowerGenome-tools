@@ -4,7 +4,7 @@ This directory contains browser-based UI tests using Playwright to verify the we
 
 ## Current Status
 
-✅ **All 13 tests passing** - Complete browser-based test coverage for the Model Setup tab (Step 2) planning period functionality
+✅ **All 13 tests passing** - Complete browser-based test coverage for the Model Setup tab (Step 1) planning period functionality
 
 ## Setup
 
@@ -56,12 +56,12 @@ npx playwright test model-setup.spec.ts
 ## Test Structure
 
 - **`smoke.spec.ts`** - Basic functionality tests to ensure the app loads and PyScript initializes
-- **`model-setup.spec.ts`** - Comprehensive tests for Step 2 (Model Setup) planning period functionality
+- **`model-setup.spec.ts`** - Comprehensive tests for Step 1 (Model Setup) planning period functionality
 - **`page-objects/`** - Page object models that encapsulate UI interactions
 
 ## Key Features Tested
 
-### Model Setup Tab (Step 2)
+### Model Setup Tab (Step 1)
 
 - Default values (current year, 2030) render correctly
 - Adding planning periods auto-populates derived values
