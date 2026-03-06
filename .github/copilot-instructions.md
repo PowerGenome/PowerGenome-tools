@@ -44,6 +44,31 @@ This web app helps users build settings for [PowerGenome](https://powergenome.gi
 - **Debugging**: Use browser console for PyScript errors; `js.console.log()` for Python logging.
 - **Local testing**: Serve `/web` via HTTP server (e.g., `python -m http.server 8000`). See development.md for details.
 
+### Playwright UI Test Harness
+
+- **Harness purpose**: Browser-executed end-to-end checks for web UI behavior that cannot be validated by mocked Python tests alone.
+- **Config and location**:
+    - `playwright.config.ts` (runner config and local web server)
+    - `tests/ui/model-setup.spec.ts` (Model Setup planning period flows)
+    - `tests/ui/smoke.spec.ts` (app boot and navigation smoke checks)
+    - `tests/ui/page-objects/model-setup-tab.ts` (shared Step 2 selectors/actions)
+- **Run commands**:
+    - `npm install`
+    - `npx playwright install chromium`
+    - `npm run test:ui`
+    - `npm run test:ui:headed`
+    - `npm run test:ui:debug`
+    - `npm run test:ui:report`
+- **Current harness behavior**:
+    - Starts local server from `/web` (see `webServer` in `playwright.config.ts`).
+    - Waits for PyScript startup (`#loading.hidden`) before interacting with controls.
+    - Closes the welcome overlay before Step 2 interactions.
+    - Verifies planning period defaults, derived start years, manual overrides, validation, row add/remove, and hidden input synchronization.
+- **Authoring guidance**:
+    - Prefer page objects for repeated interactions.
+    - Use deterministic selectors (`id`, role, stable class) and avoid brittle broad selectors.
+    - Keep UI tests focused on end-user flows; keep pure logic checks in Python unit/integration tests.
+
 ## State Dependency Management and Cascading Resets
 
 The web app has many AppState attributes that depend on upstream selections. When upstream choices change, dependent state must be reset to maintain consistency.
