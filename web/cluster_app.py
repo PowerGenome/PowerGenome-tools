@@ -99,6 +99,7 @@ _DEFAULT_NEW_RESOURCES = [
         "cost_case": "Moderate",
         "size_mw": 727,
         "planning_year": "all",
+        "data_year": 2024,
     },
     {
         "technology": "NaturalGas",
@@ -106,6 +107,7 @@ _DEFAULT_NEW_RESOURCES = [
         "cost_case": "Moderate",
         "size_mw": 233,
         "planning_year": "all",
+        "data_year": 2024,
     },
     {
         "technology": "LandbasedWind",
@@ -113,6 +115,7 @@ _DEFAULT_NEW_RESOURCES = [
         "cost_case": "Moderate",
         "size_mw": 200,
         "planning_year": "all",
+        "data_year": 2024,
     },
     {
         "technology": "UtilityPV",
@@ -120,6 +123,7 @@ _DEFAULT_NEW_RESOURCES = [
         "cost_case": "Moderate",
         "size_mw": 100,
         "planning_year": "all",
+        "data_year": 2024,
     },
     {
         "technology": "Utility-Scale Battery Storage",
@@ -129,6 +133,7 @@ _DEFAULT_NEW_RESOURCES = [
         "variable_o_m_mwh": _BATTERY_DEFAULT_VAR_OM,
         "variable_o_m_mwh_in": _BATTERY_DEFAULT_VAR_OM_IN,
         "planning_year": "all",
+        "data_year": 2024,
     },
     {
         "technology": "Nuclear",
@@ -136,6 +141,7 @@ _DEFAULT_NEW_RESOURCES = [
         "cost_case": "Moderate",
         "size_mw": 1000,
         "planning_year": "all",
+        "data_year": 2024,
     },
 ]
 
@@ -4399,6 +4405,39 @@ def render_new_resources_list():
     container.innerHTML = "".join(parts)
 
 
+def _get_current_resources_atb_year():
+    """Return the ATB data_year already in use across all selected resources, or None.
+
+    Looks at both ``state.new_resources`` and ``state.modified_new_resources``.
+    Returns the first ``data_year`` value found, or ``None`` if no resources
+    have a ``data_year`` recorded.
+    """
+    for r in state.new_resources:
+        yr = r.get("data_year")
+        if yr is not None:
+            return yr
+    for r in state.modified_new_resources.values():
+        yr = r.get("data_year")
+        if yr is not None:
+            return yr
+    return None
+
+
+def show_atb_year_conflict_overlay(existing_year, new_year):
+    """Show the ATB data-year conflict overlay with context-specific message."""
+    msg_el = document.getElementById("atbYearConflictMessage")
+    if msg_el:
+        msg_el.innerHTML = (
+            f"All new resources must use the same ATB data year. "
+            f"Your current resources use ATB <strong>{existing_year}</strong>, "
+            f"but you are trying to add a resource from ATB <strong>{new_year}</strong>. "
+            f"Please remove all current resources before adding resources from a different ATB data year."
+        )
+    overlay = document.getElementById("atbYearConflictOverlay")
+    if overlay:
+        overlay.classList.remove("hidden")
+
+
 def on_add_new_resource(event):
     year_el = document.getElementById("atbYearSelect")
     tech_el = document.getElementById("atbTechSelect")
@@ -4417,6 +4456,19 @@ def on_add_new_resource(event):
     if not tech or not detail or not case:
         set_status("ATB index not available; add manually below.", "error")
         return
+
+    # Read ATB data year from the picker
+    try:
+        atb_data_year = int(_get_select_value(year_el, 0) or 0)
+    except (ValueError, TypeError):
+        atb_data_year = 0
+
+    # Reject if the selected ATB data year differs from what is already in use.
+    if atb_data_year:
+        existing_year = _get_current_resources_atb_year()
+        if existing_year is not None and existing_year != atb_data_year:
+            show_atb_year_conflict_overlay(existing_year, atb_data_year)
+            return
 
     # Read planning year from the dropdown
     planning_year = _get_resource_planning_year("newResourceYearSelect")
@@ -4542,6 +4594,7 @@ def on_add_new_resource(event):
             "ccs_capture_fraction": ccs_fraction,
             "ccs_disposal_cost": ccs_disposal_cost,
             "planning_year": planning_year,
+            "data_year": atb_data_year if atb_data_year else None,
         }
         render_modified_resources_list()
         render_new_resources_list()  # Also update the main list to show this resource
@@ -4574,6 +4627,7 @@ def on_add_new_resource(event):
             "cost_case": case,
             "size_mw": size,
             "planning_year": planning_year,
+            "data_year": atb_data_year if atb_data_year else None,
         }
         ccs_fraction = _extract_ccs_capture_fraction(detail)
         if ccs_fraction is not None:
@@ -4624,9 +4678,19 @@ def delete_modified_new_resource(key):
         set_status(f"Resource not found: {key}", "error")
 
 
+def delete_all_new_resources(event=None):
+    """Remove all selected new-build resources (regular and modified)."""
+    state.new_resources.clear()
+    state.modified_new_resources.clear()
+    render_modified_resources_list()
+    render_new_resources_list()
+    set_status("All new resources have been removed.", "success")
+
+
 # Export delete functions to JavaScript (must be after function definitions)
 window.deleteNewResource = create_proxy(delete_new_resource)
 window.deleteModifiedNewResource = create_proxy(delete_modified_new_resource)
+window.deleteAllNewResources = create_proxy(delete_all_new_resources)
 
 
 def render_modified_resources_list():

@@ -128,7 +128,7 @@ EXPECTED_ENTRIES = [
     },
 ]
 
-REQUIRED_KEYS = {"technology", "tech_detail", "cost_case", "size_mw", "planning_year"}
+REQUIRED_KEYS = {"technology", "tech_detail", "cost_case", "size_mw", "planning_year", "data_year"}
 BATTERY_OPTIONAL_KEYS = {"variable_o_m_mwh", "variable_o_m_mwh_in"}
 
 

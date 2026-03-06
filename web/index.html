@@ -920,6 +920,22 @@
             display: none;
         }
 
+        /* ── ATB Year Conflict Overlay ────────────────────────── */
+        #atbYearConflictOverlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(12, 30, 60, 0.92);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            padding: 20px;
+        }
+
+        #atbYearConflictOverlay.hidden {
+            display: none;
+        }
+
         .welcome-dialog {
             background: var(--surface);
             border-radius: var(--radius-md);
@@ -949,6 +965,14 @@
             padding: 28px 32px;
             border-radius: var(--radius-md) var(--radius-md) 0 0;
             position: relative;
+        }
+
+        .welcome-header.error-header {
+            background: #dc3545;
+        }
+
+        .welcome-header.error-header h2 {
+            color: white;
         }
 
         .welcome-header h2 {
@@ -1457,6 +1481,32 @@
     <div id="loading">
         <div class="spinner"></div>
         <div id="loadingText">Loading PyScript and dependencies...</div>
+    </div>
+
+    <!-- ATB Year Conflict Overlay -->
+    <div id="atbYearConflictOverlay" class="hidden" role="alertdialog" aria-modal="true"
+        aria-labelledby="atbYearConflictTitle">
+        <div class="welcome-dialog" style="max-width: 480px;" onclick="event.stopPropagation()">
+            <div class="welcome-header error-header">
+                <button type="button" class="welcome-close-x"
+                    onclick="document.getElementById('atbYearConflictOverlay').classList.add('hidden')"
+                    aria-label="Close dialog">&times;</button>
+                <h2 id="atbYearConflictTitle">ATB Data Year Conflict</h2>
+            </div>
+            <div class="welcome-body">
+                <p id="atbYearConflictMessage" style="font-size: 13px; line-height: 1.6;"></p>
+                <p style="font-size: 12px; color: #666; margin-top: 8px;">
+                    Use the <strong>Delete All</strong> button below the resources list to remove all current resources,
+                    then add resources from your desired ATB data year.
+                </p>
+                <div style="margin-top: 16px; text-align: right;">
+                    <button class="btn btn-secondary"
+                        onclick="document.getElementById('atbYearConflictOverlay').classList.add('hidden')">
+                        OK
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Welcome Overlay -->
@@ -2156,6 +2206,13 @@
                     <div id="newResourcesList" class="ba-list"
                         style="margin-top: 8px; min-height: 180px; max-height: none; resize: vertical; overflow: auto;">
                         <em>No new-build resources selected yet.</em>
+                    </div>
+                    <div style="margin-top: 6px; text-align: right;">
+                        <button class="btn btn-secondary" id="deleteAllNewResourcesBtn" type="button"
+                            style="font-size: 12px; color: #dc3545; border-color: #dc3545;"
+                            onclick="if(window.deleteAllNewResources) window.deleteAllNewResources();">
+                            Delete All
+                        </button>
                     </div>
                 </div>
 
