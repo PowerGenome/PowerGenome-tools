@@ -1696,10 +1696,15 @@
 
                 <div class="section">
                     <label>Model Definition</label>
-                    <label style="font-size: 12px; margin-top: 8px;">Target USD Year</label>
+                    <label style="font-size: 12px; margin-top: 8px;">Target USD Year
+                        <span class="info-icon" data-tooltip="Convert all inputs to a single dollar-year">?</span>
+                    </label>
                     <input id="targetUsdYear" type="number" value="2024" min="1900" max="2100" />
 
-                    <label style="font-size: 12px; margin-top: 8px;">UTC Offset</label>
+                    <label style="font-size: 12px; margin-top: 8px;">UTC Offset
+                        <span class="info-icon"
+                            data-tooltip="Shift all timeseries from UTC. Only needed for plotting hourly data, does not affect CEM results.">?</span>
+                    </label>
                     <input id="utcOffset" type="number" value="-5" min="-12" max="14" step="1" />
 
                     <label style="font-size: 12px; margin-top: 8px;">Planning Years (comma-separated)</label>
