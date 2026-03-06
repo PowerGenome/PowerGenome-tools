@@ -4705,6 +4705,12 @@ def delete_all_new_resources(event=None):
     """Remove all selected new-build resources (regular and modified)."""
     state.new_resources.clear()
     state.modified_new_resources.clear()
+    # Also clear any CCS disposal cost overrides associated with new resources
+    if (
+        hasattr(state, "ccs_disposal_cost_map")
+        and state.ccs_disposal_cost_map is not None
+    ):
+        state.ccs_disposal_cost_map.clear()
     render_modified_resources_list()
     render_new_resources_list()
     set_status("All new resources have been removed.", "success")
