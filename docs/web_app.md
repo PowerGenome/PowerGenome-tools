@@ -436,12 +436,13 @@ The Model Setup step allows you to configure the temporal and financial paramete
 
 * **Target USD Year**: The dollar year for all cost values (e.g., 2024)
 * **UTC Offset**: Timezone offset for demand and weather data
-* **Model Years**: Comma-separated list of years to model (e.g., 2030, 2035, 2040)
-* **First Planning Years**: Comma-separated list of first planning years corresponding to each model year
+* **Planning Periods**: A row-based editor with one planning period per row
+* **Planning Year**: The end year for each planning period (the first row defaults to 2030)
+* **Period Start**: The first investment year for each planning period (the first row defaults to the current calendar year)
 
 ### Understanding These Parameters
 
-**Target USD Year (Dollar-Year Alignment)**
+#### Target USD Year (Dollar-Year Alignment)
 
 All costs in capacity expansion models must be expressed in the same dollar-year to ensure fair comparisons. For example, if you're comparing a solar plant that costs $1,000/kW in 2024 dollars versus a battery that costs $300/kWh in 2020 dollars, you need to adjust one of them to account for inflation.
 
@@ -453,7 +454,7 @@ PowerGenome handles this by:
 
 Choose a recent year (e.g., 2024) to minimize the need for inflation adjustments.
 
-**UTC Offset (Timezone Considerations)**
+#### UTC Offset (Timezone Considerations)
 
 All timeseries data (hourly demand, solar generation profiles, wind generation profiles) are stored in UTC (Coordinated Universal Time). This ensures consistency across data sources and prevents timezone confusion when combining data from different regions.
 
@@ -463,25 +464,32 @@ The UTC offset is used primarily for visualization and debugging:
 * It helps you verify that peak solar generation aligns with expected local times
 * It does **not** change how the model solves—the optimization always uses UTC timestamps
 
-**Model Years and Planning Periods**
+#### Planning Years and Planning Periods
 
 Planning periods define the time windows your model will optimize. Each period has:
 
-* **First Planning Year** - The start of the investment period
-* **Model Year** - The end of the period (the "target" year)
+* **Period Start** - The start of the investment period in the Step 2 editor (exported as `model_first_planning_year`)
+* **Planning Year** - The end of the period in the Step 2 editor (exported as `model_year`)
 
-For example, with First Planning Year = 2025 and Model Year = 2030, you're modeling the 2025-2030 period.
+For example, with Period Start = 2025 and Planning Year = 2030, you're modeling the 2025-2030 period.
+
+In the web app, Step 2 starts with a single row that defaults to:
+
+* **Period Start** = the current year
+* **Planning Year** = 2030
+
+Click the **+** button to add another planning period. Each added row derives its **Period Start** from the previous row's **Planning Year** plus one year. For example, if the first Planning Year is 2030, the next Period Start is automatically set to 2031. These are editable suggestions, so you can keep the auto-filled value or replace it with a custom Period Start in any row.
 
 How PowerGenome uses these:
 
-* **Demand and fuel prices** - Selected based on the Model Year (representing conditions at the end of the period)
+* **Demand and fuel prices** - Selected based on the Planning Year (representing conditions at the end of the period)
 * **Capital costs** - Averaged across all years in the period (2025-2030 in the example) to represent the "typical" cost of building during that timeframe
 * **Investment decisions** - The model decides what to build in each period to meet demand and policy goals
 
 Multiple planning periods (e.g., 2030, 2035, 2040) allow the model to make sequential decisions, building infrastructure over time rather than all at once.
 
 !!! note
-    Model Years and First Planning Years must be lists of the same length. These define the temporal scope of your capacity expansion analysis.
+    Each planning period row must include both a Period Start and a Planning Year. Internally, the app still exports equal-length `model_year` and `model_first_planning_year` lists for PowerGenome.
 
 ## Step 3: Existing Plants
 

@@ -12,7 +12,7 @@ The web application guides you through a 9-step workflow to build complete Power
 
 1. **Regions** - Select Balancing Authorities and cluster them into model regions using automatic clustering algorithms (Spectral, Louvain, Hierarchical) or manual assignment. Define the geographic boundaries that determine how load, transmission, and resources are aggregated.
 
-2. **Model Setup** - Define planning years (e.g., 2030, 2035, 2040), financial parameters, target dollar-year for cost alignment, and timezone settings. These parameters establish the temporal and financial framework for your analysis.
+2. **Model Setup** - Define planning periods in a row-based editor, along with financial parameters, target dollar-year for cost alignment, and timezone settings. These parameters establish the temporal and financial framework for your analysis.
 
 3. **Existing Plants** - Cluster existing generators within model regions to reduce model complexity while preserving operational diversity. Use heat rate variability and capacity thresholds to determine optimal cluster counts.
 
