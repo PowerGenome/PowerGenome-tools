@@ -1,4 +1,5 @@
 import { Page, Locator, expect } from '@playwright/test';
+import { goToWizardStep, waitForAppReady } from './app-startup';
 
 export class ModelSetupTab {
     constructor(private page: Page) { }
@@ -7,27 +8,10 @@ export class ModelSetupTab {
      * Navigate to the web app and open Step 2 (Model Setup)
      */
     async open() {
-        await this.page.goto('/');
+        await waitForAppReady(this.page, 30000);
+        await goToWizardStep(this.page, 2);
 
-        // Wait for PyScript to initialize (loading screen should disappear)
-        await expect(this.page.locator('#loading')).toHaveClass('hidden', { timeout: 30000 });
-
-        // Close welcome dialog if present
-        const welcomeOverlay = this.page.locator('#welcomeOverlay');
-        if (await welcomeOverlay.isVisible()) {
-            await this.page.locator('.welcome-close-x').click();
-            await expect(welcomeOverlay).toHaveClass('hidden');
-        }
-
-        // Navigate to Step 2
-        await this.page.evaluate(() => {
-            if (typeof (window as any).goToStep === 'function') {
-                (window as any).goToStep(2);
-            }
-        });
-
-        // Ensure Step 2 is active and wait for planning period editor
-        await expect(this.page.locator('#step-2')).toHaveClass(/active/);
+        // Wait for planning period editor
         await this.page.waitForSelector('#planningPeriodRows .planning-period-row', {
             timeout: 30000
         });
