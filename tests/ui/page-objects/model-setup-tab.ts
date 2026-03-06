@@ -1,5 +1,5 @@
 import { Page, Locator, expect } from '@playwright/test';
-import { goToWizardStep, waitForAppReady } from './app-startup';
+import { goToWizardStep, loadApp } from './app-startup';
 
 export class ModelSetupTab {
     constructor(private page: Page) { }
@@ -8,13 +8,35 @@ export class ModelSetupTab {
      * Navigate to the web app and open Step 2 (Model Setup)
      */
     async open() {
-        await waitForAppReady(this.page, 30000);
+        await loadApp(this.page, 30000);
+        await this.goto();
+    }
+
+    /**
+     * Navigate to Step 2 on an already-booted app page.
+     */
+    async goto() {
         await goToWizardStep(this.page, 2);
 
         // Wait for planning period editor
         await this.page.waitForSelector('#planningPeriodRows .planning-period-row', {
             timeout: 30000
         });
+    }
+
+    /**
+     * Restore the planning period editor to its default single-row state.
+     */
+    async resetForTest(): Promise<void> {
+        await this.page.evaluate(() => {
+            const testWindow = window as Window & {
+                resetPlanningPeriodEditorForTests?: () => void;
+            };
+
+            testWindow.resetPlanningPeriodEditorForTests?.();
+        });
+        await this.goto();
+        await expect(this.rows()).toHaveCount(1);
     }
 
     /**

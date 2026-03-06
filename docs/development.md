@@ -1,6 +1,7 @@
 # Development Guide
 
-This guide covers how to set up the development environment for the PowerGenome tools web application.
+This guide covers how to set up the development environment for the
+PowerGenome tools web application.
 
 ## Installation
 
@@ -34,7 +35,8 @@ This guide covers how to set up the development environment for the PowerGenome 
 
 ## Web Application Development
 
-The web application is located in the `web/` directory. It uses PyScript to run Python code in the browser.
+The web application is located in the `web/` directory. It uses PyScript
+to run Python code in the browser.
 
 ### Running Locally
 
@@ -59,6 +61,28 @@ To test changes to the web app, you need to serve the `web/` directory via HTTP.
 * `web/index.html`: The main HTML structure and UI.
 * `web/cluster_app.py`: The Python logic that runs in the browser (PyScript).
 * `web/pyscript.toml`: PyScript configuration and dependencies.
+
+### Playwright UI Tests
+
+UI tests live in `tests/ui`. For wizard-step suites, prefer the
+shared-page pattern used in `model-setup.spec.ts` and
+`new-resources.spec.ts`: create one browser context and one booted page
+through the shared suite helper in `tests/ui/fixtures/shared-app.ts`.
+That helper loads the app once, verifies startup state, and runs the
+suite in serial mode. Reset app state in `beforeEach` with a page-object
+or test-only reset hook, as shown by `model-setup.spec.ts` and
+`new-resources.spec.ts`.
+
+Keep `smoke.spec.ts` as true cold-start coverage. If a test is
+validating PyScript startup, page boot, or initial navigation, use
+Playwright's per-test `page` and call `loadApp()` inside the test
+instead of reusing a shared page.
+
+Run the UI suite with:
+
+```bash
+npm run test:ui
+```
 
 ## Documentation
 
@@ -86,7 +110,9 @@ The documentation is built with [MkDocs](https://www.mkdocs.org/).
 
 ### Deployment
 
-The documentation is deployed to GitHub Pages. The build process automatically includes the `web/` application directory in the deployed site, ensuring the web app remains accessible at `/web/`.
+The documentation is deployed to GitHub Pages. The build process
+automatically includes the `web/` application directory in the deployed
+site, ensuring the web app remains accessible at `/web/`.
 
 To deploy manually:
 

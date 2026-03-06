@@ -3142,6 +3142,12 @@
             return row;
         }
 
+        function onAddPlanningPeriodButtonClick() {
+            const newRow = addPlanningPeriodRow('', '', { autofillStart: true });
+            const planningYearInput = newRow ? newRow.querySelector('.planning-period-model-year') : null;
+            if (planningYearInput) planningYearInput.focus();
+        }
+
         function initializePlanningPeriodEditor() {
             const rowsContainer = document.getElementById('planningPeriodRows');
             const addBtn = document.getElementById('addPlanningPeriodBtn');
@@ -3151,12 +3157,17 @@
             const currentYear = new Date().getFullYear();
             addPlanningPeriodRow(String(currentYear), '2030');
 
-            addBtn.addEventListener('click', () => {
-                const newRow = addPlanningPeriodRow('', '', { autofillStart: true });
-                const planningYearInput = newRow ? newRow.querySelector('.planning-period-model-year') : null;
-                if (planningYearInput) planningYearInput.focus();
-            });
+            if (!addBtn.dataset.boundPlanningPeriodHandler) {
+                addBtn.addEventListener('click', onAddPlanningPeriodButtonClick);
+                addBtn.dataset.boundPlanningPeriodHandler = 'true';
+            }
+
+            validateModelYears();
         }
+
+        window.resetPlanningPeriodEditorForTests = function () {
+            initializePlanningPeriodEditor();
+        };
 
         function validateModelYears() {
             const modelYearsInput = document.getElementById('modelYears');
