@@ -10,11 +10,6 @@ export class ModelSetupTab {
     async open() {
         await loadApp(this.page, 30000);
         await this.goto();
-
-        // Wait for planning period editor
-        await this.page.waitForSelector('#planningPeriodRows .planning-period-row', {
-            timeout: 30000
-        });
     }
 
     /**
