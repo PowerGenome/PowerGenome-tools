@@ -100,6 +100,7 @@ def cluster_app():
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_element(value=""):
     """Return a fresh MagicMock that behaves like a DOM input/select element."""
     el = MagicMock()
@@ -143,6 +144,7 @@ def _wire_document(cluster_app, elements):
 # ---------------------------------------------------------------------------
 # Tests: populate_picker_from_resource_index
 # ---------------------------------------------------------------------------
+
 
 class TestPopulatePickerFromResourceIndex:
     def _setup(self, cluster_app):
@@ -210,7 +212,9 @@ class TestPopulatePickerFromResourceIndex:
             }
         ]
         cluster_app.populate_picker_from_resource_index(0)
-        assert "Combustion Turbine (F-Frame)" in elements["atbTechDetailSelect"].innerHTML
+        assert (
+            "Combustion Turbine (F-Frame)" in elements["atbTechDetailSelect"].innerHTML
+        )
 
     def test_valid_index_populates_case_dropdown_html(self, cluster_app):
         """_set_select_options should write innerHTML for the cost-case dropdown."""
@@ -483,6 +487,7 @@ class TestPopulatePickerFromResourceIndex:
 # Tests: populate_picker_from_modified_resource_key
 # ---------------------------------------------------------------------------
 
+
 class TestPopulatePickerFromModifiedResourceKey:
     def _setup(self, cluster_app):
         _setup_atb_state(cluster_app)
@@ -528,10 +533,15 @@ class TestPopulatePickerFromModifiedResourceKey:
         """Valid key should write innerHTML to the tech select element."""
         elements = self._setup(cluster_app)
         cluster_app.state.modified_new_resources = {
-            "res1": self._make_modified_resource(technology="LandbasedWind", new_technology="LandbasedWind",
-                                                  tech_detail="Class3", new_tech_detail="Class3",
-                                                  cost_case="Moderate", new_cost_case="Moderate",
-                                                  size_mw=200),
+            "res1": self._make_modified_resource(
+                technology="LandbasedWind",
+                new_technology="LandbasedWind",
+                tech_detail="Class3",
+                new_tech_detail="Class3",
+                cost_case="Moderate",
+                new_cost_case="Moderate",
+                size_mw=200,
+            ),
         }
         cluster_app.populate_picker_from_modified_resource_key("res1")
         assert "LandbasedWind" in elements["atbTechSelect"].innerHTML
@@ -656,6 +666,7 @@ class TestPopulatePickerFromModifiedResourceKey:
 # Tests: render_new_resources_list clickability
 # ---------------------------------------------------------------------------
 
+
 class TestRenderNewResourcesListClickability:
     def _setup(self, cluster_app):
         container = MagicMock()
@@ -670,7 +681,7 @@ class TestRenderNewResourcesListClickability:
         return container
 
     def test_regular_resource_onclick_attribute(self, cluster_app):
-        """Regular resource row must have onclick='window.populatePickerFromResource(0)'."""
+        """Regular resource row must be clickable and keyboard accessible."""
         container = self._setup(cluster_app)
         cluster_app.state.new_resources = [
             {
@@ -684,6 +695,12 @@ class TestRenderNewResourcesListClickability:
         cluster_app.state.modified_new_resources = {}
         cluster_app.render_new_resources_list()
         assert "onclick='window.populatePickerFromResource(0)'" in container.innerHTML
+        assert "role='button'" in container.innerHTML
+        assert "tabindex='0'" in container.innerHTML
+        assert "onkeydown='" in container.innerHTML
+        assert 'event.key==="Enter"' in container.innerHTML
+        assert 'event.key===" "' in container.innerHTML
+        assert 'event.key==="Spacebar"' in container.innerHTML
 
     def test_regular_resource_cursor_pointer_style(self, cluster_app):
         """Regular resource row must have cursor: pointer in its style."""
@@ -758,7 +775,7 @@ class TestRenderNewResourcesListClickability:
         assert "onclick='window.populatePickerFromResource(1)'" in container.innerHTML
 
     def test_modified_resource_onclick_attribute(self, cluster_app):
-        """Modified resource row must have onclick='window.populatePickerFromModifiedResource(\"key\")'."""
+        """Modified resource row must be clickable and keyboard accessible."""
         container = self._setup(cluster_app)
         cluster_app.state.new_resources = []
         cluster_app.state.modified_new_resources = {
@@ -776,7 +793,16 @@ class TestRenderNewResourcesListClickability:
             }
         }
         cluster_app.render_new_resources_list()
-        assert 'onclick=\'window.populatePickerFromModifiedResource("mykey")\'' in container.innerHTML
+        assert (
+            "onclick='window.populatePickerFromModifiedResource(\"mykey\")'"
+            in container.innerHTML
+        )
+        assert "role='button'" in container.innerHTML
+        assert "tabindex='0'" in container.innerHTML
+        assert "onkeydown='" in container.innerHTML
+        assert 'event.key==="Enter"' in container.innerHTML
+        assert 'event.key===" "' in container.innerHTML
+        assert 'event.key==="Spacebar"' in container.innerHTML
 
     def test_modified_resource_cursor_pointer_style(self, cluster_app):
         """Modified resource row must have cursor: pointer in its style."""
@@ -878,4 +904,7 @@ class TestRenderNewResourcesListClickability:
         }
         cluster_app.render_new_resources_list()
         assert "onclick='window.populatePickerFromResource(0)'" in container.innerHTML
-        assert 'onclick=\'window.populatePickerFromModifiedResource("mod_res")\'' in container.innerHTML
+        assert (
+            "onclick='window.populatePickerFromModifiedResource(\"mod_res\")'"
+            in container.innerHTML
+        )

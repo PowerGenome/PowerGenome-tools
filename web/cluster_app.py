@@ -4273,6 +4273,16 @@ def _year_badge_html(planning_year):
     )
 
 
+def _resource_row_keydown_handler(js_call: str) -> str:
+    """Return an inline keydown handler for keyboard activation."""
+    return (
+        'if(event.key==="Enter"||event.key===" "||event.key==="Spacebar")'
+        "{event.preventDefault();"
+        f"{js_call};"
+        "}"
+    )
+
+
 def render_new_resources_list():
     """Render both regular and modified (attribute-override) new resources together."""
     container = document.getElementById("newResourcesList")
@@ -4351,10 +4361,14 @@ def render_new_resources_list():
                 f"(CCS disposal ${ccs_cost}/tCO2)</span>"
             )
         year_badge = _year_badge_html(planning_year)
+        populate_call = f"window.populatePickerFromResource({idx})"
+        keydown_handler = _resource_row_keydown_handler(populate_call)
         parts.append(
             f"<div class='candidate-item' style='{row_style} cursor: pointer;'"
+            f" role='button' tabindex='0'"
             f" title='Click to load into ATB picker'"
-            f" onclick='window.populatePickerFromResource({idx})'>"
+            f" onclick='{populate_call}'"
+            f" onkeydown='{keydown_handler}'>"
             f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW{ccs_note}{inline_mod_text}{year_badge}</span>"
             f"<button onclick='event.stopPropagation(); window.deleteNewResource({idx})' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
             f"</div>"
@@ -4390,13 +4404,18 @@ def render_new_resources_list():
             )
 
         year_badge = _year_badge_html(planning_year)
+        escaped_key = html.escape(key, quote=True)
+        populate_call = f'window.populatePickerFromModifiedResource("{escaped_key}")'
+        keydown_handler = _resource_row_keydown_handler(populate_call)
         parts.append(
             f"<div class='candidate-item' style='display: flex; justify-content: space-between; align-items: center; background-color: #fff3cd; cursor: pointer;'"
+            f" role='button' tabindex='0'"
             f" title='Click to load into ATB picker'"
-            f" onclick='window.populatePickerFromModifiedResource(\"{html.escape(key, quote=True)}\")'>"
+            f" onclick='{populate_call}'"
+            f" onkeydown='{keydown_handler}'>"
             f"<span><strong>{html.escape(str(tech))}</strong> — {html.escape(str(detail))} — {html.escape(str(case))} — {int(size)} MW{ccs_note} "
             f"<span style='color: #856404; font-size: 10px;'>({html.escape(mod_text)})</span>{year_badge}</span>"
-            f"<button onclick='event.stopPropagation(); window.deleteModifiedNewResource(\"{html.escape(key, quote=True)}\")' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
+            f"<button onclick='event.stopPropagation(); window.deleteModifiedNewResource(\"{escaped_key}\")' style='padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;'>Delete</button>"
             f"</div>"
         )
 
