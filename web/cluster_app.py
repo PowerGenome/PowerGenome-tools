@@ -4732,6 +4732,118 @@ def delete_all_new_resources(event=None):
     set_status("All new resources have been removed.", "success")
 
 
+def reset_new_resources_for_tests():
+    """Restore Step 4 to a deterministic baseline for shared Playwright pages."""
+    state.new_resources = [dict(r) for r in _DEFAULT_NEW_RESOURCES]
+    state.modified_new_resources.clear()
+    if (
+        hasattr(state, "ccs_disposal_cost_map")
+        and state.ccs_disposal_cost_map is not None
+    ):
+        state.ccs_disposal_cost_map.clear()
+
+    render_modified_resources_list()
+    render_new_resources_list()
+
+    for warning_id in ("newResourceYearWarning", "modResourceYearWarning"):
+        warning_el = document.getElementById(warning_id)
+        if warning_el:
+            warning_el.innerHTML = ""
+            warning_el.style.display = "none"
+
+    overlay = document.getElementById("atbYearConflictOverlay")
+    if overlay:
+        overlay.classList.add("hidden")
+
+    message_el = document.getElementById("atbYearConflictMessage")
+    if message_el:
+        message_el.innerHTML = ""
+
+    populate_resource_year_selects()
+
+    for select_id in (
+        "atbYearSelect",
+        "atbTechSelect",
+        "atbTechDetailSelect",
+        "atbCostCaseSelect",
+        "modBaseTech",
+        "modBaseTechDetail",
+        "modBaseCostCase",
+    ):
+        select_el = document.getElementById(select_id)
+        if select_el:
+            try:
+                select_el.value = ""
+            except Exception:
+                pass
+
+    populate_atb_picker()
+    populate_mod_resource_pickers()
+
+    for field_id, value in (
+        ("atbSizeMw", "100"),
+        ("atbCcsDisposalCost", str(state.ccs_disposal_cost)),
+        ("modSizeMw", "100"),
+        ("modNewTech", ""),
+        ("modNewTechDetail", ""),
+        ("modNewFuelName", ""),
+        ("modNewFuelPrice", "16"),
+        ("modNewFuelEf", "0"),
+        ("atbOverrideCapex", ""),
+        ("atbOverrideCapexMwh", ""),
+        ("atbOverrideHeatRate", ""),
+        ("atbOverrideFixedOM", ""),
+        ("atbOverrideVarOM", ""),
+        ("atbOverrideVarOMIn", ""),
+        ("atbOverrideWacc", ""),
+        ("modOverrideCapexMw", ""),
+        ("modOverrideCapexMwh", ""),
+        ("modOverrideHeatRate", ""),
+        ("modOverrideFixedOM", ""),
+        ("modOverrideVarOM", ""),
+        ("modOverrideVarOMIn", ""),
+        ("modOverrideWacc", ""),
+    ):
+        field_el = document.getElementById(field_id)
+        if field_el:
+            try:
+                field_el.value = value
+            except Exception:
+                pass
+
+    details_el = document.getElementById("atbAttrsOverride")
+    if details_el:
+        details_el.open = False
+
+    for select_id, value in (
+        ("newResourceYearSelect", "all"),
+        ("modResourceYearSelect", "all"),
+        ("modFuelType", "standard"),
+        ("modStandardFuel", "naturalgas"),
+        ("modTagClass", "THERM"),
+    ):
+        select_el = document.getElementById(select_id)
+        if select_el:
+            try:
+                select_el.value = value
+            except Exception:
+                pass
+
+    commit_el = document.getElementById("modIsCommit")
+    if commit_el:
+        try:
+            commit_el.checked = True
+        except Exception:
+            pass
+
+    if hasattr(window, "toggleModFuelType"):
+        window.toggleModFuelType()
+    if hasattr(window, "toggleCommitRow"):
+        window.toggleCommitRow()
+    update_atb_ccs_cost_visibility()
+    set_status("Step 4 test baseline restored.", "info")
+
+
 def _populate_atb_picker_from_resource(
     tech, detail, case, planning_year, size, attr_overrides=None
 ):
@@ -4885,6 +4997,7 @@ def populate_picker_from_modified_resource_key(key):
 window.deleteNewResource = create_proxy(delete_new_resource)
 window.deleteModifiedNewResource = create_proxy(delete_modified_new_resource)
 window.deleteAllNewResources = create_proxy(delete_all_new_resources)
+window.resetNewResourcesForTests = create_proxy(reset_new_resources_for_tests)
 
 # Export populate-picker functions to JavaScript
 window.populatePickerFromResource = create_proxy(populate_picker_from_resource_index)

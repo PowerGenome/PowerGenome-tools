@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { goToWizardStep, waitForAppReady } from './page-objects/app-startup';
+import { goToWizardStep, loadApp } from './page-objects/app-startup';
 
 test.describe('Smoke Tests', () => {
     test('web app loads and PyScript initializes', async ({ page }) => {
-        await waitForAppReady(page, 30000);
+        await loadApp(page, 30000);
 
         // Wait for the app to load
         await expect(page.locator('#navbar h1')).toContainText('PowerGenome System Design');
@@ -16,7 +16,7 @@ test.describe('Smoke Tests', () => {
     });
 
     test('can navigate between steps', async ({ page }) => {
-        await waitForAppReady(page, 30000);
+        await loadApp(page, 30000);
         await goToWizardStep(page, 2);
         await expect(page.locator('#step-1')).not.toHaveClass(/active/);
 
@@ -25,7 +25,7 @@ test.describe('Smoke Tests', () => {
     });
 
     test('planning period editor initializes', async ({ page }) => {
-        await waitForAppReady(page, 30000);
+        await loadApp(page, 30000);
         await goToWizardStep(page, 2);
 
         // Verify planning period editor components are present
