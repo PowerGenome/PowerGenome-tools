@@ -1,30 +1,39 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, Page } from '@playwright/test';
+import { goToWizardStep, waitForAppReady } from './page-objects/app-startup';
 
 /**
  * Helper: navigate to the app, wait for PyScript to initialize, close the welcome
  * overlay, and then jump to Step 4 (New Resources).
  */
-async function openStep4(page: Parameters<Parameters<typeof test>[1]>[0]['page']) {
-    await page.goto('/');
-    await expect(page.locator('#loading')).toHaveClass('hidden', { timeout: 60000 });
+async function openStep4(page: Page) {
+    await waitForAppReady(page);
+    await goToWizardStep(page, 4);
 
-    const welcomeOverlay = page.locator('#welcomeOverlay');
-    if (await welcomeOverlay.isVisible()) {
-        await page.locator('.welcome-close-x').click();
-        await expect(welcomeOverlay).toHaveClass('hidden');
-    }
-
-    await page.evaluate(() => {
-        if (typeof (window as any).goToStep === 'function') {
-            (window as any).goToStep(4);
-        }
-    });
-    await expect(page.locator('#step-4')).toHaveClass(/active/, { timeout: 10000 });
     // Wait for the resource list to be populated with the 6 defaults
     await page.waitForFunction(() => {
         const list = document.getElementById('newResourcesList');
         return list && list.querySelectorAll('.candidate-item').length >= 6;
     }, { timeout: 30000 });
+}
+
+async function triggerAtbYearConflict(page: Page) {
+    await openStep4(page);
+
+    const yearSelect = page.locator('#atbYearSelect');
+    const yearOptions = await yearSelect.locator('option').evaluateAll((options) =>
+        options
+            .map((option) => (option as HTMLOptionElement).value)
+            .filter((value) => value && value !== '2024')
+    );
+
+    test.skip(yearOptions.length === 0, 'ATB index only exposes one data year in this environment.');
+
+    await yearSelect.selectOption(yearOptions[0]);
+    await page.locator('#addNewResourceBtn').click();
+
+    const conflictOverlay = page.locator('#atbYearConflictOverlay');
+    await expect(conflictOverlay).toBeVisible();
+    return conflictOverlay;
 }
 
 test.describe('New Resources — click to populate ATB picker', () => {
@@ -167,6 +176,19 @@ test.describe('New Resources — click to populate ATB picker', () => {
         // (it stays at whatever it was before the delete)
         const techAfterDelete = await page.locator('#atbTechSelect').inputValue();
         expect(techAfterDelete).toBe(initialTech);
+    });
+
+    test('ATB year conflict dialog can be dismissed with its dedicated close button', async ({ page }) => {
+        const conflictOverlay = await triggerAtbYearConflict(page);
+
+        await page.getByLabel('Close ATB conflict dialog').click();
+        await expect(conflictOverlay).toHaveClass('hidden');
+    });
+
+    test('ATB year conflict dialog exposes its description and focuses OK when opened', async ({ page }) => {
+        const conflictOverlay = await triggerAtbYearConflict(page);
+        await expect(conflictOverlay).toHaveAttribute('aria-describedby', 'atbYearConflictMessage');
+        await expect(conflictOverlay.getByRole('button', { name: 'OK' })).toBeFocused();
     });
 
 });
