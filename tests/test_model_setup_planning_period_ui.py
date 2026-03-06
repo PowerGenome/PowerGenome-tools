@@ -23,7 +23,6 @@ def test_planning_period_editor_initializes_with_current_year_and_2030():
 
     assert "const currentYear = new Date().getFullYear();" in html
     assert "addPlanningPeriodRow(String(currentYear), '2030');" in html
-    assert str(current_year) not in html or "new Date().getFullYear()" in html
 
 
 def test_planning_period_editor_derives_following_starts_and_notifies_model_year_handlers():

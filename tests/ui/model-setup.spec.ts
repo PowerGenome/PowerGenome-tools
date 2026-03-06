@@ -89,7 +89,7 @@ test.describe('Model Setup - Planning Periods', () => {
         await firstRow.periodStart.blur();
 
         // Wait for validation to process
-        await modelSetup.page.waitForTimeout(200);
+        await modelSetup.waitForValidation();
 
         // Should show validation error since we have planning year but no period start
         await expect(modelSetup.validationError()).toBeVisible();

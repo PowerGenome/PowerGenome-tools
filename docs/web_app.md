@@ -489,7 +489,7 @@ How PowerGenome uses these:
 Multiple planning periods (e.g., 2030, 2035, 2040) allow the model to make sequential decisions, building infrastructure over time rather than all at once.
 
 !!! note
-  Each planning period row must include both a Period Start and a Planning Year. Internally, the app still exports equal-length `model_year` and `model_first_planning_year` lists for PowerGenome.
+    Each planning period row must include both a Period Start and a Planning Year. Internally, the app still exports equal-length `model_year` and `model_first_planning_year` lists for PowerGenome.
 
 ## Step 3: Existing Plants
 

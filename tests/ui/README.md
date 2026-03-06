@@ -81,7 +81,7 @@ npx playwright test model-setup.spec.ts
 The tests are configured in `playwright.config.ts` to:
 
 - Start a local HTTP server serving the `web/` directory
-- Run tests against `http://127.0.0.1:8000`
+- Run tests against `http://127.0.0.1:8001`
 - Use Chrome/Chromium by default
 - Capture screenshots on failure
 - Generate HTML and JUnit reports
@@ -100,4 +100,4 @@ The tests are configured in `playwright.config.ts` to:
 1. Run in headed mode to see what's happening: `npm run test:ui:headed`
 2. Use debug mode to step through: `npm run test:ui:debug`
 3. Check the HTML report for screenshots and traces: `npm run test:ui:report`
-4. Verify the local server is working: visit `http://127.0.0.1:8000` manually
+4. Verify the local server is working: visit `http://127.0.0.1:8001` manually

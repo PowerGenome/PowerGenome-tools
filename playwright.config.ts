@@ -1,4 +1,4 @@
-import { defineConfig } from '@playwright/test';
+import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
     testDir: './tests/ui',
@@ -36,7 +36,7 @@ export default defineConfig({
         {
             name: 'chromium',
             use: {
-                ...require('@playwright/test').devices['Desktop Chrome'],
+                ...devices['Desktop Chrome'],
                 // Increase timeout for PyScript loading
                 actionTimeout: 30000,
                 navigationTimeout: 30000,

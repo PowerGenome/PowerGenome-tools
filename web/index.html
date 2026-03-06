@@ -2947,6 +2947,7 @@
             periodStartInput.step = '1';
             periodStartInput.placeholder = 'Start year';
             periodStartInput.className = 'planning-period-start';
+            periodStartInput.setAttribute('aria-label', 'Period start year');
             periodStartInput.value = periodStart;
 
             const planningYearInput = document.createElement('input');
@@ -2956,6 +2957,7 @@
             planningYearInput.step = '1';
             planningYearInput.placeholder = 'Planning year';
             planningYearInput.className = 'planning-period-model-year';
+            planningYearInput.setAttribute('aria-label', 'Planning year');
             planningYearInput.value = planningYear;
 
             const removeBtn = document.createElement('button');
