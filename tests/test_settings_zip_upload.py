@@ -169,11 +169,16 @@ def _setup_state(cluster_app):
     cluster_app.state.all_bas = set()
     cluster_app.state.settings_yamls = {}
     cluster_app.state.emission_policies_df = None
+    cluster_app.state.new_resources = []
+    cluster_app.state.plant_cluster_settings = None
+    cluster_app.state.renewables_clusters = None
     cluster_app.update_map_cluster_colors = MagicMock()
     cluster_app.update_selected_display = MagicMock()
     cluster_app.update_transmission_lines = MagicMock()
     cluster_app.update_tooltips = MagicMock()
     cluster_app.reset_region_dependent_state = MagicMock()
+    cluster_app.render_new_resources_list = MagicMock()
+    cluster_app.render_esr_results = MagicMock()
 
 
 # ---------------------------------------------------------------------------
@@ -404,3 +409,137 @@ class TestLoadSettingsZip:
         # state.region_aggregations must not have been set to the bad value
         bad_value = {"RegionA": "BA1"}
         assert getattr(cluster_app.state, "region_aggregations", None) != bad_value
+
+    def test_resources_yml_populates_new_resources(self, cluster_app):
+        """new_resources list from resources.yml is restored into state.new_resources."""
+        _setup_state(cluster_app)
+        _mock_document_elements(cluster_app)
+
+        resources_yaml = (
+            "new_resources:\n"
+            "- - UtilityPV\n"
+            "  - LowCost\n"
+            "  - Market\n"
+            "  - 200\n"
+            "- - LandbasedWind\n"
+            "  - Class1\n"
+            "  - Market\n"
+            "  - 100\n"
+        )
+        event = _make_zip_event(cluster_app, {"resources.yml": resources_yaml})
+
+        _run_load(cluster_app, event)
+
+        assert len(cluster_app.state.new_resources) == 2
+        assert cluster_app.state.new_resources[0]["technology"] == "UtilityPV"
+        assert cluster_app.state.new_resources[0]["tech_detail"] == "LowCost"
+        assert cluster_app.state.new_resources[0]["planning_year"] == "all"
+        assert cluster_app.state.new_resources[1]["technology"] == "LandbasedWind"
+        cluster_app.render_new_resources_list.assert_called()
+
+    def test_resources_yml_populates_renewables_clusters(self, cluster_app):
+        """renewables_clusters list from resources.yml is restored into state."""
+        _setup_state(cluster_app)
+        _mock_document_elements(cluster_app)
+
+        resources_yaml = (
+            "renewables_clusters:\n"
+            "- region: all\n"
+            "  technology: landbasedwind\n"
+        )
+        event = _make_zip_event(cluster_app, {"resources.yml": resources_yaml})
+
+        _run_load(cluster_app, event)
+
+        assert isinstance(cluster_app.state.renewables_clusters, list)
+        assert len(cluster_app.state.renewables_clusters) == 1
+        assert cluster_app.state.renewables_clusters[0]["technology"] == "landbasedwind"
+
+    def test_resources_yml_populates_plant_cluster_settings(self, cluster_app):
+        """num_clusters from resources.yml creates state.plant_cluster_settings."""
+        _setup_state(cluster_app)
+        _mock_document_elements(cluster_app)
+
+        resources_yaml = (
+            "num_clusters:\n"
+            "  Nuclear: 1\n"
+            "  Natural Gas Fired Combined Cycle: 2\n"
+            "group_technologies: true\n"
+        )
+        event = _make_zip_event(cluster_app, {"resources.yml": resources_yaml})
+
+        _run_load(cluster_app, event)
+
+        assert cluster_app.state.plant_cluster_settings is not None
+        assert cluster_app.state.plant_cluster_settings["num_clusters"]["Nuclear"] == 1
+        assert cluster_app.state.plant_cluster_settings["group_technologies"] is True
+
+    def test_fuels_yml_populates_fuel_data_year(self, cluster_app):
+        """fuel_data_year from fuels.yml is written to the fuelDataYear DOM element."""
+        _setup_state(cluster_app)
+
+        elements = {}
+
+        def _get_el(el_id):
+            if el_id not in elements:
+                elements[el_id] = MagicMock()
+            return elements[el_id]
+
+        cluster_app.document.getElementById.side_effect = _get_el
+
+        event = _make_zip_event(
+            cluster_app, {"fuels.yml": "fuel_data_year: 2025\n"}
+        )
+
+        _run_load(cluster_app, event)
+
+        assert elements["fuelDataYear"].value == "2025"
+
+    def test_fuels_yml_populates_fuel_scenario_selects(self, cluster_app):
+        """fuel_scenarios from fuels.yml selects the right option for each fuel."""
+        _setup_state(cluster_app)
+
+        elements = {}
+
+        # "reference" is the default scenario value for fuel selects; we pre-populate
+        # each mock element with it to simulate a fully-populated dropdown so the
+        # handler takes the existing-value branch (el.value = ...) rather than the
+        # fallback _set_select_options_simple() branch.
+        _DEFAULT_SCENARIO = "reference"
+
+        def _get_el(el_id):
+            if el_id not in elements:
+                m = MagicMock()
+                m.value = _DEFAULT_SCENARIO
+                elements[el_id] = m
+            return elements[el_id]
+
+        cluster_app.document.getElementById.side_effect = _get_el
+
+        fuels_yaml = (
+            "fuel_data_year: 2025\n"
+            "fuel_scenarios:\n"
+            "  coal: no_111d\n"
+            "  naturalgas: reference\n"
+            "  distillate: reference\n"
+            "  uranium: reference\n"
+        )
+        event = _make_zip_event(cluster_app, {"fuels.yml": fuels_yaml})
+
+        _run_load(cluster_app, event)
+
+        assert elements["fuelScenarioCoal"].value == "no_111d"
+
+    def test_emission_policies_csv_calls_render_esr_results(self, cluster_app):
+        """When emission_policies.csv is present, render_esr_results() is called."""
+        _setup_state(cluster_app)
+        _mock_document_elements(cluster_app)
+
+        event = _make_zip_event(
+            cluster_app,
+            {"emission_policies.csv": "zone,rps_fraction\nz1,0.4\n"},
+        )
+
+        _run_load(cluster_app, event)
+
+        cluster_app.render_esr_results.assert_called()

@@ -2880,7 +2880,18 @@
                     if (window.appMap && typeof window.appMap.invalidateSize === 'function') {
                         window.appMap.invalidateSize(false);
                     }
-                }, 100);
+                    // Re-fit to US bounds on first visit (map may have no size when initialized
+                    // because the Regions tab was hidden on page load). Slightly longer delay
+                    // than invalidateSize to ensure the container has fully resized first.
+                    if (!window._mapFittedOnce && window.appMap && window.appMapGeojsonLayer) {
+                        try {
+                            window.appMap.fitBounds(window.appMapGeojsonLayer.getBounds());
+                            window._mapFittedOnce = true;
+                        } catch (e) {
+                            // ignore if bounds not yet available
+                        }
+                    }
+                }, 150);
             }
 
             // ESR step: load data on first access

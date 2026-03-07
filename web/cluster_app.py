@@ -703,8 +703,18 @@ async def init_map():
         ),
     ).addTo(state.map)
 
-    # Fit bounds
-    state.map.fitBounds(state.geojson_layer.getBounds())
+    # Fit bounds (may not work correctly if map container is hidden on first load)
+    try:
+        state.map.fitBounds(state.geojson_layer.getBounds())
+    except Exception:
+        pass
+
+    # Expose GeoJSON layer on window so the JS goToStep handler can re-fit bounds
+    # when the Regions tab is first shown (in case container was hidden on init)
+    try:
+        window.appMapGeojsonLayer = state.geojson_layer
+    except Exception:
+        pass
 
     # Update total count
     total_el = document.getElementById("totalCount")
@@ -8519,7 +8529,127 @@ async def _load_settings_zip(event):
 
         loaded_fields = []
 
-        # Populate UI from model_definition.yml
+        # ── resources.yml ──────────────────────────────────────────────────
+        if "resources.yml" in settings_yamls:
+            try:
+                # yaml.safe_load handles YAML comments natively
+                resources_def = yaml.safe_load(settings_yamls["resources.yml"])
+            except Exception:
+                resources_def = None
+
+            if isinstance(resources_def, dict):
+                # Restore new_resources list
+                raw_new = resources_def.get("new_resources", [])
+                if isinstance(raw_new, list) and raw_new:
+                    state.new_resources = []
+                    for item in raw_new:
+                        if isinstance(item, list) and len(item) >= 4:
+                            state.new_resources.append(
+                                {
+                                    "technology": str(item[0]),
+                                    "tech_detail": str(item[1]),
+                                    "cost_case": str(item[2]),
+                                    "size_mw": item[3],
+                                    "planning_year": "all",
+                                }
+                            )
+                    try:
+                        render_new_resources_list()
+                    except Exception:
+                        pass
+                    loaded_fields.append("New Resources")
+
+                # Restore renewables_clusters
+                raw_renewables = resources_def.get("renewables_clusters")
+                if isinstance(raw_renewables, list) and raw_renewables:
+                    state.renewables_clusters = raw_renewables
+                    loaded_fields.append("Renewables Clusters")
+
+                # Restore plant cluster settings from resources.yml fields
+                num_clusters = resources_def.get("num_clusters")
+                if isinstance(num_clusters, dict) and num_clusters:
+                    plant_settings = {
+                        "num_clusters": num_clusters,
+                        "group_technologies": bool(
+                            resources_def.get("group_technologies", True)
+                        ),
+                    }
+                    tech_groups = resources_def.get("tech_groups")
+                    if isinstance(tech_groups, dict):
+                        plant_settings["tech_groups"] = tech_groups
+                    alt_num = resources_def.get("alt_num_clusters")
+                    if isinstance(alt_num, dict):
+                        plant_settings["alt_num_clusters"] = alt_num
+                    state.plant_cluster_settings = plant_settings
+                    # Show the loaded cluster settings in the plant YAML output
+                    yaml_el = document.getElementById("plantYamlOut")
+                    if yaml_el:
+                        yaml_el.value = yaml.dump(
+                            plant_settings,
+                            default_flow_style=False,
+                            sort_keys=False,
+                        )
+                    loaded_fields.append("Plant Clusters")
+
+                # Restore interconnect_capex_mw
+                interconnect = resources_def.get("interconnect_capex_mw")
+                if interconnect is not None:
+                    el = document.getElementById("interconnectCapexMw")
+                    if el:
+                        el.value = str(interconnect)
+
+        # ── fuels.yml ──────────────────────────────────────────────────────
+        if "fuels.yml" in settings_yamls:
+            try:
+                fuels_def = yaml.safe_load(settings_yamls["fuels.yml"])
+            except Exception:
+                fuels_def = None
+
+            if isinstance(fuels_def, dict):
+                # Restore fuel_data_year
+                fuel_year = fuels_def.get("fuel_data_year")
+                if fuel_year is not None:
+                    el = document.getElementById("fuelDataYear")
+                    if el:
+                        el.value = str(int(fuel_year))
+
+                # Restore fuel scenario selections
+                fuel_scenarios = fuels_def.get("fuel_scenarios", {})
+                if isinstance(fuel_scenarios, dict):
+                    fuel_map = {
+                        "coal": "fuelScenarioCoal",
+                        "naturalgas": "fuelScenarioNaturalGas",
+                        "distillate": "fuelScenarioDistillate",
+                        "uranium": "fuelScenarioUranium",
+                    }
+                    for fuel_key, el_id in fuel_map.items():
+                        scenario = fuel_scenarios.get(fuel_key)
+                        if scenario is not None:
+                            el = document.getElementById(el_id)
+                            if el:
+                                # Try to set the selected option; fall back to
+                                # populating a single option if not yet populated
+                                existing_value = _get_select_value(el, None)
+                                if existing_value is not None:
+                                    el.value = str(scenario)
+                                else:
+                                    _set_select_options_simple(
+                                        el,
+                                        [str(scenario)],
+                                        selected_value=str(scenario),
+                                    )
+                loaded_fields.append("Fuels")
+
+        # ── emission_policies.csv already in state.emission_policies_df ────
+        # Render ESR results UI to show the loaded CSV preview
+        if state.emission_policies_df is not None:
+            try:
+                render_esr_results()
+            except Exception:
+                pass
+            loaded_fields.append("ESR Policies")
+
+        # ── model_definition.yml ───────────────────────────────────────────
         if "model_definition.yml" in settings_yamls:
             try:
                 model_def = yaml.safe_load(settings_yamls["model_definition.yml"])
