@@ -1619,9 +1619,10 @@
                                     <strong>Box
                                         Select</strong> mode (default) to drag and select multiple BAs at once.
                                 </li>
-                                <li><strong>Choose grouping:</strong> The <em>Grouping Column</em> determines how BAs
-                                    are
-                                    grouped for clustering. Colored outlines on the map show these groups.</li>
+                                <li><strong>Choose grouping:</strong> BAs will be combined within the selected
+                                    <em>Grouping Column</em> when possible. Colored outlines on the map show these
+                                    groups.
+                                </li>
                                 <li><strong>Set target regions:</strong> Enter how many final regions you want.
                                     Enable <em>Auto-optimize</em> to find the best number of regions within a
                                     range based on transmission modularity.
@@ -1667,14 +1668,17 @@
                     </div>
 
                     <div class="section" id="groupingSection">
-                        <label>Grouping Column</label>
+                        <label>Grouping Column
+                            <span class="info-icon"
+                                data-tooltip="These grouping categories are based on hierarchy definitions from ReEDS. BAs are combined within each group, then groups are merged to reach the target number of regions.">?</span>
+                        </label>
                         <select id="groupingColumn">
-                            <option value="transgrp" selected>transgrp (Transmission Group)</option>
-                            <option value="transreg">transreg (Transmission Region)</option>
-                            <option value="nercr">nercr (NERC Region)</option>
-                            <option value="interconnect">interconnect</option>
-                            <option value="st">st (State)</option>
-                            <option value="cendiv">cendiv (Census Division)</option>
+                            <option value="transgrp" selected>Transmission Group (transgrp)</option>
+                            <option value="transreg">Transmission Region (transreg)</option>
+                            <option value="nercr">NERC Region (nercr)</option>
+                            <option value="interconnect">Interconnect (interconnect)</option>
+                            <option value="st">State (st)</option>
+                            <option value="cendiv">Census Division (cendiv)</option>
                         </select>
                     </div>
 
