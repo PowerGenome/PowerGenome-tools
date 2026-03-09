@@ -7961,6 +7961,29 @@ def generate_emission_policies_settings():
     return state.emission_policies_df.to_csv(index=False)
 
 
+def generate_esr_state_settings():
+    """Serialize ESR state (tech lists, maps) to YAML for ZIP round-tripping.
+
+    Returns None when no ESR analysis has been run.
+    """
+    esr_rps = getattr(state, "esr_rps_techs", None)
+    esr_ces = getattr(state, "esr_ces_techs", None)
+    if not (esr_rps or esr_ces or state.esr_map):
+        return None
+
+    data = {
+        "esr_rps_techs": sorted(esr_rps) if esr_rps else [],
+        "esr_ces_techs": sorted(esr_ces) if esr_ces else [],
+        "esr_map": {k: list(v) for k, v in (state.esr_map or {}).items()},
+        "esr_type_map": dict(state.esr_type_map or {}),
+        "esr_policy_states": {
+            k: sorted(v) for k, v in (state.esr_policy_states or {}).items()
+        },
+        "esr_zones": [sorted(z) for z in (state.esr_zones or [])],
+    }
+    return yaml.dump(data, default_flow_style=False, sort_keys=False)
+
+
 def generate_model_definition_settings():
     region_aggs = _get_region_aggregations_or_raise()
     model_regions = sorted(region_aggs.keys())
@@ -8001,6 +8024,11 @@ def build_settings_yamls():
         "resource_tags.yml": generate_resource_tags_settings(),
         "startup_costs.yml": generate_startup_costs_settings(),
     }
+
+    # Conditionally add ESR state when ESR analysis has been run
+    esr_state_yml = generate_esr_state_settings()
+    if esr_state_yml is not None:
+        result["esr_state.yml"] = esr_state_yml
 
     # Conditionally add scenario management files when per-year overrides exist
     scenario_mgmt = generate_scenario_management_settings()
@@ -8640,9 +8668,48 @@ async def _load_settings_zip(event):
                                     )
                 loaded_fields.append("Fuels")
 
+        # ── esr_state.yml ───────────────────────────────────────────────────
+        if "esr_state.yml" in settings_yamls:
+            try:
+                esr_def = yaml.safe_load(settings_yamls["esr_state.yml"])
+            except Exception:
+                esr_def = None
+
+            if isinstance(esr_def, dict):
+                raw_rps = esr_def.get("esr_rps_techs", [])
+                raw_ces = esr_def.get("esr_ces_techs", [])
+                state.esr_rps_techs = set(raw_rps) if raw_rps else set()
+                state.esr_ces_techs = set(raw_ces) if raw_ces else set()
+
+                raw_map = esr_def.get("esr_map", {})
+                state.esr_map = (
+                    {k: list(v) for k, v in raw_map.items()}
+                    if isinstance(raw_map, dict)
+                    else None
+                )
+
+                raw_type = esr_def.get("esr_type_map", {})
+                state.esr_type_map = (
+                    dict(raw_type) if isinstance(raw_type, dict) else None
+                )
+
+                raw_ps = esr_def.get("esr_policy_states", {})
+                state.esr_policy_states = (
+                    {k: set(v) for k, v in raw_ps.items()}
+                    if isinstance(raw_ps, dict)
+                    else None
+                )
+
+                raw_zones = esr_def.get("esr_zones", [])
+                state.esr_zones = (
+                    [set(z) for z in raw_zones] if isinstance(raw_zones, list) else None
+                )
+
         # ── emission_policies.csv already in state.emission_policies_df ────
         # Render ESR results UI to show the loaded CSV preview
-        if state.emission_policies_df is not None:
+        if state.emission_policies_df is not None or getattr(
+            state, "esr_rps_techs", None
+        ):
             try:
                 render_esr_results()
             except Exception:
@@ -8693,11 +8760,11 @@ async def _load_settings_zip(event):
                 # Validate that values are lists before processing
                 if all(isinstance(v, list) for v in region_aggs.values()):
                     state.region_aggregations = region_aggs
-                    reset_region_dependent_state()
-                    update_map_cluster_colors(region_aggs)
-                    # Select all BAs that appear in the loaded region aggregations
+                    # Select all BAs before coloring the map — update_map_cluster_colors
+                    # only styles layers that are already in state.selected_bas.
                     all_ba_ids = {ba for bas in region_aggs.values() for ba in bas}
                     state.selected_bas = all_ba_ids & set(state.all_bas)
+                    update_map_cluster_colors(region_aggs)
                     update_selected_display()
                     update_transmission_lines()
                     update_tooltips()
@@ -8713,6 +8780,8 @@ async def _load_settings_zip(event):
                             default_flow_style=False,
                             sort_keys=False,
                         )
+                    # Refresh the plant cluster budget now that regions are known
+                    update_default_cluster_budget()
                     loaded_fields.append("Regions")
 
         file_count = len(settings_yamls) + (1 if emission_df is not None else 0)
