@@ -1967,6 +1967,8 @@
                             <input type="checkbox" id="groupTechDefault" style="width: auto; margin: 0;" checked
                                 onclick="event.stopPropagation()">
                             Group similar technologies
+                            <span class="info-icon"
+                                data-tooltip="Combine technologies with similar characteristics into a single group with the same name.">?</span>
                         </label>
                         <span id="groupTechToggle" style="font-size: 12px; color: #666;">▶ Show</span>
                     </div>
@@ -2011,7 +2013,10 @@
                 </div>
                 <div class="section">
                     <div class="collapsible-header" onclick="toggleCollapsible('omitTechContent', 'omitTechToggle')">
-                        <label style="margin: 0; cursor: pointer;">Omit technologies</label>
+                        <label style="margin: 0; cursor: pointer;">Omit technologies
+                            <span class="info-icon"
+                                data-tooltip="Omit technologies with neglegible capacity from the model.">?</span>
+                        </label>
                         <span id="omitTechToggle" style="font-size: 12px; color: #666;">▶ Show</span>
                     </div>
                     <div id="omitTechContent" class="collapsible-content hidden">
@@ -2080,6 +2085,9 @@
                         <span id="plantCandidatesToggle" style="font-size: 12px; color: #666;">▶ Show</span>
                     </div>
                     <div id="plantCandidatesContent" class="collapsible-content hidden">
+                        <p style="font-size: 12px; color: #666; margin: 0 0 8px 0;">Adjusting the number of clusters for
+                            any group below will directly update the YAML output, even though the Total Cluster Budget
+                            shown above does not change.</p>
                         <div id="plantCandidateList" class="ba-list" style="max-height: 380px;">
                             <em>Run plant clustering to see suggestions.</em>
                         </div>
