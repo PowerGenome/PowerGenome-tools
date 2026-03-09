@@ -614,6 +614,123 @@ class TestFindOptimalClusters:
         assert len(clusters) == 1
         assert n == 1
 
+    def test_louvain_merge_respects_grouping_column(self, cluster_app):
+        """Merging Louvain sub-clusters to reach max_regions must never mix groups.
+
+        With no intra-group transmission edges, Louvain assigns every BA its own
+        cluster (7 clusters for 7 BAs across 3 groups).  Because there are no
+        intra-group edges in the cluster graph, the agglomerative step stalls and
+        the fallback consolidates whole groups.  max_regions == num_groups (3), so
+        the result is exactly one cluster per group with no cross-group mixing.
+
+        The cross-group edge a1→b1 in the transmission data exercises the key fix:
+        that edge must be ignored when building the intra-group cluster graph, and
+        must not cause group A and group B to be merged during the merge step.
+        """
+        hier = pd.DataFrame(
+            {
+                "ba": ["a1", "a2", "a3", "b1", "b2", "b3", "c1"],
+                "transgrp": ["A", "A", "A", "B", "B", "B", "C"],
+            }
+        )
+        # Only inter-group edge present – must be ignored by the intra-group merge
+        tx = pd.DataFrame(
+            {
+                "region_from": ["a1"],
+                "region_to": ["b1"],
+                "firm_ttc_mw": [800.0],
+            }
+        )
+        cluster_bas = {"a1", "a2", "a3", "b1", "b2", "b3", "c1"}
+
+        clusters, n, _, _, _ = cluster_app.find_optimal_clusters(
+            hier, tx, cluster_bas, "transgrp", min_regions=1, max_regions=3
+        )
+
+        # All BAs must be covered with no duplicates
+        all_bas_out: set = set()
+        for nodes in clusters.values():
+            all_bas_out.update(nodes)
+        assert all_bas_out == cluster_bas
+
+        # Build group lookup from the hierarchy
+        ba_to_grp = dict(zip(hier["ba"], hier["transgrp"]))
+
+        # Core assertion: every output cluster contains BAs from exactly ONE group
+        for nodes in clusters.values():
+            groups_present = {ba_to_grp[ba] for ba in nodes}
+            assert len(groups_present) == 1, (
+                f"Cluster {sorted(nodes)!r} spans multiple groups: {groups_present}"
+            )
+
+        # max_regions == num_groups → exactly one cluster per group
+        assert n == 3
+        assert len(clusters) == 3
+
+    def test_louvain_fallback_group_merge(self, cluster_app):
+        """Fallback group-level merging must never split a group across clusters.
+
+        With no intra-group edges, every BA becomes its own Louvain cluster (7
+        clusters).  The agglomerative merge step finds no intra-group edges and
+        stalls, so the fallback path is triggered.  The fallback first consolidates
+        each group into one super-node, then uses agglomerative merging on the
+        group graph to reach max_regions=2.
+
+        Assertions verify that the output clusters are unions of *complete* groups
+        — no group is ever split with some BAs in one cluster and the rest in
+        another, even when max_regions is smaller than the number of groups.
+        """
+        hier = pd.DataFrame(
+            {
+                "ba": ["a1", "a2", "b1", "b2", "c1", "c2", "d1"],
+                "transgrp": ["A", "A", "B", "B", "C", "C", "D"],
+            }
+        )
+        # Inter-group edges only – determine which groups the fallback merges
+        # (A↔B weight 500, C↔D weight 300) → expected clusters: {A∪B}, {C∪D}
+        tx = pd.DataFrame(
+            {
+                "region_from": ["a1", "c1"],
+                "region_to": ["b1", "d1"],
+                "firm_ttc_mw": [500.0, 300.0],
+            }
+        )
+        cluster_bas = {"a1", "a2", "b1", "b2", "c1", "c2", "d1"}
+
+        clusters, n, _, _, _ = cluster_app.find_optimal_clusters(
+            hier, tx, cluster_bas, "transgrp", min_regions=1, max_regions=2
+        )
+
+        # All BAs must be covered with no duplicates
+        all_bas_out: set = set()
+        for nodes in clusters.values():
+            all_bas_out.update(nodes)
+        assert all_bas_out == cluster_bas
+
+        # Ground-truth: complete membership for each group
+        grp_to_bas = {
+            "A": {"a1", "a2"},
+            "B": {"b1", "b2"},
+            "C": {"c1", "c2"},
+            "D": {"d1"},
+        }
+        ba_to_grp = {ba: g for g, bas in grp_to_bas.items() for ba in bas}
+
+        # Core assertion: if any BA from group G is in a cluster, ALL BAs from G
+        # must be in that same cluster (groups are never partially split)
+        for nodes in clusters.values():
+            groups_present = {ba_to_grp[ba] for ba in nodes}
+            for grp in groups_present:
+                assert grp_to_bas[grp].issubset(nodes), (
+                    f"Group {grp!r} is split across output clusters "
+                    f"(cluster has {sorted(nodes)!r} but group contains "
+                    f"{sorted(grp_to_bas[grp])!r})"
+                )
+
+        # Fallback must reach the requested max_regions
+        assert n == 2
+        assert len(clusters) == 2
+
 
 # ---------------------------------------------------------------------------
 # 9. Generate cluster names
