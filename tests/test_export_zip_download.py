@@ -1,8 +1,9 @@
 """Tests for the on_download_all_settings ZIP export functionality.
 
 Covers:
-- on_download_all_settings: all YAML files + optional emission_policies.csv
-  bundled into powgenome_settings.zip
+- on_download_all_settings: all YAML files under settings/ and
+    scenario_inputs.csv + emission_policies.csv under extra_inputs/
+    bundled into powergenome_settings.zip.
 """
 
 import contextlib
@@ -147,9 +148,9 @@ class TestOnDownloadAllSettings:
         assert len(calls) == 1
         with _open_zip_from_calls(calls) as zf:
             names = zf.namelist()
-        assert "model_definition.yml" in names
-        assert "resources.yml" in names
-        assert "emission_policies.csv" in names
+        assert "settings/model_definition.yml" in names
+        assert "settings/resources.yml" in names
+        assert "extra_inputs/emission_policies.csv" in names
 
     def test_yaml_only_no_emissions_csv(self, cluster_app):
         """ZIP contains only YAML files when emission_policies_df is None."""
@@ -165,8 +166,8 @@ class TestOnDownloadAllSettings:
         assert len(calls) == 1
         with _open_zip_from_calls(calls) as zf:
             names = set(zf.namelist())
-        assert "emission_policies.csv" not in names
-        assert names == {"model_definition.yml", "fuels.yml"}
+        assert "extra_inputs/emission_policies.csv" not in names
+        assert names == {"settings/model_definition.yml", "settings/fuels.yml"}
 
     def test_error_when_settings_yamls_empty(self, cluster_app):
         """No download is triggered when settings_yamls is empty; error status shown."""
@@ -212,8 +213,9 @@ class TestOnDownloadAllSettings:
 
         cluster_app.on_download_all_settings(None)
 
+        expected = {f"settings/{name}" for name in filenames}
         with _open_zip_from_calls(calls) as zf:
-            assert set(zf.namelist()) == set(filenames)
+            assert set(zf.namelist()) == expected
 
     def test_yaml_file_contents_preserved(self, cluster_app):
         """The content of each YAML file is exactly preserved in the ZIP."""
@@ -227,10 +229,12 @@ class TestOnDownloadAllSettings:
         cluster_app.on_download_all_settings(None)
 
         with _open_zip_from_calls(calls) as zf:
-            assert zf.read("model_definition.yml").decode() == (
+            assert zf.read("settings/model_definition.yml").decode() == (
                 "regions:\n  - RegionA\n  - RegionB\n"
             )
-            assert zf.read("fuels.yml").decode() == "natural_gas:\n  price: 4.5\n"
+            assert (
+                zf.read("settings/fuels.yml").decode() == "natural_gas:\n  price: 4.5\n"
+            )
 
     def test_emissions_csv_content_matches_dataframe(self, cluster_app):
         """The emission_policies.csv content in the ZIP matches df.to_csv(index=False)."""
@@ -248,7 +252,7 @@ class TestOnDownloadAllSettings:
         cluster_app.on_download_all_settings(None)
 
         with _open_zip_from_calls(calls) as zf:
-            csv_bytes = zf.read("emission_policies.csv").decode()
+            csv_bytes = zf.read("extra_inputs/emission_policies.csv").decode()
         assert csv_bytes == df.to_csv(index=False)
 
     def test_zip_filename_is_powergenome_settings(self, cluster_app):
@@ -314,9 +318,52 @@ class TestOnDownloadAllSettings:
 
         with _open_zip_from_calls(calls) as zf:
             names = set(zf.namelist())
-        assert "scenario_management.yml" in names
-        assert "extra_inputs.yml" in names
-        assert "scenario_inputs.csv" in names
+        assert "settings/scenario_management.yml" in names
+        assert "settings/extra_inputs.yml" in names
+        assert "extra_inputs/scenario_inputs.csv" in names
+
+    def test_scenario_csv_and_emissions_are_in_extra_inputs_folder(self, cluster_app):
+        """Scenario and emissions CSV files are written under extra_inputs/."""
+        cluster_app.state.settings_yamls = {
+            "resources.yml": "resources: []\n",
+            "scenario_inputs.csv": "case_id,year\nbaseline,2030\n",
+        }
+        cluster_app.state.emission_policies_df = pd.DataFrame(
+            {"zone": ["z1"], "rps_fraction": [0.5]}
+        )
+        calls = _capture_zip_download(cluster_app)
+
+        cluster_app.on_download_all_settings(None)
+
+        with _open_zip_from_calls(calls) as zf:
+            names = set(zf.namelist())
+        assert "settings/resources.yml" in names
+        assert "extra_inputs/scenario_inputs.csv" in names
+        assert "extra_inputs/emission_policies.csv" in names
+
+    def test_exact_zip_layout_for_yaml_and_csv_files(self, cluster_app):
+        """All YAML variants go under settings/; scenario and emissions CSV are only under extra_inputs/."""
+        cluster_app.state.settings_yamls = {
+            "model_definition.yml": "x: 1\n",
+            "extra_inputs.yaml": "note: still_a_yaml\n",
+            "scenario_inputs.csv": "case_id,year\nbaseline,2030\n",
+        }
+        cluster_app.state.emission_policies_df = pd.DataFrame(
+            {"zone": ["z1"], "rps_fraction": [0.5]}
+        )
+        calls = _capture_zip_download(cluster_app)
+
+        cluster_app.on_download_all_settings(None)
+
+        with _open_zip_from_calls(calls) as zf:
+            names = set(zf.namelist())
+
+        assert names == {
+            "settings/model_definition.yml",
+            "settings/extra_inputs.yaml",
+            "extra_inputs/scenario_inputs.csv",
+            "extra_inputs/emission_policies.csv",
+        }
 
     @pytest.mark.parametrize(
         "n_yamls,has_emissions",

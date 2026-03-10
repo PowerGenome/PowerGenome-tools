@@ -1011,15 +1011,34 @@ The app always generates these seven YAML files:
 * `resource_tags.yml` - Resource classification tags
 * `startup_costs.yml` - Startup cost parameters
 
+#### Download All ZIP Structure
+
+When you click **Download All**, the ZIP archive contains two top-level folders:
+
+* `settings/` - All generated YAML files
+* `extra_inputs/` - Generated CSV inputs used by YAML settings
+
+This includes:
+
+* `settings/*.yml` (always for core settings; conditional for scenario/ESR YAMLs)
+* `extra_inputs/scenario_inputs.csv` (only when year-specific resources exist)
+* `extra_inputs/emission_policies.csv` (only when ESR policies are generated)
+
 #### Conditional Scenario Management Files
 
 If any New Resources (Step 4) are tagged to a **specific planning year** (rather than "All (default)"), the Export step additionally generates three files:
 
 * `scenario_management.yml` - Contains `settings_management` with per-year `new_resources`, `resource_modifiers`, and `modified_new_resources` overrides directly under `all_cases` (a PowerGenome special key that applies settings to every case).
-* `scenario_inputs.csv` - CSV with `case_id,year` columns, one row per planning year, all with case ID `baseline`.
+* `scenario_inputs.csv` - CSV with `case_id,year` columns, one row per planning year, all with case ID `baseline` (written to `extra_inputs/` in **Download All**).
 * `extra_inputs.yml` - YAML with `input_folder: extra_inputs` and `scenario_definitions_fn: scenario_inputs.csv`.
 
 If **all** resources use "All (default)", these three files are **not** generated and the export behaves exactly as before.
+
+#### Conditional ESR Policy File
+
+If ESR policies are generated in Step 6, the export also includes:
+
+* `emission_policies.csv` - Policy constraints table (written to `extra_inputs/` in **Download All**).
 
 ##### How Per-Year Overrides Work
 
