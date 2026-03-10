@@ -2,6 +2,9 @@
 
 Welcome to the documentation for PowerGenome System Design. This project provides a comprehensive web-based interface for building complete PowerGenome settings files, guiding users through the entire process of defining model regions, configuring resources, and exporting ready-to-use configuration files for energy system modeling (specifically PowerGenome/GenX).
 
+!!! warning "Under Development"
+ This tool is still under active development. Algorithms and generated outputs may contain errors and should be validated before using results in analysis or decision making.
+
 ## Overview
 
 The project consists of an interactive **[Web Application](web_app.md)** that walks users through a guided workflow to configure all aspects of a PowerGenome model. Built with PyScript to run entirely in-browser, it allows users to visually define model regions, configure new and existing resources, select fuel scenarios, and export complete settings files in YAML format.

@@ -1032,6 +1032,27 @@
             color: var(--navy);
         }
 
+        .development-warning {
+            border: 2px solid #d29a28;
+            border-left: 6px solid #9d6500;
+            background: #ffe9b8;
+            color: #4f3900;
+            border-radius: var(--radius-md);
+            padding: 12px 14px;
+            margin: 0 0 28px;
+            font-size: 13px;
+            line-height: 1.6;
+            box-shadow: 0 2px 6px rgba(95, 65, 0, 0.14);
+        }
+
+        .welcome-body .development-warning strong {
+            color: #3f2d00;
+        }
+
+        .welcome-body .development-warning+h3 {
+            margin-top: 18px;
+        }
+
         .welcome-body p {
             margin: 0 0 18px 0;
             font-size: 14px;
@@ -1525,6 +1546,11 @@
                 <p>Create complete settings files for capacity expansion modeling</p>
             </div>
             <div class="welcome-body">
+                <div class="development-warning" role="note" aria-label="Development status disclaimer">
+                    <strong>Development status:</strong> This tool is still under active development. Algorithms and
+                    generated outputs may contain errors and should be reviewed before use in analysis or decision
+                    making.
+                </div>
                 <h3>What This Tool Does</h3>
                 <p>This web application helps you design your energy system model and create PowerGenome settings files.
                     It guides you through three key tasks:</p>
