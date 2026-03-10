@@ -1178,6 +1178,8 @@ DEFAULT_TECH_GROUPS = {
     },
     "Other_peaker": {
         "Natural Gas Internal Combustion Engine",
+        "Other Natural Gas",
+        "Other Gases",
         "Petroleum Liquids",
     },
 }
@@ -7087,6 +7089,8 @@ def generate_resources_settings():
             ],
             "Other_peaker": [
                 "Natural Gas Internal Combustion Engine",
+                "Other Natural Gas",
+                "Other Gases",
                 "Petroleum Liquids",
             ],
         }
@@ -7746,6 +7750,7 @@ def generate_resource_tags_settings():
             "Wood/Wood Waste Biomass": 1,
             "Biomass": 1,
             "distributed_gen": 1,
+            "Run of River Hydroelectric": 1,
         },
         "Commit": {
             "Conventional Steam Coal": 1,
