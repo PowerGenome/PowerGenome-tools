@@ -304,12 +304,11 @@ class TestOnDownloadAllSettings:
         assert "powergenome_settings.zip" in status_calls[0][0]
 
     def test_scenario_files_included_when_present(self, cluster_app):
-        """Optional scenario_management.yml, extra_inputs.yml and scenario_inputs.csv are included."""
+        """YAML files like scenario_management.yml and extra_inputs.yml go under settings/."""
         cluster_app.state.settings_yamls = {
             "model_definition.yml": "x: 1\n",
             "scenario_management.yml": "scenarios: []\n",
             "extra_inputs.yml": "extra: {}\n",
-            "scenario_inputs.csv": "tech,year\nWind,2030\n",
         }
         cluster_app.state.emission_policies_df = None
         calls = _capture_zip_download(cluster_app)
@@ -320,13 +319,11 @@ class TestOnDownloadAllSettings:
             names = set(zf.namelist())
         assert "settings/scenario_management.yml" in names
         assert "settings/extra_inputs.yml" in names
-        assert "extra_inputs/scenario_inputs.csv" in names
 
-    def test_scenario_csv_and_emissions_are_in_extra_inputs_folder(self, cluster_app):
-        """Scenario and emissions CSV files are written under extra_inputs/."""
+    def test_emissions_csv_is_in_extra_inputs_folder(self, cluster_app):
+        """Emission policies CSV is written under extra_inputs/."""
         cluster_app.state.settings_yamls = {
             "resources.yml": "resources: []\n",
-            "scenario_inputs.csv": "case_id,year\nbaseline,2030\n",
         }
         cluster_app.state.emission_policies_df = pd.DataFrame(
             {"zone": ["z1"], "rps_fraction": [0.5]}
@@ -338,15 +335,13 @@ class TestOnDownloadAllSettings:
         with _open_zip_from_calls(calls) as zf:
             names = set(zf.namelist())
         assert "settings/resources.yml" in names
-        assert "extra_inputs/scenario_inputs.csv" in names
         assert "extra_inputs/emission_policies.csv" in names
 
-    def test_exact_zip_layout_for_yaml_and_csv_files(self, cluster_app):
-        """All YAML variants go under settings/; scenario and emissions CSV are only under extra_inputs/."""
+    def test_exact_zip_layout_for_yaml_files(self, cluster_app):
+        """All YAML files go under settings/; emission_policies.csv goes under extra_inputs/."""
         cluster_app.state.settings_yamls = {
             "model_definition.yml": "x: 1\n",
             "extra_inputs.yaml": "note: still_a_yaml\n",
-            "scenario_inputs.csv": "case_id,year\nbaseline,2030\n",
         }
         cluster_app.state.emission_policies_df = pd.DataFrame(
             {"zone": ["z1"], "rps_fraction": [0.5]}
@@ -361,7 +356,6 @@ class TestOnDownloadAllSettings:
         assert names == {
             "settings/model_definition.yml",
             "settings/extra_inputs.yaml",
-            "extra_inputs/scenario_inputs.csv",
             "extra_inputs/emission_policies.csv",
         }
 

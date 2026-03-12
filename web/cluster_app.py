@@ -7099,12 +7099,26 @@ def generate_resources_settings():
     if not isinstance(alt_num_clusters, dict) or not alt_num_clusters:
         alt_num_clusters = None
 
-    # New-build resources from state — only "all" year (base) resources go into resources.yml
-    new_resources = [
+    # Check if any resources are tagged to a specific planning year
+    has_year_specific = _has_year_specific_resources()
+
+    # Base new-build resources — only "all" year entries
+    base_new_resources = [
         [r["technology"], r["tech_detail"], r["cost_case"], r["size_mw"]]
         for r in state.new_resources
         if r.get("planning_year") == "all"
     ]
+
+    if has_year_specific:
+        # Build year-keyed new_resources: default → base list, each year → base + year-specific
+        specific_years = _get_year_specific_years()
+        new_resources = {"default": base_new_resources}
+        for year in specific_years:
+            year_list = _build_new_resources_for_year(year)
+            if year_list != base_new_resources:
+                new_resources[year] = year_list
+    else:
+        new_resources = base_new_resources
 
     # Hydro defaults
     hydro_factor = 2
@@ -7160,34 +7174,32 @@ def generate_resources_settings():
         ),
     }
 
-    # Build resource_modifiers from state.new_resources and modified_new_resources.
+    # Build base resource_modifiers (for "all" year resources only).
     # Every new resource gets an entry with at least "technology" and "tech_detail".
     # Additionally, apply default modifiers (e.g., battery storage O&M defaults).
     # For modified_new_resources, only include attribute-only overrides (no identity
     # or fuel changes) with a non-empty attr_modifiers dict. Keys are translated from
     # internal UI names to ATB column-style names (e.g. variable_o_m_mwh → Var_OM_Cost_per_MWh).
-    resource_modifiers = {}
+    base_resource_modifiers = {}
 
     # First, add all "all" year new_resources with default modifiers
     for r in state.new_resources:
         if r.get("planning_year") == "all":
             tech = r["technology"]
             detail = r["tech_detail"]
-            # Generate a default key from tech and detail
             key = _auto_modified_key(tech, detail)
             modifier_dict = {
                 "technology": tech,
                 "tech_detail": detail,
             }
-            # Add any default modifiers for this resource type
             defaults = _get_default_resource_modifiers(tech, detail)
             modifier_dict.update(defaults)
-            resource_modifiers[key] = modifier_dict
+            base_resource_modifiers[key] = modifier_dict
 
     # Then, add entries from modified_new_resources that have attribute modifiers
     if state.modified_new_resources:
         for k, v in sorted(state.modified_new_resources.items()):
-            # Only include "all" year (base) entries in resources.yml
+            # Only include "all" year (base) entries
             if v.get("planning_year", "all") != "all":
                 continue
             attr_mods = v.get("attr_modifiers")
@@ -7211,20 +7223,29 @@ def generate_resources_settings():
             for ui_key, val in attr_mods.items():
                 atb_key = _UI_TO_ATB_KEY.get(ui_key, ui_key)
                 modifier_dict[atb_key] = val
-            # Override the entry if it already exists from new_resources
-            resource_modifiers[k] = modifier_dict
+            base_resource_modifiers[k] = modifier_dict
+
+    if has_year_specific:
+        # Build year-keyed resource_modifiers: default → base, each year → base + year-specific
+        specific_years = _get_year_specific_years()
+        resource_modifiers = {"default": base_resource_modifiers}
+        for year in specific_years:
+            year_mods = _build_resource_modifiers_for_year(year)
+            if year_mods != base_resource_modifiers:
+                resource_modifiers[year] = year_mods
+    else:
+        resource_modifiers = base_resource_modifiers
 
     if resource_modifiers:
         out["resource_modifiers"] = resource_modifiers
 
-    # Also output modified_new_resources for custom fuels (if any have new fuel types)
-    modified_with_fuel = {}
+    # Build base modified_new_resources (custom fuels / identity changes, "all" year only)
+    base_modified_with_fuel = {}
     if state.modified_new_resources:
         for k, v in sorted(state.modified_new_resources.items()):
-            # Only include "all" year (base) entries in resources.yml
+            # Only include "all" year (base) entries
             if v.get("planning_year", "all") != "all":
                 continue
-            # Only include in modified_new_resources if it has custom fuel or needs the full structure
             if v.get("fuel_type") == "new" or (
                 v.get("new_technology") != v.get("technology")
                 or v.get("new_tech_detail") != v.get("tech_detail")
@@ -7244,9 +7265,26 @@ def generate_resources_settings():
                     for ui_key, val in attr_mods.items():
                         atb_key = _UI_TO_ATB_KEY.get(ui_key, ui_key)
                         entry[atb_key] = val
-                modified_with_fuel[k] = entry
-    if modified_with_fuel:
-        out["modified_new_resources"] = modified_with_fuel
+                base_modified_with_fuel[k] = entry
+
+    if has_year_specific:
+        # Build year-keyed modified_new_resources
+        specific_years = _get_year_specific_years()
+        modified_new_resources_keyed = (
+            {"default": base_modified_with_fuel} if base_modified_with_fuel else {}
+        )
+        for year in specific_years:
+            year_modified = _build_modified_new_resources_for_year(year)
+            if year_modified is not None and year_modified != base_modified_with_fuel:
+                if "default" not in modified_new_resources_keyed:
+                    # Ensure there is always a default key when year-keying
+                    modified_new_resources_keyed["default"] = {}
+                modified_new_resources_keyed[year] = year_modified
+        if modified_new_resources_keyed:
+            out["modified_new_resources"] = modified_new_resources_keyed
+    else:
+        if base_modified_with_fuel:
+            out["modified_new_resources"] = base_modified_with_fuel
 
     # Remove nulls to keep YAML clean
     out = {k: v for k, v in out.items() if v is not None}
@@ -7256,7 +7294,7 @@ def generate_resources_settings():
 
 
 # ---------------------------------------------------------------------------
-# Scenario management generation (per-year resource overrides)
+# Scenario management helpers (year-specific resource queries)
 # ---------------------------------------------------------------------------
 
 
@@ -7416,100 +7454,6 @@ def _build_modified_new_resources_for_year(year):
     return result if result else None
 
 
-def generate_scenario_management_settings():
-    """Generate ``scenario_management.yml`` content.
-
-    Returns the YAML string, or ``None`` if no year-specific resource overrides
-    exist (i.e. all resources are tagged 'all').
-
-    In PowerGenome, ``all_cases`` is a special key whose value is directly
-    merged into the settings for every case in that year — there is no
-    intermediate category/level nesting.
-
-    Structure::
-
-        settings_management:
-          <year>:
-            all_cases:
-              new_resources: [...]
-              resource_modifiers: {...}
-              modified_new_resources: {...}
-    """
-    if not _has_year_specific_resources():
-        return None
-
-    # Build the base (all-year) resource lists for comparison
-    base_new_resources = [
-        [r["technology"], r["tech_detail"], r["cost_case"], r["size_mw"]]
-        for r in state.new_resources
-        if r.get("planning_year") == "all"
-    ]
-
-    settings_management = {}
-
-    for year in _get_year_specific_years():
-        year_overrides = {}
-
-        # New resources for this year
-        year_new_resources = _build_new_resources_for_year(year)
-        if year_new_resources != base_new_resources:
-            year_overrides["new_resources"] = year_new_resources
-
-        # Resource modifiers for this year (merges all + year-specific)
-        year_modifiers = _build_resource_modifiers_for_year(year)
-        if year_modifiers is not None:
-            year_overrides["resource_modifiers"] = year_modifiers
-
-        # Modified new resources for this year
-        year_modified = _build_modified_new_resources_for_year(year)
-        if year_modified is not None:
-            year_overrides["modified_new_resources"] = year_modified
-
-        if year_overrides:
-            settings_management[year] = {
-                "all_cases": year_overrides,
-            }
-
-    if not settings_management:
-        return None
-
-    out = {"settings_management": settings_management}
-    return yaml.dump(out, default_flow_style=False, sort_keys=False)
-
-
-def generate_scenario_csv():
-    """Generate ``scenario_inputs.csv`` content.
-
-    Returns a CSV string with ``case_id`` and ``year`` columns, one row per
-    planning year, all with ``case_id=baseline``.  Returns ``None`` if no
-    year-specific overrides exist.
-    """
-    if not _has_year_specific_resources():
-        return None
-
-    model_years = _get_model_years_from_dom()
-    if not model_years:
-        return None
-
-    lines = ["case_id,year"]
-    for y in model_years:
-        lines.append(f"baseline,{y}")
-    return "\n".join(lines) + "\n"
-
-
-def generate_extra_inputs_settings():
-    """Generate ``extra_inputs.yml`` content.
-
-    Returns the YAML string, or ``None`` if no year-specific overrides exist.
-    """
-    if not _has_year_specific_resources():
-        return None
-
-    out = {
-        "input_folder": "extra_inputs",
-        "scenario_definitions_fn": "scenario_inputs.csv",
-    }
-    return yaml.dump(out, default_flow_style=False, sort_keys=False)
 
 
 def generate_fuels_settings():
@@ -7997,17 +7941,6 @@ def build_settings_yamls():
         "startup_costs.yml": generate_startup_costs_settings(),
     }
 
-    # Conditionally add scenario management files when per-year overrides exist
-    scenario_mgmt = generate_scenario_management_settings()
-    if scenario_mgmt is not None:
-        result["scenario_management.yml"] = scenario_mgmt
-        extra_inputs = generate_extra_inputs_settings()
-        if extra_inputs is not None:
-            result["extra_inputs.yml"] = extra_inputs
-        scenario_csv = generate_scenario_csv()
-        if scenario_csv is not None:
-            result["scenario_inputs.csv"] = scenario_csv
-
     return result
 
 
@@ -8452,16 +8385,11 @@ def on_download_all_settings(event):
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
         # Write settings files in deterministic order, rejecting unsafe names.
-        # All YAML files go to settings/. scenario_inputs.csv goes to extra_inputs/.
+        # All YAML files go to settings/.
         for filename in sorted(state.settings_yamls):
             if "/" in filename or "\\" in filename or ".." in filename:
                 continue  # skip path-traversal / absolute-path entries
-            if filename.endswith((".yml", ".yaml")):
-                zip_path = f"settings/{filename}"
-            elif filename == "scenario_inputs.csv":
-                zip_path = f"extra_inputs/{filename}"
-            else:
-                zip_path = f"settings/{filename}"
+            zip_path = f"settings/{filename}"
             zipf.writestr(zip_path, state.settings_yamls[filename])
 
         # Write emission_policies.csv under extra_inputs/ if it exists.
