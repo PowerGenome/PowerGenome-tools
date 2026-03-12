@@ -7268,7 +7268,12 @@ def generate_resources_settings():
                 base_modified_with_fuel[k] = entry
 
     if has_year_specific:
-        # Build year-keyed modified_new_resources
+        # Build year-keyed modified_new_resources.
+        # Only seed the default key when there are base entries; if a year override is
+        # found later and there is no default key yet, we lazily insert an empty {} so
+        # that PowerGenome's fallback for other years is an empty mapping rather than
+        # the year-specific value.  This avoids emitting `modified_new_resources: {default: {}}`
+        # when there are no modified resources at all.
         specific_years = _get_year_specific_years()
         modified_new_resources_keyed = (
             {"default": base_modified_with_fuel} if base_modified_with_fuel else {}
@@ -7277,7 +7282,6 @@ def generate_resources_settings():
             year_modified = _build_modified_new_resources_for_year(year)
             if year_modified is not None and year_modified != base_modified_with_fuel:
                 if "default" not in modified_new_resources_keyed:
-                    # Ensure there is always a default key when year-keying
                     modified_new_resources_keyed["default"] = {}
                 modified_new_resources_keyed[year] = year_modified
         if modified_new_resources_keyed:

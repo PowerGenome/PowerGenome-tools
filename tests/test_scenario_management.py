@@ -540,7 +540,7 @@ class TestYearBadgeHtml:
 # ============================================================================
 
 
-def _setup_resources_settings_dom(cluster_app, model_years="2030, 2040"):
+def _setup_dom_for_resources_settings(cluster_app, model_years="2030, 2040"):
     """Wire up document.getElementById with all DOM elements required by
     generate_resources_settings()."""
     el_map = {
@@ -574,7 +574,7 @@ class TestGenerateResourcesSettingsYearKeyed:
             ),
         ]
         cluster_app.state.modified_new_resources = {}
-        _setup_resources_settings_dom(cluster_app)
+        _setup_dom_for_resources_settings(cluster_app)
 
         result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
@@ -593,7 +593,7 @@ class TestGenerateResourcesSettingsYearKeyed:
             ),
         ]
         cluster_app.state.modified_new_resources = {}
-        _setup_resources_settings_dom(cluster_app)
+        _setup_dom_for_resources_settings(cluster_app)
 
         result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
@@ -614,7 +614,7 @@ class TestGenerateResourcesSettingsYearKeyed:
             ),
         ]
         cluster_app.state.modified_new_resources = {}
-        _setup_resources_settings_dom(cluster_app)
+        _setup_dom_for_resources_settings(cluster_app)
 
         result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
@@ -634,7 +634,7 @@ class TestGenerateResourcesSettingsYearKeyed:
             ),
         ]
         cluster_app.state.modified_new_resources = {}
-        _setup_resources_settings_dom(cluster_app)
+        _setup_dom_for_resources_settings(cluster_app)
 
         result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
@@ -657,7 +657,7 @@ class TestGenerateResourcesSettingsYearKeyed:
             ),
         ]
         cluster_app.state.modified_new_resources = {}
-        _setup_resources_settings_dom(cluster_app)
+        _setup_dom_for_resources_settings(cluster_app)
 
         result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
@@ -679,7 +679,7 @@ class TestGenerateResourcesSettingsYearKeyed:
             ),
         ]
         cluster_app.state.modified_new_resources = {}
-        _setup_resources_settings_dom(cluster_app)
+        _setup_dom_for_resources_settings(cluster_app)
 
         result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
@@ -700,7 +700,7 @@ class TestGenerateResourcesSettingsYearKeyed:
             ),
         ]
         cluster_app.state.modified_new_resources = {}
-        _setup_resources_settings_dom(cluster_app)
+        _setup_dom_for_resources_settings(cluster_app)
 
         result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
@@ -939,7 +939,7 @@ class TestIntegrationFullFlow:
         assert cluster_app._get_year_specific_years() == [2030, 2040]
 
         # Verify year-keyed structure in generate_resources_settings output
-        _setup_resources_settings_dom(cluster_app, model_years="2030, 2040")
+        _setup_dom_for_resources_settings(cluster_app, model_years="2030, 2040")
         result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
         new_res = parsed["new_resources"]
@@ -976,7 +976,7 @@ class TestIntegrationFullFlow:
         assert cluster_app._has_year_specific_resources() is True
         assert sorted(cluster_app._get_year_specific_years()) == [2030, 2040]
 
-        _setup_resources_settings_dom(cluster_app, model_years="2030, 2040")
+        _setup_dom_for_resources_settings(cluster_app, model_years="2030, 2040")
         result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
 
@@ -998,7 +998,7 @@ class TestIntegrationFullFlow:
             _make_resource(tech="UtilityPV", year=2030),
         ]
         cluster_app.state.modified_new_resources = {}
-        _setup_resources_settings_dom(cluster_app, model_years="2030, 2040")
+        _setup_dom_for_resources_settings(cluster_app, model_years="2030, 2040")
 
         result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
@@ -1012,7 +1012,7 @@ class TestIntegrationFullFlow:
         """When all resources are 'all', new_resources in resources.yml is a flat list."""
         cluster_app.state.new_resources = [_make_resource(year="all")]
         cluster_app.state.modified_new_resources = {}
-        _setup_resources_settings_dom(cluster_app)
+        _setup_dom_for_resources_settings(cluster_app)
 
         result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
