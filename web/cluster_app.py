@@ -7964,22 +7964,32 @@ def generate_model_definition_settings():
         _get_select_value(document.getElementById("targetUsdYear"), 2024)
     )
     utc_offset = int(_get_select_value(document.getElementById("utcOffset"), -5))
-    model_years = parse_int_list(
+    model_period_end_years = parse_int_list(
         _get_select_value(document.getElementById("modelYears"), "")
     )
-    planning_years = parse_int_list(
+    model_period_start_years = parse_int_list(
         _get_select_value(document.getElementById("planningYears"), "")
     )
 
-    if not model_years or not planning_years or len(model_years) != len(planning_years):
+    if (
+        not model_period_end_years
+        or not model_period_start_years
+        or len(model_period_end_years) != len(model_period_start_years)
+    ):
         raise Exception("Model years and first planning years must be the same length.")
+
+    model_periods = [
+        [period_start_year, period_end_year]
+        for period_start_year, period_end_year in zip(
+            model_period_start_years, model_period_end_years
+        )
+    ]
 
     out = {
         "model_regions": model_regions,
         "region_aggregations": region_aggs,
         "target_usd_year": target_usd_year,
-        "model_year": model_years,
-        "model_first_planning_year": planning_years,
+        "model_periods": model_periods,
         "utc_offset": utc_offset,
         "generator_columns": DEFAULT_GENERATOR_COLUMNS,
     }
