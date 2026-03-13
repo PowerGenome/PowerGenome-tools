@@ -648,7 +648,10 @@ class TestBuildSettingsYamlResourceModifiers:
         assert parsed["resource_modifiers"]["gas_cc"]["Heat_Rate_MMBTU_per_MWh"] == 6.5
 
     def test_year_specific_resources_excluded_from_resources_yml(self, cluster_app):
-        """Year-specific resources only appear under their year key, not in default."""
+        """Year-specific resources do not force top-level year keys in resource_modifiers.
+
+        When effective modifier values are identical across years, output stays flat.
+        """
         cluster_app.state.new_resources = [
             _make_resource(tech="NaturalGas", detail="CC", year="all"),
             _make_resource(tech="UtilityPV", detail="Class1", year=2030),
@@ -675,17 +678,12 @@ class TestBuildSettingsYamlResourceModifiers:
         assert "resource_modifiers" in parsed
         mods = parsed["resource_modifiers"]
 
-        # resource_modifiers is now year-keyed: {default: {...}, 2030: {...}}
+        # resource_modifiers remains flat at the top level.
         assert isinstance(mods, dict)
-        default_mods = mods.get("default", {})
-        year_2030_mods = mods.get(2030, {})
-
-        # Only NaturalGas in the default block
-        assert any(m.get("technology") == "NaturalGas" for m in default_mods.values())
-        assert not any(m.get("technology") == "UtilityPV" for m in default_mods.values())
-
-        # UtilityPV appears in the 2030 block
-        assert any(m.get("technology") == "UtilityPV" for m in year_2030_mods.values())
+        assert "default" not in mods
+        assert 2030 not in mods
+        assert any(m.get("technology") == "NaturalGas" for m in mods.values())
+        assert any(m.get("technology") == "UtilityPV" for m in mods.values())
 
     def test_multiple_resources_all_get_modifiers(self, cluster_app):
         """Multiple resources all get resource_modifiers entries."""

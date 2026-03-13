@@ -7236,24 +7236,17 @@ def generate_resources_settings():
             base_resource_modifiers[k] = modifier_dict
 
     if has_year_specific:
-        # Build year-specific values and only emit a keyed structure when values
-        # actually differ by year.
+        # Build year-specific effective values, then nest year keys per-field
+        # to avoid repeating every resource entry under top-level year keys.
         specific_years = _get_year_specific_years()
         year_resource_modifiers = {
-            year: _build_resource_modifiers_for_year(year) for year in specific_years
+            year: (_build_resource_modifiers_for_year(year) or {})
+            for year in specific_years
         }
-        differs_by_year = any(
-            year_mods != base_resource_modifiers
-            for year_mods in year_resource_modifiers.values()
+        resource_modifiers = _build_nested_year_keyed_resource_modifiers(
+            base_resource_modifiers,
+            year_resource_modifiers,
         )
-
-        if differs_by_year:
-            resource_modifiers = {"default": base_resource_modifiers}
-            for year, year_mods in year_resource_modifiers.items():
-                if year_mods != base_resource_modifiers:
-                    resource_modifiers[year] = year_mods
-        else:
-            resource_modifiers = base_resource_modifiers
     else:
         resource_modifiers = base_resource_modifiers
 
@@ -7484,6 +7477,113 @@ def _build_modified_new_resources_for_year(year):
         result[k] = entry
 
     return result if result else None
+
+
+def _neutral_year_keyed_modifier_value(value):
+    """Return a neutral fallback for year-keyed modifier fields."""
+    if isinstance(value, list) and len(value) == 2:
+        op = str(value[0]).lower()
+        if op in {"mul", "truediv"}:
+            return [op, 1]
+        if op in {"add", "sub"}:
+            return [op, 0]
+    if isinstance(value, (int, float)):
+        return ["mul", 1]
+    return value
+
+
+def _build_nested_year_keyed_resource_modifiers(
+    base_resource_modifiers, year_resource_modifiers
+):
+    """Nest year keys at the field level for ``resource_modifiers`` output."""
+    base = base_resource_modifiers if isinstance(base_resource_modifiers, dict) else {}
+    year_map = (
+        year_resource_modifiers if isinstance(year_resource_modifiers, dict) else {}
+    )
+
+    # Preserve existing flat structure as the baseline.
+    out = {k: dict(v) for k, v in base.items()}
+
+    all_resource_keys = set(base.keys())
+    for year_mods in year_map.values():
+        if isinstance(year_mods, dict):
+            all_resource_keys.update(year_mods.keys())
+
+    for resource_key in sorted(all_resource_keys):
+        base_entry = base.get(resource_key, {})
+
+        if resource_key not in out:
+            identity_source = None
+            for _, year_mods in sorted(year_map.items()):
+                if isinstance(year_mods, dict) and resource_key in year_mods:
+                    identity_source = year_mods[resource_key]
+                    break
+            if isinstance(identity_source, dict):
+                out[resource_key] = {
+                    "technology": identity_source.get("technology"),
+                    "tech_detail": identity_source.get("tech_detail"),
+                }
+            else:
+                continue
+
+        all_fields = set(base_entry.keys())
+        for year_mods in year_map.values():
+            if (
+                isinstance(year_mods, dict)
+                and resource_key in year_mods
+                and isinstance(year_mods[resource_key], dict)
+            ):
+                all_fields.update(year_mods[resource_key].keys())
+
+        all_fields.discard("technology")
+        all_fields.discard("tech_detail")
+
+        for field in sorted(all_fields):
+            base_has_field = field in base_entry
+            base_val = base_entry.get(field)
+
+            values_by_year = {}
+            for year, year_mods in sorted(year_map.items()):
+                entry = (
+                    year_mods.get(resource_key, {})
+                    if isinstance(year_mods, dict)
+                    else {}
+                )
+                if isinstance(entry, dict) and field in entry:
+                    values_by_year[year] = entry[field]
+                else:
+                    values_by_year[year] = base_val if base_has_field else None
+
+            if base_has_field:
+                differs = any(v != base_val for v in values_by_year.values())
+            else:
+                differs = any(v is not None for v in values_by_year.values())
+
+            if not differs:
+                if base_has_field:
+                    out[resource_key][field] = base_val
+                continue
+
+            nested = {}
+            if base_has_field:
+                nested["default"] = base_val
+            else:
+                sample = next(
+                    (v for v in values_by_year.values() if v is not None), None
+                )
+                if sample is not None:
+                    nested["default"] = _neutral_year_keyed_modifier_value(sample)
+
+            for year, year_val in values_by_year.items():
+                if year_val is None:
+                    continue
+                if (not base_has_field) or (year_val != base_val):
+                    nested[year] = year_val
+
+            if nested:
+                out[resource_key][field] = nested
+
+    return out
 
 
 def generate_fuels_settings():

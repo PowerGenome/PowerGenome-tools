@@ -713,6 +713,10 @@ All "All (default)" new resources generate entries in `resource_modifiers` withi
 **Year-Specific Resources (year-keyed in resources.yml)**:
 If you tag any resources to specific planning years (see [Planning Year Tagging](#planning-year-tagging)), the Export step embeds year-keyed values directly in `resources.yml` using PowerGenome's native year-keyed settings format.
 
+For `resource_modifiers`, the top-level structure remains keyed by resource name. When a modifier field differs by year, the year keys are nested under that field (not at the top level of `resource_modifiers`).
+
+If a modifier field only has year-specific values and no base/default value, the export includes a neutral default (for example, `[mul, 1]`) so the field is valid in non-explicit years.
+
 For each planning year, the generated settings include:
 
 * All "All (default)" entries under the `default` key (base configuration)
@@ -726,7 +730,7 @@ The web app supports two ways to define new resources:
 
 | Feature | Purpose | When to Use | Output Sections |
 |---------|---------|-------------|-----------------|
-| **Standard New Resources** | Use ATB technologies with optional attribute adjustments | Most cases—when ATB covers your needs and you just want to tune parameters or accept defaults | `resource_modifiers` in resources.yml (year-keyed when year-specific resources exist) |
+| **Standard New Resources** | Use ATB technologies with optional attribute adjustments | Most cases—when ATB covers your needs and you just want to tune parameters or accept defaults | `resource_modifiers` in resources.yml (resource-keyed; year keys nested only on changed fields) |
 | **Modified New Resources** | Create entirely new resource types with custom fuels | Only when you need completely new technologies, custom fuel types (hydrogen, ammonia), or entirely different resource definitions | `modified_new_resources` (and related updates to `fuels.yml` and `resource_tags.yml`) |
 
 **Use Standard Resources when:**
@@ -1044,22 +1048,22 @@ new_resources:
     - [UtilityPV, Class1, Moderate, 100]  # 2030-specific addition
 
 resource_modifiers:
-  default:
-    naturalgas_cc:
-      technology: NaturalGas
-      tech_detail: CC
-  2030:
-    naturalgas_cc:
-      technology: NaturalGas
-      tech_detail: CC
-    utilitypv_class1:
-      technology: UtilityPV
-      tech_detail: Class1
+  naturalgas_cc:
+    technology: NaturalGas
+    tech_detail: CC
+  utilitypv_class1:
+    technology: UtilityPV
+    tech_detail: Class1
+    capex_mw:
+      default: [mul, 1]
+      2030: [mul, 0.9]
 ```
 
 * Resources tagged "All (default)" form the `default` list in `resources.yml`.
 * For each year that has year-specific resources, the year key contains the full "all" list **plus** year-specific additions.
 * PowerGenome resolves one value per planning year: years with an explicit key use that value; other years fall back to `default`.
+* In `resource_modifiers`, resource keys stay at the top level; only changed fields become year-keyed.
+* If a field is only specified for particular years, a neutral `default` value is included (for example, `[mul, 1]`).
 
 The app intentionally **does not generate** these files (configure separately):
 

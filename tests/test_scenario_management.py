@@ -672,8 +672,13 @@ class TestGenerateResourcesSettingsYearKeyed:
         assert 2030 in new_res
         assert 2040 in new_res
 
-    def test_year_specific_resource_modifiers_are_keyed(self, cluster_app):
-        """When year-specific resources exist, resource_modifiers is a dict with 'default' key."""
+    def test_year_specific_resource_modifiers_use_field_level_nesting(
+        self, cluster_app
+    ):
+        """When year-specific resources exist, resource_modifiers remains flat at top level.
+
+        Year-keying is nested per field when values differ by year.
+        """
         cluster_app.state.new_resources = [
             _make_resource(
                 tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
@@ -691,30 +696,37 @@ class TestGenerateResourcesSettingsYearKeyed:
         resource_mods = parsed.get("resource_modifiers")
         assert resource_mods is not None
         assert isinstance(resource_mods, dict)
-        assert "default" in resource_mods
+        assert "default" not in resource_mods
+        assert 2030 not in resource_mods
 
-    def test_year_specific_in_resource_modifiers(self, cluster_app):
-        """Year-specific resources appear under their year key in resource_modifiers."""
+    def test_year_specific_capex_modifier_nests_year_keys_at_field_level(
+        self, cluster_app
+    ):
+        """A year-only capex modifier gets a neutral default before year overrides."""
         cluster_app.state.new_resources = [
             _make_resource(
                 tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
             ),
-            _make_resource(
-                tech="UtilityPV", detail="Class1", case="Moderate", size=100, year=2030
-            ),
         ]
-        cluster_app.state.modified_new_resources = {}
+        cluster_app.state.modified_new_resources = {
+            "ng_cc_2030": _make_modified(
+                "ng_cc_2030",
+                year=2030,
+                attr_modifiers={"capex_mw": ["mul", 1.5]},
+            ),
+        }
         _setup_dom_for_resources_settings(cluster_app)
 
         result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
 
         resource_mods = parsed["resource_modifiers"]
-        # The 2030 year key should have an entry for UtilityPV (in addition to base)
-        assert 2030 in resource_mods
-        year_mods = resource_mods[2030]
-        techs_in_year = [v.get("technology") for v in year_mods.values()]
-        assert "UtilityPV" in techs_in_year
+        assert "default" not in resource_mods
+        assert 2030 not in resource_mods
+        assert resource_mods["ng_cc_2030"]["capex_mw"] == {
+            "default": ["mul", 1],
+            2030: ["mul", 1.5],
+        }
 
     def test_year_specific_identity_change_without_base_omits_default_modified_new_resources(
         self, cluster_app
@@ -1043,8 +1055,12 @@ class TestIntegrationFullFlow:
         # resource_modifiers should be year-keyed (2030 has attr_mod)
         resource_mods = parsed.get("resource_modifiers", {})
         assert isinstance(resource_mods, dict)
-        assert "default" in resource_mods
-        assert 2030 in resource_mods
+        assert "default" not in resource_mods
+        assert 2030 not in resource_mods
+        assert resource_mods["attr_mod"]["Heat_Rate_MMBTU_per_MWh"] == {
+            "default": ["mul", 1],
+            2030: 6.5,
+        }
 
         # modified_new_resources should be year-keyed (2040 has id_change)
         mod_new_res = parsed.get("modified_new_resources", {})
@@ -1133,7 +1149,7 @@ class TestResourcesYmlFiltering:
         assert ["UtilityPV", "Class1", "Moderate", 100] in year_list
 
     def test_year_specific_modified_excluded_from_resources_yml(self, cluster_app):
-        """In resource_modifiers, 'default' has only 'all'-year mods; year keys have year-specific mods."""
+        """In resource_modifiers, year differences are nested per field, not top-level keys."""
         cluster_app.state.new_resources = [
             _make_resource(
                 tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
@@ -1167,17 +1183,19 @@ class TestResourcesYmlFiltering:
         parsed = yaml.safe_load(result)
 
         resource_mods = parsed.get("resource_modifiers", {})
-        # resource_modifiers is year-keyed
+        # resource_modifiers uses flat top-level keys; year differences are field-level
         assert isinstance(resource_mods, dict)
-        assert "default" in resource_mods
+        assert "default" not in resource_mods
+        assert 2030 not in resource_mods
 
-        # base_mod (year="all") should be in the 'default' key
-        assert "base_mod" in resource_mods["default"]
+        # base_mod (year="all") remains flat
+        assert resource_mods["base_mod"]["Heat_Rate_MMBTU_per_MWh"] == 6.5
 
-        # yr_mod (year=2030) should be in the 2030 key, not in 'default'
-        assert "yr_mod" not in resource_mods["default"]
-        assert 2030 in resource_mods
-        assert "yr_mod" in resource_mods[2030]
+        # yr_mod (year=2030) nests year values at the field level
+        assert resource_mods["yr_mod"]["Heat_Rate_MMBTU_per_MWh"] == {
+            "default": ["mul", 1],
+            2030: 7.0,
+        }
 
 
 class TestBuildSettingsYamlsIntegration:
