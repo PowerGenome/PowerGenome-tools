@@ -7110,13 +7110,23 @@ def generate_resources_settings():
     ]
 
     if has_year_specific:
-        # Build year-keyed new_resources: default → base list, each year → base + year-specific
+        # Build year-specific values and only emit a keyed structure when values
+        # actually differ by year.
         specific_years = _get_year_specific_years()
-        new_resources = {"default": base_new_resources}
-        for year in specific_years:
-            year_list = _build_new_resources_for_year(year)
-            if year_list != base_new_resources:
-                new_resources[year] = year_list
+        year_new_resources = {
+            year: _build_new_resources_for_year(year) for year in specific_years
+        }
+        differs_by_year = any(
+            year_list != base_new_resources for year_list in year_new_resources.values()
+        )
+
+        if differs_by_year:
+            new_resources = {"default": base_new_resources}
+            for year, year_list in year_new_resources.items():
+                if year_list != base_new_resources:
+                    new_resources[year] = year_list
+        else:
+            new_resources = base_new_resources
     else:
         new_resources = base_new_resources
 
@@ -7226,13 +7236,24 @@ def generate_resources_settings():
             base_resource_modifiers[k] = modifier_dict
 
     if has_year_specific:
-        # Build year-keyed resource_modifiers: default → base, each year → base + year-specific
+        # Build year-specific values and only emit a keyed structure when values
+        # actually differ by year.
         specific_years = _get_year_specific_years()
-        resource_modifiers = {"default": base_resource_modifiers}
-        for year in specific_years:
-            year_mods = _build_resource_modifiers_for_year(year)
-            if year_mods != base_resource_modifiers:
-                resource_modifiers[year] = year_mods
+        year_resource_modifiers = {
+            year: _build_resource_modifiers_for_year(year) for year in specific_years
+        }
+        differs_by_year = any(
+            year_mods != base_resource_modifiers
+            for year_mods in year_resource_modifiers.values()
+        )
+
+        if differs_by_year:
+            resource_modifiers = {"default": base_resource_modifiers}
+            for year, year_mods in year_resource_modifiers.items():
+                if year_mods != base_resource_modifiers:
+                    resource_modifiers[year] = year_mods
+        else:
+            resource_modifiers = base_resource_modifiers
     else:
         resource_modifiers = base_resource_modifiers
 
@@ -7268,24 +7289,31 @@ def generate_resources_settings():
                 base_modified_with_fuel[k] = entry
 
     if has_year_specific:
-        # Build year-keyed modified_new_resources.
-        # Only seed the default key when there are base entries; if a year override is
-        # found later and there is no default key yet, we lazily insert an empty {} so
-        # that PowerGenome's fallback for other years is an empty mapping rather than
-        # the year-specific value.  This avoids emitting `modified_new_resources: {default: {}}`
-        # when there are no modified resources at all.
+        # Build year-specific values and only emit `default` when values differ by
+        # year relative to base entries.
         specific_years = _get_year_specific_years()
-        modified_new_resources_keyed = (
-            {"default": base_modified_with_fuel} if base_modified_with_fuel else {}
+        year_modified_new_resources = {
+            year: year_modified
+            for year in specific_years
+            for year_modified in [_build_modified_new_resources_for_year(year)]
+            if year_modified is not None
+        }
+        differs_by_year = any(
+            year_modified != base_modified_with_fuel
+            for year_modified in year_modified_new_resources.values()
         )
-        for year in specific_years:
-            year_modified = _build_modified_new_resources_for_year(year)
-            if year_modified is not None and year_modified != base_modified_with_fuel:
-                if "default" not in modified_new_resources_keyed:
-                    modified_new_resources_keyed["default"] = {}
-                modified_new_resources_keyed[year] = year_modified
-        if modified_new_resources_keyed:
-            out["modified_new_resources"] = modified_new_resources_keyed
+
+        if differs_by_year:
+            modified_new_resources_keyed = {}
+            if base_modified_with_fuel:
+                modified_new_resources_keyed["default"] = base_modified_with_fuel
+            for year, year_modified in year_modified_new_resources.items():
+                if year_modified != base_modified_with_fuel:
+                    modified_new_resources_keyed[year] = year_modified
+            if modified_new_resources_keyed:
+                out["modified_new_resources"] = modified_new_resources_keyed
+        elif base_modified_with_fuel:
+            out["modified_new_resources"] = base_modified_with_fuel
     else:
         if base_modified_with_fuel:
             out["modified_new_resources"] = base_modified_with_fuel
@@ -7456,8 +7484,6 @@ def _build_modified_new_resources_for_year(year):
         result[k] = entry
 
     return result if result else None
-
-
 
 
 def generate_fuels_settings():

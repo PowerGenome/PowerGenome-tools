@@ -580,7 +580,9 @@ class TestGenerateResourcesSettingsYearKeyed:
         parsed = yaml.safe_load(result)
 
         new_res = parsed["new_resources"]
-        assert isinstance(new_res, list), "new_resources should be a flat list when no year-specific resources"
+        assert isinstance(
+            new_res, list
+        ), "new_resources should be a flat list when no year-specific resources"
 
     def test_year_specific_produces_keyed_new_resources(self, cluster_app):
         """When a resource is tagged 2030, new_resources is a dict with default and 2030 keys."""
@@ -599,7 +601,9 @@ class TestGenerateResourcesSettingsYearKeyed:
         parsed = yaml.safe_load(result)
 
         new_res = parsed["new_resources"]
-        assert isinstance(new_res, dict), "new_resources should be a dict when year-specific resources exist"
+        assert isinstance(
+            new_res, dict
+        ), "new_resources should be a dict when year-specific resources exist"
         assert "default" in new_res
         assert 2030 in new_res
 
@@ -711,6 +715,62 @@ class TestGenerateResourcesSettingsYearKeyed:
         year_mods = resource_mods[2030]
         techs_in_year = [v.get("technology") for v in year_mods.values()]
         assert "UtilityPV" in techs_in_year
+
+    def test_year_specific_identity_change_without_base_omits_default_modified_new_resources(
+        self, cluster_app
+    ):
+        """If modified_new_resources only has year-specific identity/fuel entries,
+        include year keys but do not emit a default key."""
+        cluster_app.state.new_resources = [
+            _make_resource(
+                tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
+            ),
+        ]
+        cluster_app.state.modified_new_resources = {
+            "id_change_2030": _make_modified(
+                "id_change_2030",
+                year=2030,
+                new_tech="CustomGas2030",
+            ),
+        }
+        _setup_dom_for_resources_settings(cluster_app)
+
+        result = cluster_app.generate_resources_settings()
+        parsed = yaml.safe_load(result)
+
+        mod_new_res = parsed.get("modified_new_resources")
+        assert isinstance(mod_new_res, dict)
+        assert 2030 in mod_new_res
+        assert "default" not in mod_new_res
+
+    def test_only_modified_year_specific_keeps_new_resources_and_resource_modifiers_flat(
+        self, cluster_app
+    ):
+        """If year-specific entries exist only in modified_new_resources identity/fuel changes,
+        new_resources and resource_modifiers remain flat (no default/year keys)."""
+        cluster_app.state.new_resources = [
+            _make_resource(
+                tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
+            ),
+        ]
+        cluster_app.state.modified_new_resources = {
+            "id_change_2040": _make_modified(
+                "id_change_2040",
+                year=2040,
+                new_tech="CustomGas2040",
+            ),
+        }
+        _setup_dom_for_resources_settings(cluster_app)
+
+        result = cluster_app.generate_resources_settings()
+        parsed = yaml.safe_load(result)
+
+        assert isinstance(parsed["new_resources"], list)
+
+        resource_mods = parsed.get("resource_modifiers")
+        assert isinstance(resource_mods, dict)
+        assert "default" not in resource_mods
+        assert 2040 not in resource_mods
 
 
 # ============================================================================
@@ -1018,7 +1078,9 @@ class TestIntegrationFullFlow:
         parsed = yaml.safe_load(result)
 
         new_res = parsed["new_resources"]
-        assert isinstance(new_res, list), "Expected flat list when no year-specific resources"
+        assert isinstance(
+            new_res, list
+        ), "Expected flat list when no year-specific resources"
 
 
 class TestResourcesYmlFiltering:
