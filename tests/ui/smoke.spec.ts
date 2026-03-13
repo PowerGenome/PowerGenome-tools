@@ -11,7 +11,7 @@ test.describe('Smoke Tests', () => {
         // Check that the main navigation is present
         await expect(page.locator('.nav-steps')).toBeVisible();
 
-        // Verify Step 1 (Regions) is initially active
+        // Verify Step 1 (Model Setup) is initially active
         await expect(page.locator('#step-1')).toHaveClass(/active/);
     });
 
@@ -20,13 +20,16 @@ test.describe('Smoke Tests', () => {
         await goToWizardStep(page, 2);
         await expect(page.locator('#step-1')).not.toHaveClass(/active/);
 
-        // Verify Step 2 content is visible
-        await expect(page.locator('#step-2 h2')).toContainText('Model Setup');
+        // Verify Step 2 (Regions) content is visible — map container is Regions-specific
+        await expect(page.locator('#step-2')).toHaveClass(/active/);
+        await expect(page.locator('#step1-map-container')).toBeVisible();
+        await expect(page.locator('#map')).toBeVisible();
     });
 
     test('planning period editor initializes', async ({ page }) => {
         await loadApp(page, 30000);
-        await goToWizardStep(page, 2);
+        // Planning period editor is on step 1 (Model Setup)
+        await goToWizardStep(page, 1);
 
         // Verify planning period editor components are present
         await expect(page.locator('#planningPeriodEditor')).toBeVisible();

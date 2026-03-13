@@ -703,8 +703,18 @@ async def init_map():
         ),
     ).addTo(state.map)
 
-    # Fit bounds
-    state.map.fitBounds(state.geojson_layer.getBounds())
+    # Fit bounds (may not work correctly if map container is hidden on first load)
+    try:
+        state.map.fitBounds(state.geojson_layer.getBounds())
+    except Exception:
+        pass
+
+    # Expose GeoJSON layer on window so the JS goToStep handler can re-fit bounds
+    # when the Regions tab is first shown (in case container was hidden on init)
+    try:
+        window.appMapGeojsonLayer = state.geojson_layer
+    except Exception:
+        pass
 
     # Update total count
     total_el = document.getElementById("totalCount")
@@ -7956,6 +7966,29 @@ def generate_emission_policies_settings():
     return state.emission_policies_df.to_csv(index=False)
 
 
+def generate_esr_state_settings():
+    """Serialize ESR state (tech lists, maps) to YAML for ZIP round-tripping.
+
+    Returns None when no ESR analysis has been run.
+    """
+    esr_rps = getattr(state, "esr_rps_techs", None)
+    esr_ces = getattr(state, "esr_ces_techs", None)
+    if not (esr_rps or esr_ces or state.esr_map):
+        return None
+
+    data = {
+        "esr_rps_techs": sorted(esr_rps) if esr_rps else [],
+        "esr_ces_techs": sorted(esr_ces) if esr_ces else [],
+        "esr_map": {k: list(v) for k, v in (state.esr_map or {}).items()},
+        "esr_type_map": dict(state.esr_type_map or {}),
+        "esr_policy_states": {
+            k: sorted(v) for k, v in (state.esr_policy_states or {}).items()
+        },
+        "esr_zones": [sorted(z) for z in (state.esr_zones or [])],
+    }
+    return yaml.dump(data, default_flow_style=False, sort_keys=False)
+
+
 def generate_model_definition_settings():
     region_aggs = _get_region_aggregations_or_raise()
     model_regions = sorted(region_aggs.keys())
@@ -8006,6 +8039,11 @@ def build_settings_yamls():
         "resource_tags.yml": generate_resource_tags_settings(),
         "startup_costs.yml": generate_startup_costs_settings(),
     }
+
+    # Conditionally add ESR state when ESR analysis has been run
+    esr_state_yml = generate_esr_state_settings()
+    if esr_state_yml is not None:
+        result["esr_state.yml"] = esr_state_yml
 
     # Conditionally add scenario management files when per-year overrides exist
     scenario_mgmt = generate_scenario_management_settings()
@@ -8484,6 +8522,311 @@ def on_download_all_settings(event):
     set_status(f"Downloaded {zip_name}", "success")
 
 
+def _set_model_setup_status(message, status_type="info"):
+    """Update the Model Setup step status box."""
+    el = document.getElementById("modelSetupStatus")
+    if el:
+        el.textContent = message
+        el.className = f"status {status_type}"
+        el.style.display = "block"
+
+
+async def _load_settings_zip(event):
+    """Read a user-uploaded settings ZIP and restore configuration.
+
+    Extracts YAML and CSV files from the ZIP, stores them in state, and
+    pre-populates UI fields from model_definition.yml when present.
+    """
+    files = event.target.files
+    if not files or files.length == 0:
+        return
+
+    file_obj = files.item(0)
+    filename = file_obj.name
+
+    _set_model_setup_status(f"Loading {filename}…", "info")
+
+    try:
+        array_buffer = await file_obj.arrayBuffer()
+        data = bytes(Uint8Array.new(array_buffer).to_py())
+
+        with zipfile.ZipFile(BytesIO(data), "r") as zf:
+            names = zf.namelist()
+            settings_yamls = {}
+            emission_df = None
+
+            for name in names:
+                # Use only the basename to prevent any path-traversal confusion
+                basename = name.replace("\\", "/").split("/")[-1]
+                if not basename or ".." in basename:
+                    continue
+                content_bytes = zf.read(name)
+                lower = basename.lower()
+                if lower == "emission_policies.csv":
+                    try:
+                        emission_df = pd.read_csv(BytesIO(content_bytes))
+                    except Exception as csv_exc:
+                        _set_model_setup_status(
+                            f"Warning: could not parse emission_policies.csv: {csv_exc}",
+                            "error",
+                        )
+                elif lower.endswith((".yml", ".yaml", ".csv")):
+                    settings_yamls[basename] = content_bytes.decode("utf-8")
+
+        state.settings_yamls = settings_yamls
+        if emission_df is not None:
+            state.emission_policies_df = emission_df
+
+        loaded_fields = []
+
+        # ── resources.yml ──────────────────────────────────────────────────
+        if "resources.yml" in settings_yamls:
+            try:
+                # yaml.safe_load handles YAML comments natively
+                resources_def = yaml.safe_load(settings_yamls["resources.yml"])
+            except Exception:
+                resources_def = None
+
+            if isinstance(resources_def, dict):
+                # Restore new_resources list
+                raw_new = resources_def.get("new_resources", [])
+                if isinstance(raw_new, list) and raw_new:
+                    state.new_resources = []
+                    for item in raw_new:
+                        if isinstance(item, list) and len(item) >= 4:
+                            state.new_resources.append(
+                                {
+                                    "technology": str(item[0]),
+                                    "tech_detail": str(item[1]),
+                                    "cost_case": str(item[2]),
+                                    "size_mw": item[3],
+                                    "planning_year": "all",
+                                }
+                            )
+                    try:
+                        render_new_resources_list()
+                    except Exception:
+                        pass
+                    loaded_fields.append("New Resources")
+
+                # Restore renewables_clusters
+                raw_renewables = resources_def.get("renewables_clusters")
+                if isinstance(raw_renewables, list) and raw_renewables:
+                    state.renewables_clusters = raw_renewables
+                    loaded_fields.append("Renewables Clusters")
+
+                # Restore plant cluster settings from resources.yml fields
+                num_clusters = resources_def.get("num_clusters")
+                if isinstance(num_clusters, dict) and num_clusters:
+                    plant_settings = {
+                        "num_clusters": num_clusters,
+                        "group_technologies": bool(
+                            resources_def.get("group_technologies", True)
+                        ),
+                    }
+                    tech_groups = resources_def.get("tech_groups")
+                    if isinstance(tech_groups, dict):
+                        plant_settings["tech_groups"] = tech_groups
+                    alt_num = resources_def.get("alt_num_clusters")
+                    if isinstance(alt_num, dict):
+                        plant_settings["alt_num_clusters"] = alt_num
+                    state.plant_cluster_settings = plant_settings
+                    # Show the loaded cluster settings in the plant YAML output
+                    yaml_el = document.getElementById("plantYamlOut")
+                    if yaml_el:
+                        yaml_el.value = yaml.dump(
+                            plant_settings,
+                            default_flow_style=False,
+                            sort_keys=False,
+                        )
+                    loaded_fields.append("Plant Clusters")
+
+                # Restore interconnect_capex_mw
+                interconnect = resources_def.get("interconnect_capex_mw")
+                if interconnect is not None:
+                    el = document.getElementById("interconnectCapexMw")
+                    if el:
+                        el.value = str(interconnect)
+
+        # ── fuels.yml ──────────────────────────────────────────────────────
+        if "fuels.yml" in settings_yamls:
+            try:
+                fuels_def = yaml.safe_load(settings_yamls["fuels.yml"])
+            except Exception:
+                fuels_def = None
+
+            if isinstance(fuels_def, dict):
+                # Restore fuel_data_year
+                fuel_year = fuels_def.get("fuel_data_year")
+                if fuel_year is not None:
+                    el = document.getElementById("fuelDataYear")
+                    if el:
+                        el.value = str(int(fuel_year))
+
+                # Restore fuel scenario selections
+                fuel_scenarios = fuels_def.get("fuel_scenarios", {})
+                if isinstance(fuel_scenarios, dict):
+                    fuel_map = {
+                        "coal": "fuelScenarioCoal",
+                        "naturalgas": "fuelScenarioNaturalGas",
+                        "distillate": "fuelScenarioDistillate",
+                        "uranium": "fuelScenarioUranium",
+                    }
+                    for fuel_key, el_id in fuel_map.items():
+                        scenario = fuel_scenarios.get(fuel_key)
+                        if scenario is not None:
+                            el = document.getElementById(el_id)
+                            if el:
+                                # Try to set the selected option; fall back to
+                                # populating a single option if not yet populated
+                                existing_value = _get_select_value(el, None)
+                                if existing_value is not None:
+                                    el.value = str(scenario)
+                                else:
+                                    _set_select_options_simple(
+                                        el,
+                                        [str(scenario)],
+                                        selected_value=str(scenario),
+                                    )
+                loaded_fields.append("Fuels")
+
+        # ── esr_state.yml ───────────────────────────────────────────────────
+        if "esr_state.yml" in settings_yamls:
+            try:
+                esr_def = yaml.safe_load(settings_yamls["esr_state.yml"])
+            except Exception:
+                esr_def = None
+
+            if isinstance(esr_def, dict):
+                raw_rps = esr_def.get("esr_rps_techs", [])
+                raw_ces = esr_def.get("esr_ces_techs", [])
+                state.esr_rps_techs = set(raw_rps) if raw_rps else set()
+                state.esr_ces_techs = set(raw_ces) if raw_ces else set()
+
+                raw_map = esr_def.get("esr_map", {})
+                state.esr_map = (
+                    {k: list(v) for k, v in raw_map.items()}
+                    if isinstance(raw_map, dict)
+                    else None
+                )
+
+                raw_type = esr_def.get("esr_type_map", {})
+                state.esr_type_map = (
+                    dict(raw_type) if isinstance(raw_type, dict) else None
+                )
+
+                raw_ps = esr_def.get("esr_policy_states", {})
+                state.esr_policy_states = (
+                    {k: set(v) for k, v in raw_ps.items()}
+                    if isinstance(raw_ps, dict)
+                    else None
+                )
+
+                raw_zones = esr_def.get("esr_zones", [])
+                state.esr_zones = (
+                    [set(z) for z in raw_zones] if isinstance(raw_zones, list) else None
+                )
+
+        # ── emission_policies.csv already in state.emission_policies_df ────
+        # Render ESR results UI to show the loaded CSV preview
+        if state.emission_policies_df is not None or getattr(
+            state, "esr_rps_techs", None
+        ):
+            try:
+                render_esr_results()
+            except Exception:
+                pass
+            loaded_fields.append("ESR Policies")
+
+        # ── model_definition.yml ───────────────────────────────────────────
+        if "model_definition.yml" in settings_yamls:
+            try:
+                model_def = yaml.safe_load(settings_yamls["model_definition.yml"])
+            except yaml.YAMLError as yaml_exc:
+                raise ValueError(
+                    f"Could not parse model_definition.yml: {yaml_exc}"
+                ) from yaml_exc
+
+            if not isinstance(model_def, dict):
+                raise ValueError("model_definition.yml must contain a YAML mapping.")
+
+            if "target_usd_year" in model_def:
+                el = document.getElementById("targetUsdYear")
+                if el:
+                    el.value = str(model_def["target_usd_year"])
+                    loaded_fields.append("Target USD Year")
+
+            if "utc_offset" in model_def:
+                el = document.getElementById("utcOffset")
+                if el:
+                    el.value = str(model_def["utc_offset"])
+                    loaded_fields.append("UTC Offset")
+
+            model_years = model_def.get("model_year", [])
+            planning_years = model_def.get("model_first_planning_year", [])
+            if (
+                isinstance(model_years, list)
+                and isinstance(planning_years, list)
+                and model_years
+                and planning_years
+                and len(model_years) == len(planning_years)
+            ):
+                window.loadPlanningPeriodsFromData(
+                    to_js(list(map(str, planning_years))),
+                    to_js(list(map(str, model_years))),
+                )
+                loaded_fields.append("Planning Periods")
+
+            region_aggs = model_def.get("region_aggregations", {})
+            if isinstance(region_aggs, dict) and region_aggs:
+                # Validate that values are lists before processing
+                if all(isinstance(v, list) for v in region_aggs.values()):
+                    state.region_aggregations = region_aggs
+                    # Select all BAs before coloring the map — update_map_cluster_colors
+                    # only styles layers that are already in state.selected_bas.
+                    all_ba_ids = {ba for bas in region_aggs.values() for ba in bas}
+                    state.selected_bas = all_ba_ids & set(state.all_bas)
+                    update_map_cluster_colors(region_aggs)
+                    update_selected_display()
+                    update_transmission_lines()
+                    update_tooltips()
+                    # Show the loaded YAML in the regions tab output
+                    yaml_el = document.getElementById("yamlOut")
+                    if yaml_el:
+                        region_list = sorted(region_aggs.keys())
+                        yaml_el.value = yaml.dump(
+                            {
+                                "model_regions": region_list,
+                                "region_aggregations": region_aggs,
+                            },
+                            default_flow_style=False,
+                            sort_keys=False,
+                        )
+                    # Refresh the plant cluster budget now that regions are known
+                    update_default_cluster_budget()
+                    loaded_fields.append("Regions")
+
+        file_count = len(settings_yamls) + (1 if emission_df is not None else 0)
+        field_summary = (
+            f" ({', '.join(loaded_fields)} pre-populated)" if loaded_fields else ""
+        )
+        _set_model_setup_status(
+            f"Loaded {file_count} file(s) from {filename}{field_summary}.",
+            "success",
+        )
+
+    except Exception as exc:
+        _set_model_setup_status(f"Error loading {filename}: {exc}", "error")
+
+    finally:
+        # Reset the file input so the same file can be re-uploaded if needed
+        event.target.value = ""
+
+
+def on_upload_settings_zip(event):
+    asyncio.create_task(_load_settings_zip(event))
+
+
 _LCOE_REQUIRED_COLUMNS = {"region", "cpa_mw", "cf", "lcoe"}
 _LCOE_TECH_LABELS = {"onshorewind": "Wind", "solar": "Solar"}
 
@@ -8942,6 +9285,11 @@ async def main():
         # Model Setup - planning years change
         document.getElementById("modelYears").addEventListener(
             "input", create_proxy(on_model_years_change)
+        )
+
+        # Model Setup - settings ZIP upload
+        document.getElementById("loadSettingsZipInput").addEventListener(
+            "change", create_proxy(on_upload_settings_zip)
         )
 
         # Settings tab

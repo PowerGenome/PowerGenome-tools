@@ -13,10 +13,10 @@ export class ModelSetupTab {
     }
 
     /**
-     * Navigate to Step 2 on an already-booted app page.
+     * Navigate to Step 1 (Model Setup) on an already-booted app page.
      */
     async goto() {
-        await goToWizardStep(this.page, 2);
+        await goToWizardStep(this.page, 1);
 
         // Wait for planning period editor
         await this.page.waitForSelector('#planningPeriodRows .planning-period-row', {
