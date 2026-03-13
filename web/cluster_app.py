@@ -7974,12 +7974,16 @@ def generate_model_definition_settings():
     if not model_years or not planning_years or len(model_years) != len(planning_years):
         raise Exception("Model years and first planning years must be the same length.")
 
+    model_periods = [
+        [period_start, planning_year]
+        for period_start, planning_year in zip(planning_years, model_years)
+    ]
+
     out = {
         "model_regions": model_regions,
         "region_aggregations": region_aggs,
         "target_usd_year": target_usd_year,
-        "model_year": model_years,
-        "model_first_planning_year": planning_years,
+        "model_periods": model_periods,
         "utc_offset": utc_offset,
         "generator_columns": DEFAULT_GENERATOR_COLUMNS,
     }

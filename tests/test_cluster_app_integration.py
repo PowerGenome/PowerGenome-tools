@@ -346,8 +346,9 @@ def test_generate_model_definition_settings(app):
 
     assert data["target_usd_year"] == 2020
     assert data["utc_offset"] == -5
-    assert data["model_year"] == [2030, 2040]
-    assert data["model_first_planning_year"] == [2025, 2035]
+    assert data["model_periods"] == [[2025, 2030], [2035, 2040]]
+    assert "model_year" not in data
+    assert "model_first_planning_year" not in data
     assert "Region1" in data["model_regions"]
     assert "Region2" in data["model_regions"]
     assert data["region_aggregations"]["Region1"] == ["A", "B"]

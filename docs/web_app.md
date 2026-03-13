@@ -468,8 +468,8 @@ The UTC offset is used primarily for visualization and debugging:
 
 Planning periods define the time windows your model will optimize. Each period has:
 
-* **Period Start** - The start of the investment period in the Step 2 editor (exported as `model_first_planning_year`)
-* **Planning Year** - The end of the period in the Step 2 editor (exported as `model_year`)
+* **Period Start** - The start of the investment period in the Step 2 editor
+* **Planning Year** - The end of the period in the Step 2 editor
 
 For example, with Period Start = 2025 and Planning Year = 2030, you're modeling the 2025-2030 period.
 
@@ -489,7 +489,7 @@ How PowerGenome uses these:
 Multiple planning periods (e.g., 2030, 2035, 2040) allow the model to make sequential decisions, building infrastructure over time rather than all at once.
 
 !!! note
-    Each planning period row must include both a Period Start and a Planning Year. Internally, the app still exports equal-length `model_year` and `model_first_planning_year` lists for PowerGenome.
+    Each planning period row must include both a Period Start and a Planning Year. The app exports these as a `model_periods` list of `[period_start, planning_year]` pairs for PowerGenome.
 
 ## Step 3: Existing Plants
 
