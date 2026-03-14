@@ -1,0 +1,11 @@
+{
+    "hooks": {
+        "PostToolUse": [
+            {
+                "type": "command",
+                "command": "bash ./scripts/hooks/run-black-modified-python.sh",
+                "timeout": 60
+            }
+        ]
+    }
+}
