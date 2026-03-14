@@ -7101,6 +7101,9 @@ def generate_resources_settings():
 
     # Check if any resources are tagged to a specific planning year
     has_year_specific = _has_year_specific_resources()
+    # Compute once here; reused for new_resources, resource_modifiers, and
+    # modified_new_resources below to avoid three separate iterations.
+    specific_years = _get_year_specific_years() if has_year_specific else []
 
     # Base new-build resources — only "all" year entries
     base_new_resources = [
@@ -7112,7 +7115,6 @@ def generate_resources_settings():
     if has_year_specific:
         # Build year-specific values and only emit a keyed structure when values
         # actually differ by year.
-        specific_years = _get_year_specific_years()
         year_new_resources = {
             year: _build_new_resources_for_year(year) for year in specific_years
         }
@@ -7238,7 +7240,6 @@ def generate_resources_settings():
     if has_year_specific:
         # Build year-specific effective values, then nest year keys per-field
         # to avoid repeating every resource entry under top-level year keys.
-        specific_years = _get_year_specific_years()
         year_resource_modifiers = {
             year: (_build_resource_modifiers_for_year(year) or {})
             for year in specific_years
@@ -7284,7 +7285,6 @@ def generate_resources_settings():
     if has_year_specific:
         # Build year-specific values and only emit `default` when values differ by
         # year relative to base entries.
-        specific_years = _get_year_specific_years()
         year_modified_new_resources = {
             year: year_modified
             for year in specific_years
