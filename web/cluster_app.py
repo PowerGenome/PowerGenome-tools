@@ -893,11 +893,14 @@ def update_tooltips():
 
 
 def update_no_cluster_options():
-    """Update the no-cluster checkbox options based on grouping column."""
+    """Update the no-cluster and force-cluster checkbox options based on grouping column."""
     grouping_col = document.getElementById("groupingColumn").value
-    container = document.getElementById("noClusterContainer")
+    no_cluster_container = document.getElementById("noClusterContainer")
+    force_cluster_container = document.getElementById("forceClusterContainer")
 
-    if state.hierarchy_df is None or container is None:
+    if state.hierarchy_df is None or (
+        no_cluster_container is None and force_cluster_container is None
+    ):
         return
 
     # Update group colors when grouping changes
@@ -921,7 +924,23 @@ def update_no_cluster_options():
             </label>
         """
 
-    container.innerHTML = html
+    if no_cluster_container is not None:
+        no_cluster_container.innerHTML = html
+
+    # Build force-cluster checkboxes with the same group values
+    force_html = ""
+    for val in unique_values:
+        color = state.group_colors.get(val, "#666666")
+        force_html += f"""
+            <label>
+                <input type="checkbox" name="forceCluster" value="{val}">
+                <span style="display:inline-block;width:12px;height:12px;background:{color};border-radius:2px;margin-right:4px;vertical-align:middle;"></span>
+                {val}
+            </label>
+        """
+
+    if force_cluster_container is not None:
+        force_cluster_container.innerHTML = force_html
 
 
 def run_clustering(
@@ -934,6 +953,7 @@ def run_clustering(
     max_regions=None,
     method="hierarchical-sum",
     esr_compatible=False,
+    force_cluster_groups=None,
 ):
     """
     Run the clustering algorithm.
@@ -943,6 +963,11 @@ def run_clustering(
 
     If esr_compatible=True, BAs are first split by trading zone connectivity
     to ensure all states in a resulting region can trade with each other.
+
+    If force_cluster_groups is provided, all BAs in each listed group are
+    guaranteed to end up in the same single region (the mirror of no_cluster_groups).
+    The merge is applied as a post-processing step after clustering completes,
+    for both fixed-target and auto-optimize paths.
     """
     try:
         info = {}
@@ -1062,6 +1087,35 @@ def run_clustering(
             graph = build_transmission_graph(state.transmission_df, cluster_bas)
             modularity = calculate_modularity(graph, clusters)
             info["modularity"] = modularity
+
+        # Merge clusters for force_cluster_groups: ensure all BAs in a group
+        # end up in the same region (inverse of no_cluster_groups).
+        # This post-processing step runs after both fixed-target and auto-optimize paths.
+        if force_cluster_groups:
+            # Pre-compute a mapping from group value -> set of BAs in cluster_bas
+            group_to_cluster_bas = {}
+            for _, row in hierarchy[hierarchy["ba"].isin(cluster_bas)].iterrows():
+                grp = row[grouping_column]
+                if grp not in group_to_cluster_bas:
+                    group_to_cluster_bas[grp] = set()
+                group_to_cluster_bas[grp].add(row["ba"])
+
+            for group in force_cluster_groups:
+                group_bas = group_to_cluster_bas.get(group, set())
+                if not group_bas:
+                    continue
+                # Find which cluster labels contain any BA from this group
+                labels_with_group = [
+                    label
+                    for label, nodes in clusters.items()
+                    if any(ba in group_bas for ba in nodes)
+                ]
+                if len(labels_with_group) <= 1:
+                    continue  # Already in one cluster
+                # Merge all into the first label
+                first_label = labels_with_group[0]
+                for label in labels_with_group[1:]:
+                    clusters[first_label].update(clusters.pop(label))
 
         # Generate names
         cluster_names = generate_cluster_names(clusters, state.hierarchy_df)
@@ -1597,6 +1651,12 @@ def on_run_clustering(event):
     for cb in checkboxes:
         no_cluster_groups.append(cb.value)
 
+    # Get force-cluster selections
+    force_cluster_groups = []
+    force_checkboxes = document.querySelectorAll('input[name="forceCluster"]:checked')
+    for cb in force_checkboxes:
+        force_cluster_groups.append(cb.value)
+
     # Check if ESR-compatible clustering is enabled
     esr_compat_el = document.getElementById("esrCompatibleClustering")
     esr_compatible = esr_compat_el.checked if esr_compat_el else False
@@ -1612,6 +1672,7 @@ def on_run_clustering(event):
         max_regions=max_regions,
         method=method,
         esr_compatible=esr_compatible,
+        force_cluster_groups=force_cluster_groups,
     )
 
     if error:
