@@ -7099,12 +7099,38 @@ def generate_resources_settings():
     if not isinstance(alt_num_clusters, dict) or not alt_num_clusters:
         alt_num_clusters = None
 
-    # New-build resources from state — only "all" year (base) resources go into resources.yml
-    new_resources = [
+    # Check if any resources are tagged to a specific planning year
+    has_year_specific = _has_year_specific_resources()
+    # Compute once here; reused for new_resources, resource_modifiers, and
+    # modified_new_resources below to avoid three separate iterations.
+    specific_years = _get_year_specific_years() if has_year_specific else []
+
+    # Base new-build resources — only "all" year entries
+    base_new_resources = [
         [r["technology"], r["tech_detail"], r["cost_case"], r["size_mw"]]
         for r in state.new_resources
         if r.get("planning_year") == "all"
     ]
+
+    if has_year_specific:
+        # Build year-specific values and only emit a keyed structure when values
+        # actually differ by year.
+        year_new_resources = {
+            year: _build_new_resources_for_year(year) for year in specific_years
+        }
+        differs_by_year = any(
+            year_list != base_new_resources for year_list in year_new_resources.values()
+        )
+
+        if differs_by_year:
+            new_resources = {"default": base_new_resources}
+            for year, year_list in year_new_resources.items():
+                if year_list != base_new_resources:
+                    new_resources[year] = year_list
+        else:
+            new_resources = base_new_resources
+    else:
+        new_resources = base_new_resources
 
     # Hydro defaults
     hydro_factor = 2
@@ -7160,34 +7186,32 @@ def generate_resources_settings():
         ),
     }
 
-    # Build resource_modifiers from state.new_resources and modified_new_resources.
+    # Build base resource_modifiers (for "all" year resources only).
     # Every new resource gets an entry with at least "technology" and "tech_detail".
     # Additionally, apply default modifiers (e.g., battery storage O&M defaults).
     # For modified_new_resources, only include attribute-only overrides (no identity
     # or fuel changes) with a non-empty attr_modifiers dict. Keys are translated from
     # internal UI names to ATB column-style names (e.g. variable_o_m_mwh → Var_OM_Cost_per_MWh).
-    resource_modifiers = {}
+    base_resource_modifiers = {}
 
     # First, add all "all" year new_resources with default modifiers
     for r in state.new_resources:
         if r.get("planning_year") == "all":
             tech = r["technology"]
             detail = r["tech_detail"]
-            # Generate a default key from tech and detail
             key = _auto_modified_key(tech, detail)
             modifier_dict = {
                 "technology": tech,
                 "tech_detail": detail,
             }
-            # Add any default modifiers for this resource type
             defaults = _get_default_resource_modifiers(tech, detail)
             modifier_dict.update(defaults)
-            resource_modifiers[key] = modifier_dict
+            base_resource_modifiers[key] = modifier_dict
 
     # Then, add entries from modified_new_resources that have attribute modifiers
     if state.modified_new_resources:
         for k, v in sorted(state.modified_new_resources.items()):
-            # Only include "all" year (base) entries in resources.yml
+            # Only include "all" year (base) entries
             if v.get("planning_year", "all") != "all":
                 continue
             attr_mods = v.get("attr_modifiers")
@@ -7211,20 +7235,32 @@ def generate_resources_settings():
             for ui_key, val in attr_mods.items():
                 atb_key = _UI_TO_ATB_KEY.get(ui_key, ui_key)
                 modifier_dict[atb_key] = val
-            # Override the entry if it already exists from new_resources
-            resource_modifiers[k] = modifier_dict
+            base_resource_modifiers[k] = modifier_dict
+
+    if has_year_specific:
+        # Build year-specific effective values, then nest year keys per-field
+        # to avoid repeating every resource entry under top-level year keys.
+        year_resource_modifiers = {
+            year: (_build_resource_modifiers_for_year(year) or {})
+            for year in specific_years
+        }
+        resource_modifiers = _build_nested_year_keyed_resource_modifiers(
+            base_resource_modifiers,
+            year_resource_modifiers,
+        )
+    else:
+        resource_modifiers = base_resource_modifiers
 
     if resource_modifiers:
         out["resource_modifiers"] = resource_modifiers
 
-    # Also output modified_new_resources for custom fuels (if any have new fuel types)
-    modified_with_fuel = {}
+    # Build base modified_new_resources (custom fuels / identity changes, "all" year only)
+    base_modified_with_fuel = {}
     if state.modified_new_resources:
         for k, v in sorted(state.modified_new_resources.items()):
-            # Only include "all" year (base) entries in resources.yml
+            # Only include "all" year (base) entries
             if v.get("planning_year", "all") != "all":
                 continue
-            # Only include in modified_new_resources if it has custom fuel or needs the full structure
             if v.get("fuel_type") == "new" or (
                 v.get("new_technology") != v.get("technology")
                 or v.get("new_tech_detail") != v.get("tech_detail")
@@ -7244,9 +7280,36 @@ def generate_resources_settings():
                     for ui_key, val in attr_mods.items():
                         atb_key = _UI_TO_ATB_KEY.get(ui_key, ui_key)
                         entry[atb_key] = val
-                modified_with_fuel[k] = entry
-    if modified_with_fuel:
-        out["modified_new_resources"] = modified_with_fuel
+                base_modified_with_fuel[k] = entry
+
+    if has_year_specific:
+        # Build year-specific values and only emit `default` when values differ by
+        # year relative to base entries.
+        year_modified_new_resources = {
+            year: year_modified
+            for year in specific_years
+            for year_modified in [_build_modified_new_resources_for_year(year)]
+            if year_modified is not None
+        }
+        differs_by_year = any(
+            year_modified != base_modified_with_fuel
+            for year_modified in year_modified_new_resources.values()
+        )
+
+        if differs_by_year:
+            modified_new_resources_keyed = {}
+            if base_modified_with_fuel:
+                modified_new_resources_keyed["default"] = base_modified_with_fuel
+            for year, year_modified in year_modified_new_resources.items():
+                if year_modified != base_modified_with_fuel:
+                    modified_new_resources_keyed[year] = year_modified
+            if modified_new_resources_keyed:
+                out["modified_new_resources"] = modified_new_resources_keyed
+        elif base_modified_with_fuel:
+            out["modified_new_resources"] = base_modified_with_fuel
+    else:
+        if base_modified_with_fuel:
+            out["modified_new_resources"] = base_modified_with_fuel
 
     # Remove nulls to keep YAML clean
     out = {k: v for k, v in out.items() if v is not None}
@@ -7256,7 +7319,7 @@ def generate_resources_settings():
 
 
 # ---------------------------------------------------------------------------
-# Scenario management generation (per-year resource overrides)
+# Scenario management helpers (year-specific resource queries)
 # ---------------------------------------------------------------------------
 
 
@@ -7416,100 +7479,111 @@ def _build_modified_new_resources_for_year(year):
     return result if result else None
 
 
-def generate_scenario_management_settings():
-    """Generate ``scenario_management.yml`` content.
-
-    Returns the YAML string, or ``None`` if no year-specific resource overrides
-    exist (i.e. all resources are tagged 'all').
-
-    In PowerGenome, ``all_cases`` is a special key whose value is directly
-    merged into the settings for every case in that year — there is no
-    intermediate category/level nesting.
-
-    Structure::
-
-        settings_management:
-          <year>:
-            all_cases:
-              new_resources: [...]
-              resource_modifiers: {...}
-              modified_new_resources: {...}
-    """
-    if not _has_year_specific_resources():
-        return None
-
-    # Build the base (all-year) resource lists for comparison
-    base_new_resources = [
-        [r["technology"], r["tech_detail"], r["cost_case"], r["size_mw"]]
-        for r in state.new_resources
-        if r.get("planning_year") == "all"
-    ]
-
-    settings_management = {}
-
-    for year in _get_year_specific_years():
-        year_overrides = {}
-
-        # New resources for this year
-        year_new_resources = _build_new_resources_for_year(year)
-        if year_new_resources != base_new_resources:
-            year_overrides["new_resources"] = year_new_resources
-
-        # Resource modifiers for this year (merges all + year-specific)
-        year_modifiers = _build_resource_modifiers_for_year(year)
-        if year_modifiers is not None:
-            year_overrides["resource_modifiers"] = year_modifiers
-
-        # Modified new resources for this year
-        year_modified = _build_modified_new_resources_for_year(year)
-        if year_modified is not None:
-            year_overrides["modified_new_resources"] = year_modified
-
-        if year_overrides:
-            settings_management[year] = {
-                "all_cases": year_overrides,
-            }
-
-    if not settings_management:
-        return None
-
-    out = {"settings_management": settings_management}
-    return yaml.dump(out, default_flow_style=False, sort_keys=False)
+def _neutral_year_keyed_modifier_value(value):
+    """Return a neutral fallback for year-keyed modifier fields."""
+    if isinstance(value, list) and len(value) == 2:
+        op = str(value[0]).lower()
+        if op in {"mul", "truediv"}:
+            return [op, 1]
+        if op in {"add", "sub"}:
+            return [op, 0]
+    if isinstance(value, (int, float)):
+        return ["mul", 1]
+    return value
 
 
-def generate_scenario_csv():
-    """Generate ``scenario_inputs.csv`` content.
+def _build_nested_year_keyed_resource_modifiers(
+    base_resource_modifiers, year_resource_modifiers
+):
+    """Nest year keys at the field level for ``resource_modifiers`` output."""
+    base = base_resource_modifiers if isinstance(base_resource_modifiers, dict) else {}
+    year_map = (
+        year_resource_modifiers if isinstance(year_resource_modifiers, dict) else {}
+    )
 
-    Returns a CSV string with ``case_id`` and ``year`` columns, one row per
-    planning year, all with ``case_id=baseline``.  Returns ``None`` if no
-    year-specific overrides exist.
-    """
-    if not _has_year_specific_resources():
-        return None
+    # Preserve existing flat structure as the baseline.
+    out = {k: dict(v) for k, v in base.items()}
 
-    model_years = _get_model_years_from_dom()
-    if not model_years:
-        return None
+    all_resource_keys = set(base.keys())
+    for year_mods in year_map.values():
+        if isinstance(year_mods, dict):
+            all_resource_keys.update(year_mods.keys())
 
-    lines = ["case_id,year"]
-    for y in model_years:
-        lines.append(f"baseline,{y}")
-    return "\n".join(lines) + "\n"
+    for resource_key in sorted(all_resource_keys):
+        base_entry = base.get(resource_key, {})
 
+        if resource_key not in out:
+            identity_source = None
+            for _, year_mods in sorted(year_map.items()):
+                if isinstance(year_mods, dict) and resource_key in year_mods:
+                    identity_source = year_mods[resource_key]
+                    break
+            if isinstance(identity_source, dict):
+                out[resource_key] = {
+                    "technology": identity_source.get("technology"),
+                    "tech_detail": identity_source.get("tech_detail"),
+                }
+            else:
+                continue
 
-def generate_extra_inputs_settings():
-    """Generate ``extra_inputs.yml`` content.
+        all_fields = set(base_entry.keys())
+        for year_mods in year_map.values():
+            if (
+                isinstance(year_mods, dict)
+                and resource_key in year_mods
+                and isinstance(year_mods[resource_key], dict)
+            ):
+                all_fields.update(year_mods[resource_key].keys())
 
-    Returns the YAML string, or ``None`` if no year-specific overrides exist.
-    """
-    if not _has_year_specific_resources():
-        return None
+        all_fields.discard("technology")
+        all_fields.discard("tech_detail")
 
-    out = {
-        "input_folder": "extra_inputs",
-        "scenario_definitions_fn": "scenario_inputs.csv",
-    }
-    return yaml.dump(out, default_flow_style=False, sort_keys=False)
+        for field in sorted(all_fields):
+            base_has_field = field in base_entry
+            base_val = base_entry.get(field)
+
+            values_by_year = {}
+            for year, year_mods in sorted(year_map.items()):
+                entry = (
+                    year_mods.get(resource_key, {})
+                    if isinstance(year_mods, dict)
+                    else {}
+                )
+                if isinstance(entry, dict) and field in entry:
+                    values_by_year[year] = entry[field]
+                else:
+                    values_by_year[year] = base_val if base_has_field else None
+
+            if base_has_field:
+                differs = any(v != base_val for v in values_by_year.values())
+            else:
+                differs = any(v is not None for v in values_by_year.values())
+
+            if not differs:
+                if base_has_field:
+                    out[resource_key][field] = base_val
+                continue
+
+            nested = {}
+            if base_has_field:
+                nested["default"] = base_val
+            else:
+                sample = next(
+                    (v for v in values_by_year.values() if v is not None), None
+                )
+                if sample is not None:
+                    nested["default"] = _neutral_year_keyed_modifier_value(sample)
+
+            for year, year_val in values_by_year.items():
+                if year_val is None:
+                    continue
+                if (not base_has_field) or (year_val != base_val):
+                    nested[year] = year_val
+
+            if nested:
+                out[resource_key][field] = nested
+
+    return out
 
 
 def generate_fuels_settings():
@@ -8007,17 +8081,6 @@ def build_settings_yamls():
         "startup_costs.yml": generate_startup_costs_settings(),
     }
 
-    # Conditionally add scenario management files when per-year overrides exist
-    scenario_mgmt = generate_scenario_management_settings()
-    if scenario_mgmt is not None:
-        result["scenario_management.yml"] = scenario_mgmt
-        extra_inputs = generate_extra_inputs_settings()
-        if extra_inputs is not None:
-            result["extra_inputs.yml"] = extra_inputs
-        scenario_csv = generate_scenario_csv()
-        if scenario_csv is not None:
-            result["scenario_inputs.csv"] = scenario_csv
-
     return result
 
 
@@ -8462,16 +8525,11 @@ def on_download_all_settings(event):
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
         # Write settings files in deterministic order, rejecting unsafe names.
-        # All YAML files go to settings/. scenario_inputs.csv goes to extra_inputs/.
+        # All YAML files go to settings/.
         for filename in sorted(state.settings_yamls):
             if "/" in filename or "\\" in filename or ".." in filename:
                 continue  # skip path-traversal / absolute-path entries
-            if filename.endswith((".yml", ".yaml")):
-                zip_path = f"settings/{filename}"
-            elif filename == "scenario_inputs.csv":
-                zip_path = f"extra_inputs/{filename}"
-            else:
-                zip_path = f"settings/{filename}"
+            zip_path = f"settings/{filename}"
             zipf.writestr(zip_path, state.settings_yamls[filename])
 
         # Write emission_policies.csv under extra_inputs/ if it exists.

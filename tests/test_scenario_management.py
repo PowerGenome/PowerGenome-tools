@@ -5,11 +5,10 @@ Covers:
 - Pure logic: _has_year_specific_resources, _get_year_specific_years,
   _build_new_resources_for_year, _build_resource_modifiers_for_year,
   _build_modified_new_resources_for_year, _year_badge_html,
-  generate_scenario_management_settings, generate_scenario_csv,
-  generate_extra_inputs_settings
+  generate_resources_settings (year-keyed format for PowerGenome v0.8.0-beta)
 - DOM-interacting: populate_resource_year_selects, _get_resource_planning_year,
   _check_year_default_warning
-- Integration: full flows, resources.yml filtering, build_settings_yamls
+- Integration: full flows, resources.yml year-keyed output, build_settings_yamls
 """
 
 import importlib.util
@@ -541,20 +540,52 @@ class TestYearBadgeHtml:
 # ============================================================================
 
 
-class TestGenerateScenarioManagementSettings:
-    """Tests for generate_scenario_management_settings()."""
+def _setup_dom_for_resources_settings(cluster_app, model_years="2030, 2040"):
+    """Wire up document.getElementById with all DOM elements required by
+    generate_resources_settings()."""
+    el_map = {
+        "modelYears": _mock_dom_element(model_years),
+        "targetUsdYear": _mock_dom_element("2024"),
+        "atbYearSelect": _mock_dom_element("2024"),
+        "utcOffset": _mock_dom_element("-5"),
+        "planningYears": _mock_dom_element("2028, 2038"),
+    }
+    cluster_app.document.getElementById = MagicMock(
+        side_effect=lambda id_: el_map.get(id_, _mock_dom_element(""))
+    )
 
-    def test_returns_none_when_no_overrides(self, cluster_app):
-        cluster_app.state.new_resources = [_make_resource(year="all")]
+    cluster_app.state.region_aggregations = {"R1": ["ba1"]}
+    cluster_app.state.is_clustered = True
+    cluster_app.state.ba_to_region = {"ba1": "R1"}
+    cluster_app.state.plant_cluster_settings = {}
+    cluster_app.state.renewables_clusters = None
+
+    return el_map
+
+
+class TestGenerateResourcesSettingsYearKeyed:
+    """Tests for generate_resources_settings() year-keyed output (PowerGenome v0.8.0-beta)."""
+
+    def test_no_year_specific_produces_flat_new_resources(self, cluster_app):
+        """When all resources are 'all', new_resources is a plain list, not a dict."""
+        cluster_app.state.new_resources = [
+            _make_resource(
+                tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
+            ),
+        ]
         cluster_app.state.modified_new_resources = {}
-        assert cluster_app.generate_scenario_management_settings() is None
+        _setup_dom_for_resources_settings(cluster_app)
 
-    def test_returns_none_for_empty_state(self, cluster_app):
-        cluster_app.state.new_resources = []
-        cluster_app.state.modified_new_resources = {}
-        assert cluster_app.generate_scenario_management_settings() is None
+        result = cluster_app.generate_resources_settings()
+        parsed = yaml.safe_load(result)
 
-    def test_structure_with_year_specific_new_resource(self, cluster_app):
+        new_res = parsed["new_resources"]
+        assert isinstance(
+            new_res, list
+        ), "new_resources should be a flat list when no year-specific resources"
+
+    def test_year_specific_produces_keyed_new_resources(self, cluster_app):
+        """When a resource is tagged 2030, new_resources is a dict with default and 2030 keys."""
         cluster_app.state.new_resources = [
             _make_resource(
                 tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
@@ -564,32 +595,64 @@ class TestGenerateScenarioManagementSettings:
             ),
         ]
         cluster_app.state.modified_new_resources = {}
-        result = cluster_app.generate_scenario_management_settings()
-        assert result is not None
+        _setup_dom_for_resources_settings(cluster_app)
 
+        result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
-        assert "settings_management" in parsed
-        assert 2030 in parsed["settings_management"]
-        year_block = parsed["settings_management"][2030]
-        assert "all_cases" in year_block
-        all_cases = year_block["all_cases"]
-        assert "new_resources" in all_cases
-        # Should contain base + year-specific
-        assert len(all_cases["new_resources"]) == 2
 
-    def test_year_specific_modified_resource_generates_output(self, cluster_app):
-        cluster_app.state.new_resources = [_make_resource(year="all")]
-        cluster_app.state.modified_new_resources = {
-            "k1": _make_modified("k1", year=2040, attr_modifiers={"heat_rate": 6.5}),
-        }
-        result = cluster_app.generate_scenario_management_settings()
-        assert result is not None
-        parsed = yaml.safe_load(result)
-        assert 2040 in parsed["settings_management"]
+        new_res = parsed["new_resources"]
+        assert isinstance(
+            new_res, dict
+        ), "new_resources should be a dict when year-specific resources exist"
+        assert "default" in new_res
+        assert 2030 in new_res
 
-    def test_multiple_years(self, cluster_app):
+    def test_default_key_contains_base_resources(self, cluster_app):
+        """The 'default' key of new_resources contains only 'all'-year resources."""
         cluster_app.state.new_resources = [
-            _make_resource(year="all"),
+            _make_resource(
+                tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
+            ),
+            _make_resource(
+                tech="UtilityPV", detail="Class1", case="Moderate", size=100, year=2030
+            ),
+        ]
+        cluster_app.state.modified_new_resources = {}
+        _setup_dom_for_resources_settings(cluster_app)
+
+        result = cluster_app.generate_resources_settings()
+        parsed = yaml.safe_load(result)
+
+        default_list = parsed["new_resources"]["default"]
+        assert ["NaturalGas", "CC", "Moderate", 500] in default_list
+        assert ["UtilityPV", "Class1", "Moderate", 100] not in default_list
+
+    def test_year_key_contains_base_plus_year_specific(self, cluster_app):
+        """The year key of new_resources includes both 'all' and year-specific resources."""
+        cluster_app.state.new_resources = [
+            _make_resource(
+                tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
+            ),
+            _make_resource(
+                tech="UtilityPV", detail="Class1", case="Moderate", size=100, year=2030
+            ),
+        ]
+        cluster_app.state.modified_new_resources = {}
+        _setup_dom_for_resources_settings(cluster_app)
+
+        result = cluster_app.generate_resources_settings()
+        parsed = yaml.safe_load(result)
+
+        year_list = parsed["new_resources"][2030]
+        assert ["NaturalGas", "CC", "Moderate", 500] in year_list
+        assert ["UtilityPV", "Class1", "Moderate", 100] in year_list
+
+    def test_multiple_years_produce_multiple_keys(self, cluster_app):
+        """Two year-specific resources (2030, 2040) produce default, 2030, and 2040 keys."""
+        cluster_app.state.new_resources = [
+            _make_resource(
+                tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
+            ),
             _make_resource(
                 tech="UtilityPV", detail="Class1", case="Moderate", size=100, year=2030
             ),
@@ -598,131 +661,128 @@ class TestGenerateScenarioManagementSettings:
             ),
         ]
         cluster_app.state.modified_new_resources = {}
-        result = cluster_app.generate_scenario_management_settings()
-        parsed = yaml.safe_load(result)
-        assert 2030 in parsed["settings_management"]
-        assert 2040 in parsed["settings_management"]
+        _setup_dom_for_resources_settings(cluster_app)
 
-    def test_resource_modifiers_in_output(self, cluster_app):
-        cluster_app.state.new_resources = [_make_resource(year="all")]
-        cluster_app.state.modified_new_resources = {
-            "k1": _make_modified("k1", year=2030, attr_modifiers={"heat_rate": 6.5}),
-        }
-        result = cluster_app.generate_scenario_management_settings()
+        result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
-        all_cases = parsed["settings_management"][2030]["all_cases"]
-        assert "resource_modifiers" in all_cases
 
-    def test_modified_new_resources_in_output(self, cluster_app):
-        cluster_app.state.new_resources = [_make_resource(year="all")]
-        cluster_app.state.modified_new_resources = {
-            "k1": _make_modified("k1", year=2030, new_tech="CustomGas"),
-        }
-        result = cluster_app.generate_scenario_management_settings()
-        parsed = yaml.safe_load(result)
-        all_cases = parsed["settings_management"][2030]["all_cases"]
-        assert "modified_new_resources" in all_cases
+        new_res = parsed["new_resources"]
+        assert isinstance(new_res, dict)
+        assert "default" in new_res
+        assert 2030 in new_res
+        assert 2040 in new_res
 
-    def test_year_with_same_new_resources_as_base_omits_key(self, cluster_app):
-        """If year_new_resources == base, 'new_resources' is not in the override."""
-        cluster_app.state.new_resources = [_make_resource(year="all")]
-        cluster_app.state.modified_new_resources = {
-            "k1": _make_modified("k1", year=2030, attr_modifiers={"heat_rate": 6.5}),
-        }
-        result = cluster_app.generate_scenario_management_settings()
-        parsed = yaml.safe_load(result)
-        all_cases = parsed["settings_management"][2030]["all_cases"]
-        assert "new_resources" not in all_cases
+    def test_year_specific_resource_modifiers_use_field_level_nesting(
+        self, cluster_app
+    ):
+        """When year-specific resources exist, resource_modifiers remains flat at top level.
 
-    def test_output_is_valid_yaml(self, cluster_app):
+        Year-keying is nested per field when values differ by year.
+        """
         cluster_app.state.new_resources = [
-            _make_resource(year="all"),
-            _make_resource(tech="UtilityPV", year=2030),
+            _make_resource(
+                tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
+            ),
+            _make_resource(
+                tech="UtilityPV", detail="Class1", case="Moderate", size=100, year=2030
+            ),
         ]
         cluster_app.state.modified_new_resources = {}
-        result = cluster_app.generate_scenario_management_settings()
+        _setup_dom_for_resources_settings(cluster_app)
+
+        result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
-        assert isinstance(parsed, dict)
 
+        resource_mods = parsed.get("resource_modifiers")
+        assert resource_mods is not None
+        assert isinstance(resource_mods, dict)
+        assert "default" not in resource_mods
+        assert 2030 not in resource_mods
 
-class TestGenerateScenarioCsv:
-    """Tests for generate_scenario_csv()."""
-
-    def test_returns_none_when_no_overrides(self, cluster_app):
-        cluster_app.state.new_resources = [_make_resource(year="all")]
-        cluster_app.state.modified_new_resources = {}
-        assert cluster_app.generate_scenario_csv() is None
-
-    def test_returns_none_when_no_model_years(self, cluster_app):
-        cluster_app.state.new_resources = [_make_resource(year=2030)]
-        cluster_app.state.modified_new_resources = {}
-        # Mock empty model years
-        el = _mock_dom_element("")
-        cluster_app.document.getElementById = MagicMock(return_value=el)
-        assert cluster_app.generate_scenario_csv() is None
-
-    def test_generates_proper_csv(self, cluster_app):
+    def test_year_specific_capex_modifier_nests_year_keys_at_field_level(
+        self, cluster_app
+    ):
+        """A year-only capex modifier gets a neutral default before year overrides."""
         cluster_app.state.new_resources = [
-            _make_resource(year="all"),
-            _make_resource(tech="UtilityPV", year=2030),
+            _make_resource(
+                tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
+            ),
         ]
-        cluster_app.state.modified_new_resources = {}
-        el = _mock_dom_element("2030, 2040")
-        cluster_app.document.getElementById = MagicMock(return_value=el)
+        cluster_app.state.modified_new_resources = {
+            "ng_cc_2030": _make_modified(
+                "ng_cc_2030",
+                year=2030,
+                attr_modifiers={"capex_mw": ["mul", 1.5]},
+            ),
+        }
+        _setup_dom_for_resources_settings(cluster_app)
 
-        result = cluster_app.generate_scenario_csv()
-        assert result is not None
-        lines = result.strip().split("\n")
-        assert lines[0] == "case_id,year"
-        assert lines[1] == "baseline,2030"
-        assert lines[2] == "baseline,2040"
-        assert len(lines) == 3
-
-    def test_csv_ends_with_newline(self, cluster_app):
-        cluster_app.state.new_resources = [_make_resource(year=2030)]
-        cluster_app.state.modified_new_resources = {}
-        el = _mock_dom_element("2030")
-        cluster_app.document.getElementById = MagicMock(return_value=el)
-
-        result = cluster_app.generate_scenario_csv()
-        assert result.endswith("\n")
-
-    def test_three_model_years(self, cluster_app):
-        cluster_app.state.new_resources = [_make_resource(year=2030)]
-        cluster_app.state.modified_new_resources = {}
-        el = _mock_dom_element("2030, 2040, 2050")
-        cluster_app.document.getElementById = MagicMock(return_value=el)
-
-        result = cluster_app.generate_scenario_csv()
-        lines = result.strip().split("\n")
-        assert len(lines) == 4  # header + 3 rows
-
-
-class TestGenerateExtraInputsSettings:
-    """Tests for generate_extra_inputs_settings()."""
-
-    def test_returns_none_when_no_overrides(self, cluster_app):
-        cluster_app.state.new_resources = [_make_resource(year="all")]
-        cluster_app.state.modified_new_resources = {}
-        assert cluster_app.generate_extra_inputs_settings() is None
-
-    def test_returns_yaml_with_overrides(self, cluster_app):
-        cluster_app.state.new_resources = [_make_resource(year=2030)]
-        cluster_app.state.modified_new_resources = {}
-        result = cluster_app.generate_extra_inputs_settings()
-        assert result is not None
-
+        result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
-        assert parsed["input_folder"] == "extra_inputs"
-        assert parsed["scenario_definitions_fn"] == "scenario_inputs.csv"
 
-    def test_output_is_valid_yaml(self, cluster_app):
-        cluster_app.state.new_resources = [_make_resource(year=2030)]
-        cluster_app.state.modified_new_resources = {}
-        result = cluster_app.generate_extra_inputs_settings()
+        resource_mods = parsed["resource_modifiers"]
+        assert "default" not in resource_mods
+        assert 2030 not in resource_mods
+        assert resource_mods["ng_cc_2030"]["capex_mw"] == {
+            "default": ["mul", 1],
+            2030: ["mul", 1.5],
+        }
+
+    def test_year_specific_identity_change_without_base_omits_default_modified_new_resources(
+        self, cluster_app
+    ):
+        """If modified_new_resources only has year-specific identity/fuel entries,
+        include year keys but do not emit a default key."""
+        cluster_app.state.new_resources = [
+            _make_resource(
+                tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
+            ),
+        ]
+        cluster_app.state.modified_new_resources = {
+            "id_change_2030": _make_modified(
+                "id_change_2030",
+                year=2030,
+                new_tech="CustomGas2030",
+            ),
+        }
+        _setup_dom_for_resources_settings(cluster_app)
+
+        result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
-        assert isinstance(parsed, dict)
-        assert len(parsed) == 2
+
+        mod_new_res = parsed.get("modified_new_resources")
+        assert isinstance(mod_new_res, dict)
+        assert 2030 in mod_new_res
+        assert "default" not in mod_new_res
+
+    def test_only_modified_year_specific_keeps_new_resources_and_resource_modifiers_flat(
+        self, cluster_app
+    ):
+        """If year-specific entries exist only in modified_new_resources identity/fuel changes,
+        new_resources and resource_modifiers remain flat (no default/year keys)."""
+        cluster_app.state.new_resources = [
+            _make_resource(
+                tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
+            ),
+        ]
+        cluster_app.state.modified_new_resources = {
+            "id_change_2040": _make_modified(
+                "id_change_2040",
+                year=2040,
+                new_tech="CustomGas2040",
+            ),
+        }
+        _setup_dom_for_resources_settings(cluster_app)
+
+        result = cluster_app.generate_resources_settings()
+        parsed = yaml.safe_load(result)
+
+        assert isinstance(parsed["new_resources"], list)
+
+        resource_mods = parsed.get("resource_modifiers")
+        assert isinstance(resource_mods, dict)
+        assert "default" not in resource_mods
+        assert 2040 not in resource_mods
 
 
 # ============================================================================
@@ -929,10 +989,10 @@ class TestGetModelYearsFromDom:
 
 
 class TestIntegrationFullFlow:
-    """End-to-end tests combining resource setup and scenario generation."""
+    """End-to-end tests combining resource setup and year-keyed resources.yml generation."""
 
     def test_full_flow_with_year_specific_resources(self, cluster_app):
-        """Add resources with different years and verify scenario management output."""
+        """Add resources with different years and verify year-keyed output in resources.yml."""
         cluster_app.state.new_resources = [
             _make_resource(
                 tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
@@ -946,30 +1006,26 @@ class TestIntegrationFullFlow:
         ]
         cluster_app.state.modified_new_resources = {}
 
-        # Verify _has_year_specific_resources
+        # Verify helper functions still work correctly
         assert cluster_app._has_year_specific_resources() is True
-        # Verify years
         assert cluster_app._get_year_specific_years() == [2030, 2040]
 
-        # Verify scenario management
-        result = cluster_app.generate_scenario_management_settings()
+        # Verify year-keyed structure in generate_resources_settings output
+        _setup_dom_for_resources_settings(cluster_app, model_years="2030, 2040")
+        result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
-        sm = parsed["settings_management"]
+        new_res = parsed["new_resources"]
 
-        # 2030 should have base + UtilityPV
-        all_cases_2030 = sm[2030]["all_cases"]
-        assert ["UtilityPV", "Class1", "Moderate", 100] in all_cases_2030[
-            "new_resources"
-        ]
-        assert ["NaturalGas", "CC", "Moderate", 500] in all_cases_2030["new_resources"]
+        # 2030 should contain base + UtilityPV
+        assert ["UtilityPV", "Class1", "Moderate", 100] in new_res[2030]
+        assert ["NaturalGas", "CC", "Moderate", 500] in new_res[2030]
 
-        # 2040 should have base + Nuclear
-        all_cases_2040 = sm[2040]["all_cases"]
-        assert ["Nuclear", "Large", "Moderate", 1000] in all_cases_2040["new_resources"]
-        assert ["NaturalGas", "CC", "Moderate", 500] in all_cases_2040["new_resources"]
+        # 2040 should contain base + Nuclear
+        assert ["Nuclear", "Large", "Moderate", 1000] in new_res[2040]
+        assert ["NaturalGas", "CC", "Moderate", 500] in new_res[2040]
 
     def test_full_flow_with_modified_resources(self, cluster_app):
-        """Modified resources with identity changes and attribute-only changes."""
+        """Modified resources with identity changes and attribute-only changes produce keyed output."""
         cluster_app.state.new_resources = [
             _make_resource(
                 tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
@@ -989,50 +1045,65 @@ class TestIntegrationFullFlow:
             ),
         }
 
-        result = cluster_app.generate_scenario_management_settings()
+        assert cluster_app._has_year_specific_resources() is True
+        assert sorted(cluster_app._get_year_specific_years()) == [2030, 2040]
+
+        _setup_dom_for_resources_settings(cluster_app, model_years="2030, 2040")
+        result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
 
-        # 2030 should have resource_modifiers
-        all_cases_2030 = parsed["settings_management"][2030]["all_cases"]
-        assert "resource_modifiers" in all_cases_2030
+        # resource_modifiers should be year-keyed (2030 has attr_mod)
+        resource_mods = parsed.get("resource_modifiers", {})
+        assert isinstance(resource_mods, dict)
+        assert "default" not in resource_mods
+        assert 2030 not in resource_mods
+        assert resource_mods["attr_mod"]["Heat_Rate_MMBTU_per_MWh"] == {
+            "default": ["mul", 1],
+            2030: 6.5,
+        }
 
-        # 2040 should have modified_new_resources
-        all_cases_2040 = parsed["settings_management"][2040]["all_cases"]
-        assert "modified_new_resources" in all_cases_2040
+        # modified_new_resources should be year-keyed (2040 has id_change)
+        mod_new_res = parsed.get("modified_new_resources", {})
+        assert isinstance(mod_new_res, dict)
+        assert 2040 in mod_new_res
 
-    def test_scenario_csv_and_extra_inputs_generated(self, cluster_app):
+    def test_year_keyed_values_appear_in_resources_yml(self, cluster_app):
+        """When year-specific resources exist, resources.yml contains year-keyed new_resources."""
         cluster_app.state.new_resources = [
             _make_resource(year="all"),
             _make_resource(tech="UtilityPV", year=2030),
         ]
         cluster_app.state.modified_new_resources = {}
+        _setup_dom_for_resources_settings(cluster_app, model_years="2030, 2040")
 
-        el = _mock_dom_element("2030, 2040")
-        cluster_app.document.getElementById = MagicMock(return_value=el)
+        result = cluster_app.generate_resources_settings()
+        parsed = yaml.safe_load(result)
 
-        csv = cluster_app.generate_scenario_csv()
-        extra = cluster_app.generate_extra_inputs_settings()
+        new_res = parsed["new_resources"]
+        assert isinstance(new_res, dict)
+        assert "default" in new_res
+        assert 2030 in new_res
 
-        assert csv is not None
-        assert extra is not None
-        assert "baseline,2030" in csv
-        assert "baseline,2040" in csv
-        assert "scenario_inputs.csv" in extra
-
-    def test_no_year_specific_produces_no_scenario_files(self, cluster_app):
+    def test_no_year_specific_produces_flat_resources_yml(self, cluster_app):
+        """When all resources are 'all', new_resources in resources.yml is a flat list."""
         cluster_app.state.new_resources = [_make_resource(year="all")]
         cluster_app.state.modified_new_resources = {}
+        _setup_dom_for_resources_settings(cluster_app)
 
-        assert cluster_app.generate_scenario_management_settings() is None
-        assert cluster_app.generate_scenario_csv() is None
-        assert cluster_app.generate_extra_inputs_settings() is None
+        result = cluster_app.generate_resources_settings()
+        parsed = yaml.safe_load(result)
+
+        new_res = parsed["new_resources"]
+        assert isinstance(
+            new_res, list
+        ), "Expected flat list when no year-specific resources"
 
 
 class TestResourcesYmlFiltering:
-    """Verify generate_resources_settings() only includes 'all' year resources."""
+    """Verify generate_resources_settings() produces correct year-keyed structure."""
 
     def test_year_specific_excluded_from_resources_yml(self, cluster_app):
-        """Resources with year != 'all' should not appear in resources.yml."""
+        """Under 'default' key, only 'all'-year resources appear; year-specific are in their own key."""
         cluster_app.state.new_resources = [
             _make_resource(
                 tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
@@ -1063,13 +1134,22 @@ class TestResourcesYmlFiltering:
         result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
 
-        # new_resources from resources.yml should only contain the "all" resource
-        new_res = parsed.get("new_resources", [])
-        assert ["NaturalGas", "CC", "Moderate", 500] in new_res
-        assert ["UtilityPV", "Class1", "Moderate", 100] not in new_res
+        new_res = parsed["new_resources"]
+        # new_resources is a year-keyed dict when year-specific resources exist
+        assert isinstance(new_res, dict)
+
+        # Under 'default', only the "all" resource appears
+        default_list = new_res["default"]
+        assert ["NaturalGas", "CC", "Moderate", 500] in default_list
+        assert ["UtilityPV", "Class1", "Moderate", 100] not in default_list
+
+        # Under 2030, both the "all" resource and the year-specific one appear
+        year_list = new_res[2030]
+        assert ["NaturalGas", "CC", "Moderate", 500] in year_list
+        assert ["UtilityPV", "Class1", "Moderate", 100] in year_list
 
     def test_year_specific_modified_excluded_from_resources_yml(self, cluster_app):
-        """Modified resources with year != 'all' should not appear in resources.yml."""
+        """In resource_modifiers, year differences are nested per field, not top-level keys."""
         cluster_app.state.new_resources = [
             _make_resource(
                 tech="NaturalGas", detail="CC", case="Moderate", size=500, year="all"
@@ -1103,15 +1183,27 @@ class TestResourcesYmlFiltering:
         parsed = yaml.safe_load(result)
 
         resource_mods = parsed.get("resource_modifiers", {})
-        # Only "all" modifier should be in resources.yml
-        assert "base_mod" in resource_mods
-        assert "yr_mod" not in resource_mods
+        # resource_modifiers uses flat top-level keys; year differences are field-level
+        assert isinstance(resource_mods, dict)
+        assert "default" not in resource_mods
+        assert 2030 not in resource_mods
+
+        # base_mod (year="all") remains flat
+        assert resource_mods["base_mod"]["Heat_Rate_MMBTU_per_MWh"] == 6.5
+
+        # yr_mod (year=2030) nests year values at the field level
+        assert resource_mods["yr_mod"]["Heat_Rate_MMBTU_per_MWh"] == {
+            "default": ["mul", 1],
+            2030: 7.0,
+        }
 
 
 class TestBuildSettingsYamlsIntegration:
-    """Verify build_settings_yamls() conditionally includes scenario files."""
+    """Verify build_settings_yamls() generates the 7 core YAML files correctly."""
 
     def test_no_scenario_files_when_all_years(self, cluster_app):
+        """scenario_management.yml, extra_inputs.yml, and scenario_inputs.csv are never generated.
+        When all resources are 'all', new_resources in resources.yml is a flat list."""
         cluster_app.state.new_resources = [_make_resource(year="all")]
         cluster_app.state.modified_new_resources = {}
         cluster_app.state.region_aggregations = {"R1": ["ba1"]}
@@ -1137,7 +1229,13 @@ class TestBuildSettingsYamlsIntegration:
         assert "extra_inputs.yml" not in result
         assert "scenario_inputs.csv" not in result
 
-    def test_scenario_files_included_when_year_specific(self, cluster_app):
+        # new_resources should be a flat list (no year-keying)
+        resources_parsed = yaml.safe_load(result["resources.yml"])
+        assert isinstance(resources_parsed["new_resources"], list)
+
+    def test_year_keyed_in_resources_yml_when_year_specific(self, cluster_app):
+        """When year-specific resources exist, resources.yml has year-keyed new_resources;
+        scenario_management.yml is NOT in the result."""
         cluster_app.state.new_resources = [
             _make_resource(year="all"),
             _make_resource(tech="UtilityPV", detail="Class1", year=2030),
@@ -1162,19 +1260,21 @@ class TestBuildSettingsYamlsIntegration:
         )
 
         result = cluster_app.build_settings_yamls()
-        assert "scenario_management.yml" in result
-        assert "extra_inputs.yml" in result
-        assert "scenario_inputs.csv" in result
 
-        # Validate contents
-        sm = yaml.safe_load(result["scenario_management.yml"])
-        assert "settings_management" in sm
+        # Scenario-management files are never produced
+        assert "scenario_management.yml" not in result
+        assert "extra_inputs.yml" not in result
+        assert "scenario_inputs.csv" not in result
 
-        csv_lines = result["scenario_inputs.csv"].strip().split("\n")
-        assert csv_lines[0] == "case_id,year"
+        # resources.yml is always present
+        assert "resources.yml" in result
 
-        extra = yaml.safe_load(result["extra_inputs.yml"])
-        assert extra["input_folder"] == "extra_inputs"
+        # new_resources is year-keyed
+        resources_parsed = yaml.safe_load(result["resources.yml"])
+        new_res = resources_parsed["new_resources"]
+        assert isinstance(new_res, dict)
+        assert "default" in new_res
+        assert 2030 in new_res
 
 
 # ============================================================================

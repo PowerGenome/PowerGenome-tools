@@ -580,7 +580,7 @@ class TestBuildSettingsYamlResourceModifiers:
     def test_year_specific_only_resources_do_not_fallback_to_defaults(
         self, cluster_app
     ):
-        """Year-specific resources alone should not resurrect default base resources."""
+        """Year-specific resources alone should produce an empty 'default' base list."""
         cluster_app.state.new_resources = [
             _make_resource(tech="UtilityPV", detail="Class1", year=2030),
             _make_resource(tech="LandbasedWind", detail="Class3", year=2040),
@@ -604,8 +604,13 @@ class TestBuildSettingsYamlResourceModifiers:
         result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
 
-        assert parsed["new_resources"] == []
-        assert parsed.get("resource_modifiers") is None
+        # With year-specific resources, new_resources is a year-keyed dict.
+        # The default (base) list is empty since there are no "all"-year resources.
+        new_res = parsed["new_resources"]
+        assert isinstance(new_res, dict)
+        assert new_res.get("default") == []
+        assert [["UtilityPV", "Class1", "Moderate", 500]] == new_res.get(2030)
+        assert [["LandbasedWind", "Class3", "Moderate", 500]] == new_res.get(2040)
 
     def test_all_year_modified_resources_export_without_base_new_resources(
         self, cluster_app
@@ -643,7 +648,10 @@ class TestBuildSettingsYamlResourceModifiers:
         assert parsed["resource_modifiers"]["gas_cc"]["Heat_Rate_MMBTU_per_MWh"] == 6.5
 
     def test_year_specific_resources_excluded_from_resources_yml(self, cluster_app):
-        """Year-specific resources (year != 'all') don't appear in resources.yml."""
+        """Year-specific resources do not force top-level year keys in resource_modifiers.
+
+        When effective modifier values are identical across years, output stays flat.
+        """
         cluster_app.state.new_resources = [
             _make_resource(tech="NaturalGas", detail="CC", year="all"),
             _make_resource(tech="UtilityPV", detail="Class1", year=2030),
@@ -670,10 +678,12 @@ class TestBuildSettingsYamlResourceModifiers:
         assert "resource_modifiers" in parsed
         mods = parsed["resource_modifiers"]
 
-        # Only the "all" resource should be in modifiers
-        assert any(mod.get("technology") == "NaturalGas" for mod in mods.values())
-        # Year-specific resource should not appear
-        assert not any(mod.get("technology") == "UtilityPV" for mod in mods.values())
+        # resource_modifiers remains flat at the top level.
+        assert isinstance(mods, dict)
+        assert "default" not in mods
+        assert 2030 not in mods
+        assert any(m.get("technology") == "NaturalGas" for m in mods.values())
+        assert any(m.get("technology") == "UtilityPV" for m in mods.values())
 
     def test_multiple_resources_all_get_modifiers(self, cluster_app):
         """Multiple resources all get resource_modifiers entries."""

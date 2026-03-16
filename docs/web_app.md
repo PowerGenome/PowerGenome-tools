@@ -542,7 +542,7 @@ You can work with the defaults in any combination:
 Each resource you add can optionally be tagged to a specific **planning year**. A **Planning Year** dropdown appears next to the "Add New-build Resource" and "Add Modified Resource" buttons. It is populated from the Model Years you entered in Step 2 (Model Setup), plus an "All (default)" option.
 
 * **All (default)**: The resource applies to every planning year. This is the base configuration written to `resources.yml`.
-* **Specific year** (e.g., 2030, 2035): The resource applies only to that year. Year-specific resources are written to `scenario_management.yml` as per-year overrides (see [Export](#step-9-export) for details).
+* **Specific year** (e.g., 2030, 2035): The resource applies only to that year. Year-specific resources are embedded directly in `resources.yml` using PowerGenome's year-keyed settings format (see [Export](#step-9-export) for details).
 
 Resources tagged to a specific year show a blue **year badge** (e.g., "2030") next to their name in the resource list.
 For standard (non-modified) resources, any inline attribute overrides are also shown directly in that same resource row so adjustments are visible at a glance (for example, battery `variable_o_m_mwh` and `variable_o_m_mwh_in`, which are $0 in ATB but we default to $0.15/MWh to prevent simultaneous charge/discharge in models).
@@ -710,13 +710,17 @@ The defaults are:
 **Base Resources (resources.yml)**:
 All "All (default)" new resources generate entries in `resource_modifiers` within `resources.yml`.
 
-**Year-Specific Resources (scenario_management.yml)**:
-If you tag any resources to specific planning years (see [Planning Year Tagging](#planning-year-tagging)), the Export step generates `scenario_management.yml` with per-year `resource_modifiers` overrides.
+**Year-Specific Resources (year-keyed in resources.yml)**:
+If you tag any resources to specific planning years (see [Planning Year Tagging](#planning-year-tagging)), the Export step embeds year-keyed values directly in `resources.yml` using PowerGenome's native year-keyed settings format.
 
-For each planning year, the generated `resource_modifiers` includes:
+For `resource_modifiers`, the top-level structure remains keyed by resource name. When a modifier field differs by year, the year keys are nested under that field (not at the top level of `resource_modifiers`).
 
-* All "All (default)" entries (base configuration)
-* All year-specific entries for that year (which override the base by key)
+If a modifier field only has year-specific values and no base/default value, the export includes a neutral default (for example, `[mul, 1]`) so the field is valid in non-explicit years.
+
+For each planning year, the generated settings include:
+
+* All "All (default)" entries under the `default` key (base configuration)
+* All year-specific entries under their respective year key
 
 This allows you to adjust resource definitions across different planning years while maintaining a consistent base configuration. For example, you might tag a cheaper battery cost case to a specific future year to reflect anticipated technology cost reductions.
 
@@ -726,7 +730,7 @@ The web app supports two ways to define new resources:
 
 | Feature | Purpose | When to Use | Output Sections |
 |---------|---------|-------------|-----------------|
-| **Standard New Resources** | Use ATB technologies with optional attribute adjustments | Most cases—when ATB covers your needs and you just want to tune parameters or accept defaults | `resource_modifiers` in resources.yml (or scenario_management.yml for year-specific) |
+| **Standard New Resources** | Use ATB technologies with optional attribute adjustments | Most cases—when ATB covers your needs and you just want to tune parameters or accept defaults | `resource_modifiers` in resources.yml (resource-keyed; year keys nested only on changed fields) |
 | **Modified New Resources** | Create entirely new resource types with custom fuels | Only when you need completely new technologies, custom fuel types (hydrogen, ammonia), or entirely different resource definitions | `modified_new_resources` (and related updates to `fuels.yml` and `resource_tags.yml`) |
 
 **Use Standard Resources when:**
@@ -1004,7 +1008,7 @@ The Export step generates complete PowerGenome settings files based on all previ
 The app always generates these seven YAML files:
 
 * `model_definition.yml` - Model regions, years, and financial settings
-* `resources.yml` - Existing plant clusters, new resources, resource attribute modifiers, and modified resources
+* `resources.yml` - Existing plant clusters, new resources, resource attribute modifiers, and modified resources. Year-specific resources are embedded directly using year-keyed values (PowerGenome v0.8.0+ format).
 * `fuels.yml` - Fuel prices and emission factors
 * `transmission.yml` - Transmission line definitions
 * `distributed_gen.yml` - Distributed generation settings
@@ -1013,26 +1017,15 @@ The app always generates these seven YAML files:
 
 #### Download All ZIP Structure
 
-When you click **Download All**, the ZIP archive contains two top-level folders:
+When you click **Download All**, the ZIP archive contains:
 
 * `settings/` - All generated YAML files
-* `extra_inputs/` - Generated CSV inputs used by YAML settings
+* `extra_inputs/` - Generated CSV inputs used by YAML settings (only when ESR policies exist)
 
 This includes:
 
-* `settings/*.yml` (always for core settings; conditional for scenario/ESR YAMLs)
-* `extra_inputs/scenario_inputs.csv` (only when year-specific resources exist)
+* `settings/*.yml` (always for core settings)
 * `extra_inputs/emission_policies.csv` (only when ESR policies are generated)
-
-#### Conditional Scenario Management Files
-
-If any New Resources (Step 4) are tagged to a **specific planning year** (rather than "All (default)"), the Export step additionally generates three files:
-
-* `scenario_management.yml` - Contains `settings_management` with per-year `new_resources`, `resource_modifiers`, and `modified_new_resources` overrides directly under `all_cases` (a PowerGenome special key that applies settings to every case).
-* `scenario_inputs.csv` - CSV with `case_id,year` columns, one row per planning year, all with case ID `baseline` (written to `extra_inputs/` in **Download All**).
-* `extra_inputs.yml` - YAML with `input_folder: extra_inputs` and `scenario_definitions_fn: scenario_inputs.csv`.
-
-If **all** resources use "All (default)", these three files are **not** generated and the export behaves exactly as before.
 
 #### Conditional ESR Policy File
 
@@ -1040,35 +1033,43 @@ If ESR policies are generated in Step 6, the export also includes:
 
 * `emission_policies.csv` - Policy constraints table (written to `extra_inputs/` in **Download All**).
 
-##### How Per-Year Overrides Work
+##### How Year-Specific Resources Work
 
-The generated `scenario_management.yml` follows PowerGenome's `settings_management` structure:
+When any New Resources (Step 4) are tagged to a **specific planning year** (rather than "All (default)"), PowerGenome's year-keyed settings format is used directly in `resources.yml`.
+
+For example, if you have NaturalGas as an "All" resource and add UtilityPV for 2030 only:
 
 ```yaml
-settings_management:
+new_resources:
+  default:
+    - [NaturalGas, CC, Moderate, 500]  # applies to all years
   2030:
-    all_cases:
-      new_resources: [...]  # "all" list + 2030-specific additions
-      resource_modifiers:   # "all" modifiers merged with 2030-specific keys
-        ...
-  2035:
-    all_cases:
-      new_resources: [...]  # "all" list + 2035-specific additions
-      resource_modifiers:   # "all" modifiers merged with 2035-specific keys (if any)
+    - [NaturalGas, CC, Moderate, 500]  # base list repeated
+    - [UtilityPV, Class1, Moderate, 100]  # 2030-specific addition
+
+resource_modifiers:
+  naturalgas_cc:
+    technology: NaturalGas
+    tech_detail: CC
+  utilitypv_class1:
+    technology: UtilityPV
+    tech_detail: Class1
+    capex_mw:
+      default: [mul, 1]
+      2030: [mul, 0.9]
 ```
 
-* Resources tagged "All (default)" form the base `new_resources` list in `resources.yml`.
-* For each year that has year-specific resources, the generated `new_resources` list is the full "all" list **plus** year-specific additions.
-* Resource modifiers merge by key: year-specific keys override "all" keys for that year.
+* Resources tagged "All (default)" form the `default` list in `resources.yml`.
+* For each year that has year-specific resources, the year key contains the full "all" list **plus** year-specific additions.
+* PowerGenome resolves one value per planning year: years with an explicit key use that value; other years fall back to `default`.
+* In `resource_modifiers`, resource keys stay at the top level; only changed fields become year-keyed.
+* If a field is only specified for particular years, a neutral `default` value is included (for example, `[mul, 1]`).
 
 The app intentionally **does not generate** these files (configure separately):
 
 * `data.yml`
 * `time_clustering.yml`
 * `demand.yml`
-
-!!! note
-    `scenario_management.yml`, `scenario_inputs.csv`, and `extra_inputs.yml` are only generated when year-specific resources exist. If you later remove all year-specific resources, these files will no longer be included in the export.
 
 ### How to Export
 
