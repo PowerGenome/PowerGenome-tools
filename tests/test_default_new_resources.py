@@ -84,9 +84,9 @@ def cluster_app():
 EXPECTED_ENTRIES = [
     {
         "technology": "NaturalGas",
-        "tech_detail": "2-on-1 Combined Cycle (F-Frame)",
+        "tech_detail": "2-on-1 Combined Cycle (H-Frame)",
         "cost_case": "Moderate",
-        "size_mw": 727,
+        "size_mw": 992,
         "planning_year": "all",
     },
     {
@@ -128,7 +128,14 @@ EXPECTED_ENTRIES = [
     },
 ]
 
-REQUIRED_KEYS = {"technology", "tech_detail", "cost_case", "size_mw", "planning_year", "data_year"}
+REQUIRED_KEYS = {
+    "technology",
+    "tech_detail",
+    "cost_case",
+    "size_mw",
+    "planning_year",
+    "data_year",
+}
 BATTERY_OPTIONAL_KEYS = {"variable_o_m_mwh", "variable_o_m_mwh_in"}
 
 

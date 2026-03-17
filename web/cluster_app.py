@@ -95,9 +95,9 @@ _BATTERY_DEFAULT_VAR_OM_IN = 0.15
 _DEFAULT_NEW_RESOURCES = [
     {
         "technology": "NaturalGas",
-        "tech_detail": "2-on-1 Combined Cycle (F-Frame)",
+        "tech_detail": "2-on-1 Combined Cycle (H-Frame)",
         "cost_case": "Moderate",
-        "size_mw": 727,
+        "size_mw": 992,
         "planning_year": "all",
         "data_year": 2024,
     },

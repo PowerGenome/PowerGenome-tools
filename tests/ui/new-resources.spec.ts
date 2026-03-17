@@ -77,7 +77,7 @@ test.describe('New Resources — click to populate ATB picker', () => {
 
         // Tech Detail for the first default resource
         await expect(page().locator('#atbTechDetailSelect')).toHaveValue(
-            '2-on-1 Combined Cycle (F-Frame)'
+            '2-on-1 Combined Cycle (H-Frame)'
         );
     });
 
@@ -96,8 +96,8 @@ test.describe('New Resources — click to populate ATB picker', () => {
         const firstItem = newResources().item(0);
         await firstItem.click();
 
-        // NaturalGas CC size is 727 MW
-        await expect(page().locator('#atbSizeMw')).toHaveValue('727');
+        // NaturalGas CC size is 992 MW
+        await expect(page().locator('#atbSizeMw')).toHaveValue('992');
     });
 
     test('clicking a resource item sets the Planning Year to "all"', async () => {
