@@ -205,7 +205,8 @@ def build_state_trading_zones(all_states, rectable_df, state_to_interconnect=Non
     if rectable_df is None or len(all_states) <= 1:
         return [set(all_states)]
 
-    states_list = list(all_states)
+    # Sort states so zone numbering and downstream ESR column numbering are stable.
+    states_list = sorted(all_states)
 
     # Build a graph of trading relationships between states
     # For states to be in the same zone, they must have BIDIRECTIONAL trading
@@ -243,7 +244,7 @@ def build_state_trading_zones(all_states, rectable_df, state_to_interconnect=Non
     def dfs(state, zone):
         visited.add(state)
         zone.add(state)
-        for neighbor in trading_graph[state]:
+        for neighbor in sorted(trading_graph[state]):
             if neighbor not in visited:
                 dfs(neighbor, zone)
 
@@ -253,7 +254,7 @@ def build_state_trading_zones(all_states, rectable_df, state_to_interconnect=Non
             dfs(state, zone)
             zones.append(zone)
 
-    return zones
+    return sorted(zones, key=lambda zone: tuple(sorted(zone)))
 
 
 def build_state_to_interconnect_map(hierarchy_df):
@@ -506,6 +507,8 @@ def generate_emission_policies_csv(
             esr_constraint_num += 1
         zone_esr_map[zone_idx] = (zone_rps, zone_ces)
 
+    expected_esr_cols = sorted(esr_map.keys(), key=lambda x: int(x.split("_")[1]))
+
     rows = []
 
     for region_name, region_bas in region_aggregations.items():
@@ -521,6 +524,9 @@ def generate_emission_policies_csv(
             row = {"case_id": case_id, "year": int(year), "region": region_name}
             use_year_rps = min(year, max_year_in_data_rps)
             use_year_ces = min(year, max_year_in_data_ces)
+
+            for esr_col in expected_esr_cols:
+                row[esr_col] = 0.0
 
             # For each zone, compute the weighted policy value from states in that zone
             for zone_idx, zone_states in enumerate(state_zones):
@@ -546,7 +552,6 @@ def generate_emission_policies_csv(
                         )
                         ces_val += demand_frac * state_ces
 
-                # Only add to row if there's a non-zero contribution
                 if zone_rps_col and rps_val > 0:
                     row[zone_rps_col] = round(float(rps_val), 3)
                     if region_name not in esr_map[zone_rps_col]:
@@ -584,6 +589,9 @@ def generate_emission_policies_csv(
     esr_cols = [c for c in df.columns if c.startswith("ESR_")]
     for col in esr_cols:
         df[col] = df[col].fillna(0.0)
+
+    if not df.empty:
+        df = df.sort_values(by=["region"], kind="stable").reset_index(drop=True)
 
     # Sort ESR columns by numeric ID
     esr_cols_sorted = sorted(esr_cols, key=lambda x: int(x.split("_")[1]))

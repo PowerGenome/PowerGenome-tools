@@ -1145,6 +1145,131 @@ class TestESRPolicyFunctions:
         for key in esr_map:
             assert key.startswith("ESR_")
 
+    def test_generate_emission_policies_includes_zero_only_esr_columns_for_all_zones(
+        self, cluster_app, hierarchy_df, rectable_df
+    ):
+        pop_df = pd.DataFrame(
+            {
+                "region": ["ca", "nv", "tx"],
+                "st": ["ca", "nv", "tx"],
+                "total_population": [1000.0, 500.0, 800.0],
+            }
+        )
+        rps = pd.DataFrame({"year": [2030], "st": ["ca"], "rps_all": [0.3]})
+        ces = pd.DataFrame({"year": [2030], "st": ["ca"], "Value": [0.4]})
+        region_aggs = {"RegA": ["ca", "nv"], "RegB": ["tx"]}
+        state_zones, state_to_zone = cluster_app.build_esr_zones(
+            region_aggs, hierarchy_df, rectable_df
+        )
+
+        df, _, _, _ = cluster_app.generate_emission_policies_csv(
+            region_aggs,
+            [2030],
+            state_zones,
+            state_to_zone,
+            hierarchy_df,
+            pop_df,
+            rps,
+            ces,
+        )
+
+        assert list(df.columns) == [
+            "case_id",
+            "year",
+            "region",
+            "ESR_1",
+            "ESR_2",
+            "ESR_3",
+            "ESR_4",
+        ]
+        assert (df[["ESR_3", "ESR_4"]] == 0.0).all().all()
+        assert not df[["ESR_3", "ESR_4"]].isna().any().any()
+
+    def test_generate_emission_policies_sorts_esr_columns_by_numeric_suffix(
+        self, cluster_app, hierarchy_df
+    ):
+        region_aggs = {
+            "RegCA": ["ca"],
+            "RegNV": ["nv"],
+            "RegTX": ["tx"],
+            "RegOK": ["ok"],
+            "RegCO": ["co"],
+        }
+        state_zones = [{"ca"}, {"nv"}, {"tx"}, {"ok"}, {"co"}]
+        state_to_zone = {"ca": 0, "nv": 1, "tx": 2, "ok": 3, "co": 4}
+        pop_df = pd.DataFrame(
+            {
+                "region": ["ca", "nv", "tx", "ok", "co"],
+                "st": ["ca", "nv", "tx", "ok", "co"],
+                "total_population": [1000.0, 500.0, 800.0, 300.0, 400.0],
+            }
+        )
+        rps = pd.DataFrame({"year": [2030], "st": ["ca"], "rps_all": [0.3]})
+        ces = pd.DataFrame({"year": [2030], "st": ["ca"], "Value": [0.4]})
+
+        df, _, _, _ = cluster_app.generate_emission_policies_csv(
+            region_aggs,
+            [2030],
+            state_zones,
+            state_to_zone,
+            hierarchy_df,
+            pop_df,
+            rps,
+            ces,
+        )
+
+        assert list(df.columns) == [
+            "case_id",
+            "year",
+            "region",
+            "ESR_1",
+            "ESR_2",
+            "ESR_3",
+            "ESR_4",
+            "ESR_5",
+            "ESR_6",
+            "ESR_7",
+            "ESR_8",
+            "ESR_9",
+            "ESR_10",
+        ]
+        assert (df[["ESR_9", "ESR_10"]] == 0.0).all().all()
+        assert not df[["ESR_9", "ESR_10"]].isna().any().any()
+
+    def test_generate_emission_policies_sorts_rows_by_region_name(
+        self, cluster_app, hierarchy_df
+    ):
+        region_aggs = {
+            "Zeta": ["tx"],
+            "Alpha": ["ca"],
+            "Beta": ["nv"],
+        }
+        state_zones = [{"tx"}, {"ca"}, {"nv"}]
+        state_to_zone = {"tx": 0, "ca": 1, "nv": 2}
+        pop_df = pd.DataFrame(
+            {
+                "region": ["tx", "ca", "nv"],
+                "st": ["tx", "ca", "nv"],
+                "total_population": [800.0, 1000.0, 500.0],
+            }
+        )
+        rps = pd.DataFrame({"year": [2030], "st": ["ca"], "rps_all": [0.3]})
+        ces = pd.DataFrame({"year": [2030], "st": ["ca"], "Value": [0.4]})
+
+        df, _, _, _ = cluster_app.generate_emission_policies_csv(
+            region_aggs,
+            [2030],
+            state_zones,
+            state_to_zone,
+            hierarchy_df,
+            pop_df,
+            rps,
+            ces,
+        )
+
+        assert df["region"].tolist() == ["Alpha", "Beta", "Zeta"]
+        assert df["region"].tolist() == sorted(df["region"].tolist())
+
 
 # ---------------------------------------------------------------------------
 # 11. Technology normalization
