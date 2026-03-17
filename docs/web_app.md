@@ -521,7 +521,7 @@ When the app loads, Step 4 comes pre-populated with **6 ATB 2024 new-build resou
 
 | Technology | Tech Detail | Cost Case |
 |---|---|---|
-| NaturalGas | 2-on-1 Combined Cycle (F-Frame) | Moderate |
+| NaturalGas | 2-on-1 Combined Cycle (H-Frame) | Moderate |
 | NaturalGas | Combustion Turbine (F-Frame) | Moderate |
 | LandbasedWind | Class3 | Moderate |
 | UtilityPV | Class1 | Moderate |
