@@ -918,7 +918,7 @@ def update_no_cluster_options():
         color = state.group_colors.get(val, "#666666")
         html += f"""
             <label>
-                <input type="checkbox" name="noCluster" value="{val}">
+                <input type="checkbox" name="noCluster" value="{val}" onchange="syncGroupCheckboxes(this)">
                 <span style="display:inline-block;width:12px;height:12px;background:{color};border-radius:2px;margin-right:4px;vertical-align:middle;"></span>
                 {val}
             </label>
@@ -933,7 +933,7 @@ def update_no_cluster_options():
         color = state.group_colors.get(val, "#666666")
         force_html += f"""
             <label>
-                <input type="checkbox" name="forceCluster" value="{val}">
+                <input type="checkbox" name="forceCluster" value="{val}" onchange="syncGroupCheckboxes(this)">
                 <span style="display:inline-block;width:12px;height:12px;background:{color};border-radius:2px;margin-right:4px;vertical-align:middle;"></span>
                 {val}
             </label>

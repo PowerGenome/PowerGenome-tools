@@ -1658,7 +1658,8 @@
                                     to keep them as individual BAs (they will not be merged with others).</li>
                                 <li><strong>Force groups together:</strong> Check any groups in <em>Groups to Cluster
                                         Together</em>
-                                    to ensure all BAs in that group end up in the same single region. Each checked group is merged independently.</li>
+                                    to ensure all BAs in that group end up in the same single region. Each checked group
+                                    is merged independently.</li>
                                 <li><strong>Run clustering:</strong> Click <em>Run Clustering</em> to generate the
                                     region
                                     aggregations. The map will update to show the new regions.</li>
@@ -2922,6 +2923,24 @@
                         window.invalidateRenewablesMaps();
                     }, 100);
                 }
+            }
+        }
+
+        // Sync group checkboxes: disable a value in one list when it is checked in the other
+        function syncGroupCheckboxes(changed) {
+            const otherName = changed.name === 'noCluster' ? 'forceCluster' : 'noCluster';
+            const otherContainerId = changed.name === 'noCluster' ? 'forceClusterContainer' : 'noClusterContainer';
+            const otherContainer = document.getElementById(otherContainerId);
+            if (!otherContainer) return;
+            const counterpart = otherContainer.querySelector(
+                'input[name="' + otherName + '"][value="' + CSS.escape(changed.value) + '"]'
+            );
+            if (!counterpart) return;
+            counterpart.disabled = changed.checked;
+            const lbl = counterpart.closest('label');
+            if (lbl) {
+                lbl.style.opacity = changed.checked ? '0.4' : '';
+                lbl.style.cursor = changed.checked ? 'not-allowed' : '';
             }
         }
 
