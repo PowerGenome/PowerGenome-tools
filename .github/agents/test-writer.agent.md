@@ -26,3 +26,8 @@ An expert Python test author focused on writing high-quality, maintainable tests
 - New or updated test modules alongside the code under test (mirrored package paths when possible).
 - Any required fixtures/factories or sample data added under `tests/`.
 - Brief notes on coverage gaps addressed and remaining risks when handing off.
+
+
+## Environment
+- Use uv with the local venv
+- Only fall back to the system Python if the venv is not available or does not have the required dependencies installed.
