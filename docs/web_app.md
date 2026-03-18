@@ -47,7 +47,7 @@ The guided workflow ensures you configure all necessary settings in the correct 
 4. **New Resources** - Select new-build technologies and define custom resources
 5. **Fuels** - Choose fuel price scenarios
 6. **ESR Policies** - Configure Energy Share Requirements for state-level policies (optional)
-7. **Interconnection** - Configure default interconnection costs and generate resource group files for wind and solar
+7. **Interconnection** - Configure default interconnection costs, generate resource group files for wind and solar, and review how region-level network costs are produced for export
 8. **Renewables Clustering** - Build renewables_clusters settings using demand shares and resource group LCOE tables
 9. **Export** - Generate and download complete settings YAML files
 
@@ -856,6 +856,8 @@ The ESR step generates `emission_policies.csv` containing:
 
 The Interconnection step allows you to configure interconnection costs for your model resources and generate the resource group files needed for wind and solar resources.
 
+After model regions are finalized in Step 1, the app also computes a region-level network cost table used for export. See [Network Cost Calculation](network_costs.md) for the full method and output schema.
+
 ### Default Interconnection Cost
 
 The default interconnection cost applies to resources like natural gas, batteries, or nuclear that don't have specific geospatial locations. This value is written to the `interconnect_capex_mw` setting in `resources.yml`.
@@ -897,6 +899,7 @@ These parquet files, along with accompanying JSON files containing generation pr
 * **Solar LCOE parquet**: Regional LCOE table for solar resources
 * **Onshore wind LCOE parquet**: Regional LCOE table for onshore wind resources
 * **Resource group JSON**: Resource group metadata (profiles + site maps)
+* **Network costs table (in app state)**: Region-to-region cost/loss/distance metrics, exported in Step 9 when available
 
 Downloads from this tab are provided as a single ZIP archive.
 
@@ -1026,12 +1029,19 @@ This includes:
 
 * `settings/*.yml` (always for core settings)
 * `extra_inputs/emission_policies.csv` (only when ESR policies are generated)
+* `data/network_costs.csv` (only when network costs were computed successfully)
 
 #### Conditional ESR Policy File
 
 If ESR policies are generated in Step 6, the export also includes:
 
 * `emission_policies.csv` - Policy constraints table (written to `extra_inputs/` in **Download All**).
+
+#### Conditional Network Cost File
+
+If network costs were computed after regions were finalized, the export also includes:
+
+* `network_costs.csv` - Region-to-region transmission proxy table (written to `data/` in **Download All**). See [Network Cost Calculation](network_costs.md).
 
 ##### How Year-Specific Resources Work
 
