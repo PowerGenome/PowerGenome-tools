@@ -8250,8 +8250,9 @@ async def _ensure_network_data_cache():
 async def _run_network_cost_calculation():
     """Compute inter-regional network upgrade costs using the current region aggregation.
 
-    Stores the result in ``state.network_costs_df``.  On failure logs a warning
-    via ``set_status`` but does not override a previous clustering success message.
+    Stores the result in ``state.network_costs_df``. On failure clears
+    ``state.network_costs_df`` and reports a warning via ``set_status``, which
+    will update the status panel with the error details.
     """
     if not state.region_aggregations:
         return
