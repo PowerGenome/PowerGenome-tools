@@ -79,6 +79,7 @@ from visualization_utils import (
     GROUP_OUTLINE_COLORS,
     lighten_color,
 )
+from calc_network import calculate_network_from_frames
 
 # ============================================================================
 # Global State
@@ -265,6 +266,10 @@ class AppState:
         self.esr_type_map = None  # ESR constraint name -> "RPS" or "CES"
         self.esr_policy_states = None  # ESR constraint name -> set of policy states
         self.emission_policies_df = None  # Generated emission_policies.csv
+
+        # Network cost calculation
+        self.network_costs_df = None  # pd.DataFrame result from calc_network
+        self.network_data_cache = None  # (nodes_df, edges_df, topo_df) loaded once
 
 
 state = AppState()
@@ -1680,6 +1685,9 @@ def on_run_clustering(event):
     # Refresh plant cluster defaults based on new region mapping
     update_default_cluster_budget()
 
+    # Compute network upgrade costs for the new region aggregation
+    asyncio.create_task(_run_network_cost_calculation())
+
 
 def update_map_cluster_colors(region_aggregations):
     """Update map to show cluster assignments with group outline colors preserved."""
@@ -1938,6 +1946,9 @@ def reset_region_dependent_state():
     state.emission_policies_df = None
     # Note: esr_rps_techs and esr_ces_techs are set during ESR generation
     # and don't persist in AppState, so no reset needed
+
+    # Network costs depend on region aggregations; cache of raw data files is kept
+    state.network_costs_df = None
 
     # After resetting region-dependent state, refresh UI panels that depend
     # on these values so they don't display stale data.
@@ -2217,6 +2228,9 @@ def on_finalize_manual(event):
         f"Manual regions finalized! {num_regions} regions created with {total_bas} BAs.",
         "success",
     )
+
+    # Compute network upgrade costs for the new region aggregation
+    asyncio.create_task(_run_network_cost_calculation())
 
 
 def on_clear_manual_regions(event):
@@ -8212,6 +8226,45 @@ async def _fetch_csv_df(url, **kwargs):
     return pd.read_csv(StringIO(text), **kwargs)
 
 
+async def _ensure_network_data_cache():
+    """Fetch and cache network data files (nodes, edges, topology) on first call.
+
+    Subsequent calls return immediately without re-fetching.  The cache lives in
+    ``state.network_data_cache`` as a ``(nodes_df, edges_df, topo_df)`` tuple.
+    """
+    if state.network_data_cache is not None:
+        return
+    nodes_df = await _fetch_csv_df(
+        "./data/network_data/nodes.csv", dtype={"msa_id": str}
+    )
+    edges_df = await _fetch_parquet_df("./data/network_data/edges.parquet")
+    topo_df = await _fetch_csv_df("./data/network_data/topology_base.csv")
+    state.network_data_cache = (nodes_df, edges_df, topo_df)
+
+
+async def _run_network_cost_calculation():
+    """Compute inter-regional network upgrade costs using the current region aggregation.
+
+    Stores the result in ``state.network_costs_df``.  On failure logs a warning
+    via ``set_status`` but does not override a previous clustering success message.
+    """
+    if not state.region_aggregations:
+        return
+    try:
+        await _ensure_network_data_cache()
+        nodes_df, edges_df, topo_df = state.network_data_cache
+        settings = {
+            "model_regions": list(state.region_aggregations.keys()),
+            "region_aggregations": state.region_aggregations,
+        }
+        state.network_costs_df = calculate_network_from_frames(
+            nodes_df, edges_df, topo_df, settings=settings
+        )
+    except Exception as exc:
+        state.network_costs_df = None
+        set_status(f"Warning: network cost calculation failed: {exc}", "warning")
+
+
 async def _load_pyodide_package(name: str) -> bool:
     try:
         import pyodide_js
@@ -8536,6 +8589,12 @@ def on_download_all_settings(event):
         if state.emission_policies_df is not None:
             csv_content = state.emission_policies_df.to_csv(index=False)
             zipf.writestr("extra_inputs/emission_policies.csv", csv_content)
+
+        # Write network_costs.csv under data/ if it has been computed.
+        if state.network_costs_df is not None:
+            zipf.writestr(
+                "data/network_costs.csv", state.network_costs_df.to_csv(index=False)
+            )
 
     zip_name = "powergenome_settings.zip"
     _download_binary_file(zip_name, buffer.getvalue(), "application/zip")

@@ -1,0 +1,26 @@
+{
+  "created_at": "2026-03-18T02:36:13.540096+00:00",
+  "connections_source": "/Users/gs5183/Documents/resource-clustering/data/costs-20250406/all_substation_data_temp_20250406.parquet",
+  "substations_source": "/Users/gs5183/Documents/resource-clustering/data/substations_urban_convex_reeds_20250403.csv",
+  "base_region_column": "IPM_Region",
+  "excluded_sub_id": 124169,
+  "scan_prefixes": [
+    "transreg",
+    "transgrp",
+    "nerc",
+    "ReEDS",
+    "interconnect",
+    "state"
+  ],
+  "num_substation_ids": 628,
+  "num_edges": 100791,
+  "num_nodes": 274,
+  "num_topology_rows": 604,
+  "notes": [
+    "edges.parquet columns: start_id, dest_id, u (msa_id), v (msa_id), u_base_region, v_base_region, cost ($/MW), dist (km), line_loss_frac, is_hvdc (bool)",
+    "nodes.csv: msa_id (CBSAFP str), pop, base_region",
+    "sub_to_msa.csv: substation_id (int32), msa_id (str)",
+    "topology_base.csv: region_from_base, region_to_base (both directions included)",
+    "No region_aggregations applied here; apply at calc time via settings."
+  ]
+}
