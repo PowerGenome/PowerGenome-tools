@@ -1685,13 +1685,8 @@ def on_run_clustering(event):
     # Refresh plant cluster defaults based on new region mapping
     update_default_cluster_budget()
 
-    # Compute network upgrade costs for the new region aggregation.
-    # Cancel any in-flight network cost calculation so stale results
-    # from a previous clustering run cannot overwrite the latest state.
-    existing_task = getattr(state, "network_cost_task", None)
-    if existing_task is not None and not existing_task.done():
-        existing_task.cancel()
-    state.network_cost_task = asyncio.create_task(_run_network_cost_calculation())
+    # Compute network upgrade costs for the new region aggregation
+    asyncio.create_task(_run_network_cost_calculation())
 
 
 def update_map_cluster_colors(region_aggregations):
@@ -8250,9 +8245,8 @@ async def _ensure_network_data_cache():
 async def _run_network_cost_calculation():
     """Compute inter-regional network upgrade costs using the current region aggregation.
 
-    Stores the result in ``state.network_costs_df``. On failure clears
-    ``state.network_costs_df`` and reports a warning via ``set_status``, which
-    will update the status panel with the error details.
+    Stores the result in ``state.network_costs_df``.  On failure logs a warning
+    via ``set_status`` but does not override a previous clustering success message.
     """
     if not state.region_aggregations:
         return

@@ -51,7 +51,7 @@ This approach means that a region's total network cost to reach any other region
 
 ## Purpose
 
-The network cost calculation produces a directional region-to-region table with:
+The network cost calculation produces one canonical row per unordered region pair with:
 
 * Interregional transmission upgrade proxy cost
 * Interregional line losses
@@ -85,13 +85,13 @@ If a region has too little internal structure (for example, only one major MSA o
 
 ## How Between-Region Links Are Chosen
 
-For each directed region pair in the topology:
+For each region pair in the topology:
 
 1. Find candidate links that connect major MSAs across the two regions.
 2. Choose the single lowest-cost candidate.
-3. Keep that directional link as the interregional component.
+3. Keep that link as the interregional component for the canonical pair row.
 
-If no valid candidate exists for a directed pair, that row is omitted.
+If no valid candidate exists for a region pair, that row is omitted.
 
 ## Total Metrics
 
@@ -136,7 +136,7 @@ Region mapping is built from these fields. If no aggregation is provided, each l
 
 #### Optional settings fields
 
-* `network_lines`: Additional region pairs to force into topology consideration. Each pair is added in both directions.
+* `network_lines`: Additional region pairs to force into topology consideration. Each pair is treated as an unordered connection and canonicalized to one output row.
 
 #### Key parameter
 
@@ -151,7 +151,7 @@ The implementation is in `web/calc_network.py`, function `calculate_network_from
    * Drop rows that cannot be mapped.
 2. Add optional topology pairs:
    * If `settings.network_lines` is present, map each pair to model regions.
-   * Add both forward and reverse directions.
+   * Canonicalize the pair so only one row is kept per connection.
 3. Select major MSAs in each region:
    * Major MSA set = MSAs with population >= `pop_threshold`.
    * Fallback: if none meet threshold, use the single largest-population MSA for that region.
@@ -162,15 +162,15 @@ The implementation is in `web/calc_network.py`, function `calculate_network_from
    * Compute the minimum spanning tree (MST) on that MSA-level graph.
    * Compute population-weighted average cost/loss/distance over MST links to get intraregional adders.
 5. Compute interregional component per topology pair:
-   * For each directed topology row (`start_region`, `dest_region`), evaluate candidate edges connecting major MSAs across the two regions.
+   * For each canonical topology row (`start_region`, `dest_region`), evaluate candidate edges connecting major MSAs across the two regions.
    * Choose the single candidate edge with minimum `cost`.
-   * Keep direction aligned with the topology row.
+   * Store the result under a deterministic region ordering so reverse duplicates are not emitted.
 6. Assemble totals:
    * Total metrics are interregional value plus start-region intraregional adder plus destination-region intraregional adder.
 
 ## Output Schema
 
-Output rows are directional (start region -> destination region).
+Output rows are canonical unordered region pairs. `start_region` and `dest_region` are stored in deterministic sorted order so the CSV contains only one row for each connection.
 
 | Column | Description | Units |
 | ------ | ----------- | ----- |
@@ -197,7 +197,7 @@ Output rows are directional (start region -> destination region).
 * If a region has fewer than two major MSAs, intraregional adders for that region remain zero.
 * If no valid within-region paths exist among major MSAs, intraregional adders remain zero.
 * If no candidate interregional edge exists for a topology pair, that pair is omitted from output.
-* If mapped topology is empty, topology is inferred from observed cross-region edges (both directions).
+* If mapped topology is empty, topology is inferred from observed cross-region edges and canonicalized to one row per pair.
 * Unmapped rows (nodes/edges/topology) are dropped during region mapping.
 * Topology self-loops are removed.
 
@@ -208,6 +208,5 @@ Output rows are directional (start region -> destination region).
 
 * This is a heuristic approximation, not a full transmission expansion optimization.
 * Results depend on the quality and assumptions of preprocessed network data (`nodes.csv`, `edges.parquet`, `topology_base.csv`).
-* Interregional links are represented by a single cheapest candidate edge per directed topology pair.
+* Interregional links are represented by a single cheapest candidate edge per canonical region pair.
 * Intraregional adders are based on major-MSA filtering plus MST aggregation, which intentionally simplifies full network detail.
-* Directional rows may not be symmetric if candidate edge directionality or mapped topology differ.
