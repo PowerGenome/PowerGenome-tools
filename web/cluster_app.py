@@ -8265,6 +8265,50 @@ async def _run_network_cost_calculation():
         set_status(f"Warning: network cost calculation failed: {exc}", "warning")
 
 
+def _build_network_costs_filename() -> str:
+    """Return a descriptive filename for the network costs CSV export.
+
+    The name encodes:
+    - the number of model regions (e.g. ``10r``)
+    - the interconnects represented by the selected BAs, sorted and joined with
+      hyphens (e.g. ``eastern-western``); each name is sanitized to
+      alphanumeric, underscore, and hyphen characters so the result is always a
+      safe filesystem name
+    - the grouping column used for clustering (e.g. ``nercr``)
+
+    Falls back to descriptive placeholder values when the relevant state
+    attributes are unavailable.
+    Example: ``network_costs_10r_eastern-western_nercr.csv``.
+    """
+
+    def _safe(s: str) -> str:
+        """Sanitize a string segment for use in a filename."""
+        return re.sub(r"[^A-Za-z0-9_-]", "_", s)
+
+    # --- number of regions ---
+    regions_part = ""
+    if state.region_aggregations is not None:
+        n_regions = len(state.region_aggregations)
+        regions_part = f"_{n_regions}r"
+
+    # --- interconnections present in the selected BAs ---
+    interconnects_part = "unspecified"
+    if state.hierarchy_df is not None and state.selected_bas:
+        mask = state.hierarchy_df["ba"].isin(state.selected_bas)
+        unique_ix = sorted(
+            state.hierarchy_df.loc[mask, "interconnect"].dropna().unique()
+        )
+        if unique_ix:
+            interconnects_part = "-".join(_safe(ix) for ix in unique_ix)
+
+    # --- grouping column ---
+    grouping_part = (
+        _safe(state.current_grouping) if state.current_grouping else "default"
+    )
+
+    return f"network_costs{regions_part}_{interconnects_part}_{grouping_part}.csv"
+
+
 async def _load_pyodide_package(name: str) -> bool:
     try:
         import pyodide_js
@@ -8592,8 +8636,10 @@ def on_download_all_settings(event):
 
         # Write network_costs.csv under data/ if it has been computed.
         if state.network_costs_df is not None:
+            network_costs_filename = _build_network_costs_filename()
             zipf.writestr(
-                "data/network_costs.csv", state.network_costs_df.to_csv(index=False)
+                f"data/{network_costs_filename}",
+                state.network_costs_df.to_csv(index=False),
             )
 
     zip_name = "powergenome_settings.zip"
