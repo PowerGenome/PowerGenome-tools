@@ -528,3 +528,254 @@ class TestResetUploadedLcoeState:
 
         assert cluster_app.state.uploaded_lcoe_onshorewind is None
         assert cluster_app.state.uploaded_lcoe_solar is None
+
+
+# ---------------------------------------------------------------------------
+# Tests for _build_network_costs_filename()
+# ---------------------------------------------------------------------------
+
+
+class TestBuildNetworkCostsFilename:
+    """Tests for the _build_network_costs_filename() helper."""
+
+    # ------------------------------------------------------------------
+    # helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _make_hierarchy(bas, interconnects):
+        """Return a minimal hierarchy DataFrame with 'ba' and 'interconnect' columns."""
+        import pandas as pd
+
+        return pd.DataFrame({"ba": bas, "interconnect": interconnects})
+
+    # ------------------------------------------------------------------
+    # full-fallback path
+    # ------------------------------------------------------------------
+
+    def test_all_fallbacks_when_state_empty(self, cluster_app):
+        """When no state is set the filename uses safe placeholder values."""
+        cluster_app.state.region_aggregations = None
+        cluster_app.state.hierarchy_df = None
+        cluster_app.state.selected_bas = set()
+        cluster_app.state.current_grouping = None
+
+        result = cluster_app._build_network_costs_filename()
+
+        assert result == "network_costs_unspecified_default.csv"
+        assert "__" not in result
+
+    # ------------------------------------------------------------------
+    # region count
+    # ------------------------------------------------------------------
+
+    def test_region_count_included(self, cluster_app):
+        """Region count reflects the length of region_aggregations."""
+        cluster_app.state.region_aggregations = {
+            "RegionA": ["ba1", "ba2"],
+            "RegionB": ["ba3"],
+            "RegionC": ["ba4"],
+        }
+        cluster_app.state.hierarchy_df = None
+        cluster_app.state.selected_bas = set()
+        cluster_app.state.current_grouping = None
+
+        result = cluster_app._build_network_costs_filename()
+
+        assert result == "network_costs_3r_unspecified_default.csv"
+        assert "__" not in result
+
+    def test_zero_regions_when_aggregations_is_none(self, cluster_app):
+        """region_aggregations=None omits the regions segment entirely."""
+        cluster_app.state.region_aggregations = None
+        cluster_app.state.hierarchy_df = None
+        cluster_app.state.selected_bas = set()
+        cluster_app.state.current_grouping = "nercr"
+
+        result = cluster_app._build_network_costs_filename()
+
+        assert result == "network_costs_unspecified_nercr.csv"
+        assert "__" not in result
+
+    # ------------------------------------------------------------------
+    # interconnects part
+    # ------------------------------------------------------------------
+
+    def test_single_interconnect(self, cluster_app):
+        """A single interconnect appears verbatim in the filename."""
+        cluster_app.state.region_aggregations = None
+        cluster_app.state.selected_bas = {"ba1", "ba2"}
+        cluster_app.state.hierarchy_df = self._make_hierarchy(
+            ["ba1", "ba2", "ba3"], ["eastern", "eastern", "western"]
+        )
+        cluster_app.state.current_grouping = None
+
+        result = cluster_app._build_network_costs_filename()
+
+        assert "eastern" in result
+        assert "western" not in result
+
+    def test_multiple_interconnects_sorted_and_joined(self, cluster_app):
+        """Multiple interconnects are sorted alphabetically and joined with hyphens."""
+        cluster_app.state.region_aggregations = None
+        cluster_app.state.selected_bas = {"ba1", "ba2"}
+        cluster_app.state.hierarchy_df = self._make_hierarchy(
+            ["ba1", "ba2"], ["western", "eastern"]
+        )
+        cluster_app.state.current_grouping = None
+
+        result = cluster_app._build_network_costs_filename()
+
+        # sorted → eastern before western
+        assert "eastern-western" in result
+
+    def test_interconnect_unspecified_when_hierarchy_df_is_none(self, cluster_app):
+        """No hierarchy_df → interconnects part is 'unspecified'."""
+        cluster_app.state.region_aggregations = None
+        cluster_app.state.hierarchy_df = None
+        cluster_app.state.selected_bas = {"ba1"}
+        cluster_app.state.current_grouping = None
+
+        result = cluster_app._build_network_costs_filename()
+
+        assert "unspecified" in result
+
+    def test_interconnect_unspecified_when_selected_bas_empty(self, cluster_app):
+        """Empty selected_bas → interconnects part is 'unspecified'."""
+        cluster_app.state.region_aggregations = None
+        cluster_app.state.selected_bas = set()
+        cluster_app.state.hierarchy_df = self._make_hierarchy(["ba1"], ["eastern"])
+        cluster_app.state.current_grouping = None
+
+        result = cluster_app._build_network_costs_filename()
+
+        assert "unspecified" in result
+
+    def test_interconnect_unspecified_when_bas_not_in_hierarchy(self, cluster_app):
+        """BAs not present in hierarchy_df → mask matches nothing → 'unspecified'."""
+        cluster_app.state.region_aggregations = None
+        cluster_app.state.selected_bas = {"unknown_ba"}
+        cluster_app.state.hierarchy_df = self._make_hierarchy(
+            ["ba1", "ba2"], ["eastern", "western"]
+        )
+        cluster_app.state.current_grouping = None
+
+        result = cluster_app._build_network_costs_filename()
+
+        assert "unspecified" in result
+
+    def test_interconnect_unspecified_when_all_interconnects_are_nan(self, cluster_app):
+        """NaN interconnect values are dropped → unique_ix is empty → 'unspecified'."""
+        import numpy as np
+
+        cluster_app.state.region_aggregations = None
+        cluster_app.state.selected_bas = {"ba1"}
+        cluster_app.state.hierarchy_df = self._make_hierarchy(["ba1"], [np.nan])
+        cluster_app.state.current_grouping = None
+
+        result = cluster_app._build_network_costs_filename()
+
+        assert "unspecified" in result
+
+    def test_interconnect_special_chars_sanitized(self, cluster_app):
+        """Special characters in interconnect names are replaced with underscores."""
+        cluster_app.state.region_aggregations = None
+        cluster_app.state.selected_bas = {"ba1"}
+        cluster_app.state.hierarchy_df = self._make_hierarchy(
+            ["ba1"], ["East/North America"]
+        )
+        cluster_app.state.current_grouping = None
+
+        result = cluster_app._build_network_costs_filename()
+
+        # spaces and '/' become underscores; no raw special chars
+        assert "/" not in result
+        assert " " not in result
+
+    # ------------------------------------------------------------------
+    # grouping part
+    # ------------------------------------------------------------------
+
+    def test_grouping_column_included(self, cluster_app):
+        """current_grouping value appears in the filename."""
+        cluster_app.state.region_aggregations = None
+        cluster_app.state.hierarchy_df = None
+        cluster_app.state.selected_bas = set()
+        cluster_app.state.current_grouping = "nercr"
+
+        result = cluster_app._build_network_costs_filename()
+
+        assert result.endswith("_nercr.csv")
+
+    def test_grouping_fallback_to_default_when_none(self, cluster_app):
+        """None grouping → 'default' segment."""
+        cluster_app.state.region_aggregations = None
+        cluster_app.state.hierarchy_df = None
+        cluster_app.state.selected_bas = set()
+        cluster_app.state.current_grouping = None
+
+        result = cluster_app._build_network_costs_filename()
+
+        assert result.endswith("_default.csv")
+
+    def test_grouping_special_chars_sanitized(self, cluster_app):
+        """Special characters in the grouping name are replaced with underscores."""
+        cluster_app.state.region_aggregations = None
+        cluster_app.state.hierarchy_df = None
+        cluster_app.state.selected_bas = set()
+        cluster_app.state.current_grouping = "my grouping!"
+
+        result = cluster_app._build_network_costs_filename()
+
+        assert "!" not in result
+        assert " " not in result
+        # letters preserved, spaces/! become _
+        assert "my_grouping_" in result
+
+    # ------------------------------------------------------------------
+    # format and extension
+    # ------------------------------------------------------------------
+
+    def test_result_ends_with_csv(self, cluster_app):
+        """The returned filename always ends with '.csv'."""
+        cluster_app.state.region_aggregations = None
+        cluster_app.state.hierarchy_df = None
+        cluster_app.state.selected_bas = set()
+        cluster_app.state.current_grouping = None
+
+        result = cluster_app._build_network_costs_filename()
+
+        assert result.endswith(".csv")
+
+    def test_result_starts_with_network_costs_prefix(self, cluster_app):
+        """The returned filename always starts with 'network_costs_'."""
+        cluster_app.state.region_aggregations = None
+        cluster_app.state.hierarchy_df = None
+        cluster_app.state.selected_bas = set()
+        cluster_app.state.current_grouping = None
+
+        result = cluster_app._build_network_costs_filename()
+
+        assert result.startswith("network_costs_")
+
+    # ------------------------------------------------------------------
+    # happy-path / full integration
+    # ------------------------------------------------------------------
+
+    def test_full_happy_path(self, cluster_app):
+        """All state set → expected descriptive filename."""
+        cluster_app.state.region_aggregations = {
+            f"Region{i}": [f"ba{i}"] for i in range(7)
+        }
+        cluster_app.state.selected_bas = {"ba0", "ba1", "ba2"}
+        cluster_app.state.hierarchy_df = self._make_hierarchy(
+            ["ba0", "ba1", "ba2", "ba3"],
+            ["eastern", "western", "eastern", "ercot"],
+        )
+        cluster_app.state.current_grouping = "nercr"
+
+        result = cluster_app._build_network_costs_filename()
+
+        assert result == "network_costs_7r_eastern-western_nercr.csv"
+
+        assert "__" not in result
