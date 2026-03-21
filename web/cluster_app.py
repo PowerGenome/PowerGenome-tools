@@ -8646,17 +8646,18 @@ def on_download_all_settings(event):
                 f"data/{network_costs_filename}",
                 state.network_costs_df.to_csv(index=False),
             )
-        else:
-            # Make the omission explicit so users understand why this file is missing.
-            set_status(
-                "Network cost calculation has not completed or was not run; "
-                "data/network_costs.csv is not included in the downloaded ZIP.",
-                "warning",
-            )
 
     zip_name = "powergenome_settings.zip"
     _download_binary_file(zip_name, buffer.getvalue(), "application/zip")
     set_status(f"Downloaded {zip_name}", "success")
+
+    # Inform the user if network costs were omitted (after confirming download success).
+    if state.network_costs_df is None:
+        set_status(
+            "Network cost calculation has not completed or was not run; "
+            "data/network_costs.csv is not included in the downloaded ZIP.",
+            "warning",
+        )
 
 
 _LCOE_REQUIRED_COLUMNS = {"region", "cpa_mw", "cf", "lcoe"}
