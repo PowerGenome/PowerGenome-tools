@@ -1,7 +1,7 @@
 {
   "created_at": "2026-03-18T02:36:13.540096+00:00",
-  "connections_source": "/Users/gs5183/Documents/resource-clustering/data/costs-20250406/all_substation_data_temp_20250406.parquet",
-  "substations_source": "/Users/gs5183/Documents/resource-clustering/data/substations_urban_convex_reeds_20250403.csv",
+  "connections_source": "all_substation_data_temp_20250406.parquet",
+  "substations_source": "substations_urban_convex_reeds_20250403.csv",
   "base_region_column": "IPM_Region",
   "excluded_sub_id": 124169,
   "scan_prefixes": [
