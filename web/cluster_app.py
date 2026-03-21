@@ -2229,8 +2229,13 @@ def on_finalize_manual(event):
         "success",
     )
 
-    # Compute network upgrade costs for the new region aggregation
-    asyncio.create_task(_run_network_cost_calculation())
+    # Compute network upgrade costs for the new region aggregation.
+    # Cancel any in-flight calculation to avoid concurrent updates to state.network_costs_df.
+    existing_task = getattr(state, "network_costs_task", None)
+    if existing_task is not None and not existing_task.done():
+        existing_task.cancel()
+
+    state.network_costs_task = asyncio.create_task(_run_network_cost_calculation())
 
 
 def on_clear_manual_regions(event):
