@@ -16,6 +16,7 @@ Usage as a module:
     result_df = calculate_network(data_dir="data/network_data", settings=settings_dict)
 """
 
+import math
 from itertools import combinations
 from pathlib import Path
 
@@ -270,7 +271,8 @@ def calculate_network_from_frames(
                                 "dest_msa": msa_b,
                                 "cost": c,
                                 "dist": sum(graph[u][v]["dist"] for u, v in segs),
-                                "loss": sum(graph[u][v]["loss"] for u, v in segs),
+                                "loss": 1.0
+                                - math.prod(1.0 - graph[u][v]["loss"] for u, v in segs),
                             }
                     except (nx.NetworkXNoPath, nx.NodeNotFound):
                         continue
@@ -398,7 +400,8 @@ def calculate_network_from_frames(
                 "total_interconnect_cost_mw": cost_inter
                 + start_cost_add
                 + dest_cost_add,
-                "total_line_loss_frac": loss_inter + start_loss_add + dest_loss_add,
+                "total_line_loss_frac": 1.0
+                - (1.0 - loss_inter) * (1.0 - start_loss_add) * (1.0 - dest_loss_add),
                 "total_mw-km_per_mw": dist_inter + start_dist_add + dest_dist_add,
             }
         )
