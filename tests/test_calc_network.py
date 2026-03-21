@@ -26,6 +26,7 @@ if str(_WEB_DIR) not in sys.path:
     sys.path.insert(0, str(_WEB_DIR))
 
 from calc_network import (  # noqa: E402
+    _finalize_topology,
     apply_region_mapping,
     build_base_to_model_map,
     calculate_network,
@@ -360,6 +361,179 @@ def test_calculate_network_from_frames_two_region_values_valid(real_network_fram
 
 # ===========================================================================
 # 5. Empty topology — no cross-region edges → empty result
+# ===========================================================================
+
+
+# ===========================================================================
+# 6. _finalize_topology — network_lines extra-pair injection
+# ===========================================================================
+
+
+def _make_empty_topology():
+    return pd.DataFrame(
+        {
+            "start_region": pd.Series([], dtype=str),
+            "dest_region": pd.Series([], dtype=str),
+        }
+    )
+
+
+def _make_cross_edges():
+    """Two edges crossing from R1→R2; used as a dummy edges frame."""
+    return pd.DataFrame(
+        {
+            "region_u": ["R1", "R2"],
+            "region_v": ["R2", "R3"],
+        }
+    )
+
+
+def test_finalize_topology_network_lines_adds_pairs():
+    """network_lines in settings injects extra region pairs into topology."""
+    topo = _make_empty_topology()
+    edges = pd.DataFrame(
+        {"region_u": pd.Series([], dtype=str), "region_v": pd.Series([], dtype=str)}
+    )
+    settings = {
+        "model_regions": ["East", "West"],
+        "region_aggregations": {"East": ["p1"], "West": ["p2"]},
+        "network_lines": [["p1", "p2"]],
+    }
+
+    result = _finalize_topology(topo, edges, settings)
+
+    pairs = set(zip(result["start_region"], result["dest_region"]))
+    assert ("East", "West") in pairs
+    assert ("West", "East") in pairs
+
+
+def test_finalize_topology_network_lines_deduplicates():
+    """An extra pair that already exists in topology is not duplicated."""
+    topo = pd.DataFrame(
+        {"start_region": ["East", "West"], "dest_region": ["West", "East"]}
+    )
+    edges = pd.DataFrame(
+        {"region_u": pd.Series([], dtype=str), "region_v": pd.Series([], dtype=str)}
+    )
+    settings = {
+        "model_regions": ["East", "West"],
+        "region_aggregations": {"East": ["p1"], "West": ["p2"]},
+        "network_lines": [["p1", "p2"]],
+    }
+
+    result = _finalize_topology(topo, edges, settings)
+
+    # Still just the two directed pairs — no duplicates
+    assert len(result) == 2
+
+
+def test_finalize_topology_network_lines_uses_model_region_names():
+    """Base BA names in network_lines are translated to model region names."""
+    topo = _make_empty_topology()
+    edges = pd.DataFrame(
+        {"region_u": pd.Series([], dtype=str), "region_v": pd.Series([], dtype=str)}
+    )
+    # p1 and p3 both belong to ModelA; p2 belongs to ModelB
+    settings = {
+        "model_regions": ["ModelA", "ModelB"],
+        "region_aggregations": {"ModelA": ["p1", "p3"], "ModelB": ["p2"]},
+        "network_lines": [["p1", "p2"]],
+    }
+
+    result = _finalize_topology(topo, edges, settings)
+
+    pairs = set(zip(result["start_region"], result["dest_region"]))
+    assert ("ModelA", "ModelB") in pairs
+    assert ("ModelB", "ModelA") in pairs
+
+
+def test_finalize_topology_no_network_lines_unchanged():
+    """When settings has no network_lines key the topology is returned as-is (minus self-loops)."""
+    topo = pd.DataFrame(
+        {"start_region": ["East", "West"], "dest_region": ["West", "East"]}
+    )
+    edges = pd.DataFrame(
+        {"region_u": pd.Series([], dtype=str), "region_v": pd.Series([], dtype=str)}
+    )
+    settings = {
+        "model_regions": ["East", "West"],
+        "region_aggregations": {"East": ["p1"], "West": ["p2"]},
+    }
+
+    result = _finalize_topology(topo, edges, settings)
+
+    assert len(result) == 2
+    assert set(zip(result["start_region"], result["dest_region"])) == {
+        ("East", "West"),
+        ("West", "East"),
+    }
+
+
+def test_finalize_topology_drops_self_loops():
+    """Self-loops (start == dest) are removed."""
+    topo = pd.DataFrame(
+        {
+            "start_region": ["East", "West", "East"],
+            "dest_region": ["West", "East", "East"],  # last row is a self-loop
+        }
+    )
+    edges = pd.DataFrame(
+        {"region_u": pd.Series([], dtype=str), "region_v": pd.Series([], dtype=str)}
+    )
+
+    result = _finalize_topology(topo, edges, settings=None)
+
+    assert (result["start_region"] != result["dest_region"]).all()
+    assert len(result) == 2
+
+
+def test_finalize_topology_empty_derives_from_cross_region_edges():
+    """Empty topology falls back to pairs derived from cross-region edges."""
+    topo = _make_empty_topology()
+    edges = pd.DataFrame({"region_u": ["East", "West"], "region_v": ["West", "East"]})
+
+    result = _finalize_topology(topo, edges, settings=None)
+
+    pairs = set(zip(result["start_region"], result["dest_region"]))
+    assert ("East", "West") in pairs
+    assert ("West", "East") in pairs
+
+
+# ===========================================================================
+# 7. calculate_network_from_frames — network_lines end-to-end
+# ===========================================================================
+
+
+def test_calculate_network_from_frames_network_lines_adds_connection(
+    real_network_frames,
+):
+    """A pair listed in network_lines that has a matching edge appears in the result."""
+    nodes, edges, topo = real_network_frames
+    # p1 and p2 are adjacent in the real topology; use network_lines to declare
+    # them even when we pass an empty topology so the path goes through network_lines.
+    empty_topo = pd.DataFrame(
+        {
+            "region_from_base": pd.Series([], dtype=str),
+            "region_to_base": pd.Series([], dtype=str),
+        }
+    )
+    settings = {
+        "model_regions": ["WestCoast", "Northwest"],
+        "region_aggregations": {
+            "WestCoast": ["p1"],
+            "Northwest": ["p2"],
+        },
+        "network_lines": [["p1", "p2"]],
+    }
+
+    result = calculate_network_from_frames(nodes, edges, empty_topo, settings=settings)
+
+    assert len(result) == 2
+    pairs = set(zip(result["start_region"], result["dest_region"]))
+    assert ("WestCoast", "Northwest") in pairs
+    assert ("Northwest", "WestCoast") in pairs
+
+
 # ===========================================================================
 
 

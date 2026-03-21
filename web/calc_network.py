@@ -131,50 +131,16 @@ def apply_region_mapping(
     return nodes, edges, topo
 
 
-# ── Main calculation ───────────────────────────────────────────────────────────
+# ── Private helpers ────────────────────────────────────────────────────────────
 
 
-def calculate_network_from_frames(
-    nodes: pd.DataFrame,
+def _finalize_topology(
+    topology: pd.DataFrame,
     edges: pd.DataFrame,
-    topology_base: pd.DataFrame,
-    settings: dict | None = None,
-    output_path=None,
-    pop_threshold: int = 1_000_000,
+    settings: dict | None,
 ) -> pd.DataFrame:
-    """Calculate inter-regional network costs from pre-loaded DataFrames.
-
-    This is the core computation function.  Use this in environments where data
-    files are already in memory (e.g. a browser-based PyScript app).
-
-    Parameters
-    ----------
-    nodes : pd.DataFrame
-        Node data with columns: msa_id (str), pop, base_region.
-    edges : pd.DataFrame
-        Edge data with columns: start_id, dest_id, u (msa_id), v (msa_id),
-        u_base_region, v_base_region, cost ($/MW), dist (km), line_loss_frac.
-    topology_base : pd.DataFrame
-        Region-pair topology with columns: region_from_base, region_to_base.
-    settings : dict or None
-        Settings dict with ``model_regions`` and ``region_aggregations``.
-        If None, base IPM regions are used as-is.
-    output_path : str or Path or None
-        If given, save the result CSV to this path.
-    pop_threshold : int
-        Population threshold for a metro to be used as an intraregional MST
-        terminal and as a candidate endpoint for interregional lines.
-        Default 1,000,000.
-
-    Returns
-    -------
-    pd.DataFrame
-        One row per directed region pair with cost, loss, and distance columns.
-    """
-    # ── Apply region mapping ───────────────────────────────────────────────────
-    nodes, edges, topology = apply_region_mapping(nodes, edges, topology_base, settings)
-
-    # Also handle extra topology pairs from settings (e.g. network_lines)
+    """Merge extra topology pairs from settings, drop self-loops, and fall back
+    to deriving adjacency from cross-region edges when topology is empty."""
     extra_lines = settings.get("network_lines") if settings else None
     if extra_lines:
         base_to_model = build_base_to_model_map(settings) if settings else {}
@@ -190,12 +156,31 @@ def calculate_network_from_frames(
                 [topology, pd.DataFrame(extra_rows)], ignore_index=True
             ).drop_duplicates()
 
-    # Drop self-loops from topology
     topology = topology[topology["start_region"] != topology["dest_region"]].copy()
 
-    # ── Identify major MSAs per region ─────────────────────────────────────────
-    msa_pop = nodes.set_index("msa_id")["pop"].astype(float)
+    if topology.empty:
+        cross = edges[edges["region_u"] != edges["region_v"]][
+            ["region_u", "region_v"]
+        ].drop_duplicates()
+        if not cross.empty:
+            fwd = cross.rename(
+                columns={"region_u": "start_region", "region_v": "dest_region"}
+            )
+            rev = fwd.rename(
+                columns={"start_region": "dest_region", "dest_region": "start_region"}
+            )
+            topology = pd.concat([fwd, rev], ignore_index=True).drop_duplicates()
 
+    return topology
+
+
+def _get_major_msas(
+    nodes: pd.DataFrame,
+    pop_threshold: int,
+) -> tuple[dict[str, set], pd.Series]:
+    """Return ``(major_by_region, msa_pop)`` — the set of major MSA ids per
+    model region and a Series of population indexed by MSA id."""
+    msa_pop = nodes.set_index("msa_id")["pop"].astype(float)
     major_by_region: dict[str, set] = {}
     for region, group in nodes.groupby("region"):
         large = set(group.loc[group["pop"] >= pop_threshold, "msa_id"].astype(str))
@@ -205,11 +190,24 @@ def calculate_network_from_frames(
             # Fallback: use the single largest MSA so the region isn't empty
             largest = group.sort_values("pop", ascending=False).iloc[0]["msa_id"]
             major_by_region[region] = {str(largest)}
+    return major_by_region, msa_pop
 
-    # ── Intraregional MST computation ──────────────────────────────────────────
-    within_region_cost_adder: dict[str, float] = {}
-    within_region_loss_adder: dict[str, float] = {}
-    within_region_dist_adder: dict[str, float] = {}
+
+def _compute_intraregional_adders(
+    edges: pd.DataFrame,
+    major_by_region: dict[str, set],
+    msa_pop: pd.Series,
+) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
+    """Compute population-weighted intraregional cost/loss/distance adders.
+
+    For each model region with ≥2 major MSAs, builds a substation-level graph,
+    finds the cheapest path between every major-MSA pair via multi-source
+    Dijkstra, constructs an MSA-level MST, then returns three dicts keyed by
+    region: ``(cost_adder, loss_adder, dist_adder)``.
+    """
+    cost_adder: dict[str, float] = {}
+    loss_adder: dict[str, float] = {}
+    dist_adder: dict[str, float] = {}
 
     for region, major_msas in major_by_region.items():
         if len(major_msas) < 2:
@@ -226,71 +224,73 @@ def calculate_network_from_frames(
         if region_edges.empty:
             continue
 
-        # Build substation-level graph
+        # Build substation-level graph (keep cheapest edge between any two subs)
         graph = nx.Graph()
         for row in region_edges.itertuples(index=False):
-            s = int(row.start_id)
-            d = int(row.dest_id)
-            c = float(row.cost)
+            s, d, c = int(row.start_id), int(row.dest_id), float(row.cost)
             if not graph.has_edge(s, d) or c < graph[s][d]["cost"]:
                 graph.add_edge(
                     s, d, cost=c, dist=float(row.dist), loss=float(row.line_loss_frac)
                 )
 
-        # Map substations → MSA (within-graph nodes only)
-        sub_to_msa_local: dict[int, str] = {}
+        # Map substations → MSA
+        sub_to_msa: dict[int, str] = {}
         for row in region_edges.itertuples(index=False):
-            sub_to_msa_local[int(row.start_id)] = str(row.u)
-            sub_to_msa_local[int(row.dest_id)] = str(row.v)
+            sub_to_msa[int(row.start_id)] = str(row.u)
+            sub_to_msa[int(row.dest_id)] = str(row.v)
 
         major_subs_by_msa: dict[str, list] = {}
         for sub_id in graph.nodes():
-            msa = sub_to_msa_local.get(sub_id)
+            msa = sub_to_msa.get(sub_id)
             if msa in major_msas:
                 major_subs_by_msa.setdefault(msa, []).append(sub_id)
 
-        # Find best cost path between every pair of major MSAs
+        # Pre-compute multi-source shortest paths once per MSA to avoid
+        # O(|MSAs|² × |subs_per_msa|²) separate Dijkstra calls.
+        msa_list = sorted(major_msas)
+        dist_from: dict[str, dict] = {}
+        path_from: dict[str, dict] = {}
+        for msa in msa_list:
+            subs = [s for s in major_subs_by_msa.get(msa, []) if s in graph]
+            if not subs:
+                continue
+            d, p = nx.multi_source_dijkstra(graph, subs, weight="cost")
+            dist_from[msa] = d
+            path_from[msa] = p
+
+        # Find the cheapest path between every pair of major MSAs
         msa_pair_data: dict[tuple, dict] = {}
-        for msa_a, msa_b in combinations(sorted(major_msas), 2):
-            subs_a = major_subs_by_msa.get(msa_a, [])
-            subs_b = major_subs_by_msa.get(msa_b, [])
-            best_cost = float("inf")
-            best = None
-            for sa in subs_a:
-                for sb in subs_b:
-                    if sa not in graph or sb not in graph:
-                        continue
-                    try:
-                        path = nx.shortest_path(graph, sa, sb, weight="cost")
-                        segs = list(zip(path[:-1], path[1:]))
-                        c = sum(graph[u][v]["cost"] for u, v in segs)
-                        if c < best_cost:
-                            best_cost = c
-                            best = {
-                                "start_msa": msa_a,
-                                "dest_msa": msa_b,
-                                "cost": c,
-                                "dist": sum(graph[u][v]["dist"] for u, v in segs),
-                                "loss": 1.0
-                                - math.prod(1.0 - graph[u][v]["loss"] for u, v in segs),
-                            }
-                    except (nx.NetworkXNoPath, nx.NodeNotFound):
-                        continue
-            if best:
-                msa_pair_data[(msa_a, msa_b)] = best
+        for msa_a, msa_b in combinations(msa_list, 2):
+            if msa_a not in dist_from:
+                continue
+            d_map, p_map = dist_from[msa_a], path_from[msa_a]
+            subs_b = [s for s in major_subs_by_msa.get(msa_b, []) if s in d_map]
+            if not subs_b:
+                continue
+            best_sb = min(subs_b, key=lambda s: d_map[s])
+            path = p_map[best_sb]
+            segs = list(zip(path[:-1], path[1:]))
+            msa_pair_data[(msa_a, msa_b)] = {
+                "start_msa": msa_a,
+                "dest_msa": msa_b,
+                "cost": d_map[best_sb],
+                "dist": sum(graph[u][v]["dist"] for u, v in segs),
+                "loss": 1.0 - math.prod(1.0 - graph[u][v]["loss"] for u, v in segs),
+            }
 
         if not msa_pair_data:
             continue
 
         links = pd.DataFrame(list(msa_pair_data.values()))
 
-        # Build MSA-level graph and find MST
+        # Build MSA-level graph and compute MST
         mst_g = nx.Graph()
         for row in links.itertuples(index=False):
             mst_g.add_edge(row.start_msa, row.dest_msa, weight=row.cost)
-        mst = nx.minimum_spanning_tree(mst_g, weight="weight")
-        mst_edges = {tuple(sorted(e)) for e in mst.edges()}
-
+        mst_edges = {
+            tuple(sorted(e))
+            for e in nx.minimum_spanning_tree(mst_g, weight="weight").edges()
+        }
         links["mst_conn"] = links.apply(
             lambda r: tuple(sorted((r.start_msa, r.dest_msa))) in mst_edges, axis=1
         )
@@ -299,7 +299,7 @@ def calculate_network_from_frames(
         if mst_only.empty:
             continue
 
-        # Population-weighted adders (same logic as create_network_costs in run_msa_assignment.py)
+        # Population-weighted adders
         mst_only["start_pop"] = mst_only["start_msa"].map(msa_pop)
         mst_only["dest_pop"] = mst_only["dest_msa"].map(msa_pop)
         mst_only["combined_pop"] = mst_only["start_pop"] + mst_only["dest_pop"]
@@ -308,31 +308,22 @@ def calculate_network_from_frames(
             continue
         mst_only["frac"] = mst_only["combined_pop"] / denom
 
-        within_region_cost_adder[region] = float(
-            (mst_only["frac"] * mst_only["cost"]).sum()
-        )
-        within_region_loss_adder[region] = float(
-            (mst_only["frac"] * mst_only["loss"]).sum()
-        )
-        within_region_dist_adder[region] = float(
-            (mst_only["frac"] * mst_only["dist"]).sum()
-        )
+        cost_adder[region] = float((mst_only["frac"] * mst_only["cost"]).sum())
+        loss_adder[region] = float((mst_only["frac"] * mst_only["loss"]).sum())
+        dist_adder[region] = float((mst_only["frac"] * mst_only["dist"]).sum())
 
-    # ── If topology is empty, derive from cross-region edges ──────────────────
-    if topology.empty:
-        cross = edges[edges["region_u"] != edges["region_v"]][
-            ["region_u", "region_v"]
-        ].drop_duplicates()
-        if not cross.empty:
-            fwd = cross.rename(
-                columns={"region_u": "start_region", "region_v": "dest_region"}
-            )
-            rev = fwd.rename(
-                columns={"start_region": "dest_region", "dest_region": "start_region"}
-            )
-            topology = pd.concat([fwd, rev], ignore_index=True).drop_duplicates()
+    return cost_adder, loss_adder, dist_adder
 
-    # ── Interregional cost assembly ────────────────────────────────────────────
+
+def _assemble_interregional_rows(
+    topology: pd.DataFrame,
+    edges: pd.DataFrame,
+    major_by_region: dict[str, set],
+    cost_adder: dict[str, float],
+    loss_adder: dict[str, float],
+    dist_adder: dict[str, float],
+) -> list[dict]:
+    """Return one result dict per directed region pair in *topology*."""
     inter_rows = []
     for row in topology.itertuples(index=False):
         start_region = row.start_region
@@ -375,12 +366,12 @@ def calculate_network_from_frames(
         loss_inter = float(best["line_loss_frac"])
         dist_inter = float(best["dist"])
 
-        start_cost_add = within_region_cost_adder.get(start_region, 0.0)
-        dest_cost_add = within_region_cost_adder.get(dest_region, 0.0)
-        start_loss_add = within_region_loss_adder.get(start_region, 0.0)
-        dest_loss_add = within_region_loss_adder.get(dest_region, 0.0)
-        start_dist_add = within_region_dist_adder.get(start_region, 0.0)
-        dest_dist_add = within_region_dist_adder.get(dest_region, 0.0)
+        sc = cost_adder.get(start_region, 0.0)
+        dc = cost_adder.get(dest_region, 0.0)
+        sl = loss_adder.get(start_region, 0.0)
+        dl = loss_adder.get(dest_region, 0.0)
+        sd = dist_adder.get(start_region, 0.0)
+        dd = dist_adder.get(dest_region, 0.0)
 
         inter_rows.append(
             {
@@ -391,20 +382,71 @@ def calculate_network_from_frames(
                 "interconnect_cost_mw": cost_inter,
                 "line_loss_frac": loss_inter,
                 "mw-km_per_mw": dist_inter,
-                "start_intraregion_cost_mw": start_cost_add,
-                "dest_intraregion_cost_mw": dest_cost_add,
-                "start_intraregion_loss_frac": start_loss_add,
-                "dest_intraregion_loss_frac": dest_loss_add,
-                "start_mw-km_per_mw": start_dist_add,
-                "dest_mw-km_per_mw": dest_dist_add,
-                "total_interconnect_cost_mw": cost_inter
-                + start_cost_add
-                + dest_cost_add,
+                "start_intraregion_cost_mw": sc,
+                "dest_intraregion_cost_mw": dc,
+                "start_intraregion_loss_frac": sl,
+                "dest_intraregion_loss_frac": dl,
+                "start_mw-km_per_mw": sd,
+                "dest_mw-km_per_mw": dd,
+                "total_interconnect_cost_mw": cost_inter + sc + dc,
                 "total_line_loss_frac": 1.0
-                - (1.0 - loss_inter) * (1.0 - start_loss_add) * (1.0 - dest_loss_add),
-                "total_mw-km_per_mw": dist_inter + start_dist_add + dest_dist_add,
+                - (1.0 - loss_inter) * (1.0 - sl) * (1.0 - dl),
+                "total_mw-km_per_mw": dist_inter + sd + dd,
             }
         )
+
+    return inter_rows
+
+
+# ── Main calculation ───────────────────────────────────────────────────────────
+
+
+def calculate_network_from_frames(
+    nodes: pd.DataFrame,
+    edges: pd.DataFrame,
+    topology_base: pd.DataFrame,
+    settings: dict | None = None,
+    output_path=None,
+    pop_threshold: int = 1_000_000,
+) -> pd.DataFrame:
+    """Calculate inter-regional network costs from pre-loaded DataFrames.
+
+    This is the core computation function.  Use this in environments where data
+    files are already in memory (e.g. a browser-based PyScript app).
+
+    Parameters
+    ----------
+    nodes : pd.DataFrame
+        Node data with columns: msa_id (str), pop, base_region.
+    edges : pd.DataFrame
+        Edge data with columns: start_id, dest_id, u (msa_id), v (msa_id),
+        u_base_region, v_base_region, cost ($/MW), dist (km), line_loss_frac.
+    topology_base : pd.DataFrame
+        Region-pair topology with columns: region_from_base, region_to_base.
+    settings : dict or None
+        Settings dict with ``model_regions`` and ``region_aggregations``.
+        If None, base IPM regions are used as-is.
+    output_path : str or Path or None
+        If given, save the result CSV to this path.
+    pop_threshold : int
+        Population threshold for a metro to be used as an intraregional MST
+        terminal and as a candidate endpoint for interregional lines.
+        Default 1,000,000.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per directed region pair with cost, loss, and distance columns.
+    """
+    nodes, edges, topology = apply_region_mapping(nodes, edges, topology_base, settings)
+    topology = _finalize_topology(topology, edges, settings)
+    major_by_region, msa_pop = _get_major_msas(nodes, pop_threshold)
+    cost_adder, loss_adder, dist_adder = _compute_intraregional_adders(
+        edges, major_by_region, msa_pop
+    )
+    inter_rows = _assemble_interregional_rows(
+        topology, edges, major_by_region, cost_adder, loss_adder, dist_adder
+    )
 
     result = pd.DataFrame(inter_rows)
 
