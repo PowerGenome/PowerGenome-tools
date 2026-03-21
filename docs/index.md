@@ -9,6 +9,8 @@ Welcome to the documentation for PowerGenome System Design. This project provide
 
 The project consists of an interactive **[Web Application](web_app.md)** that walks users through a guided workflow to configure all aspects of a PowerGenome model. Built with PyScript to run entirely in-browser, it allows users to visually define model regions, configure new and existing resources, select fuel scenarios, and export complete settings files in YAML format.
 
+For details on the region-level transmission proxy table generated from clustered regions, see **[Network Cost Calculation](network_costs.md)**.
+
 ### Guided Workflow
 
 The web application guides you through a 9-step workflow to build complete PowerGenome settings files. Each step builds on the previous ones, ensuring a logical progression from defining your model's geographic scope to exporting ready-to-use configuration files.
@@ -25,11 +27,11 @@ The web application guides you through a 9-step workflow to build complete Power
 
 6. **ESR Policies** - Build Energy Share Requirement (ESR) policies that generalize Renewable Portfolio Standards (RPS) and Clean Energy Standards (CES). The app automatically groups regions into trading zones based on state policy rules and interconnect boundaries.
 
-7. **Interconnection** - Configure default interconnection costs for resources that are not tied to specific locations (e.g. natural gas, batteries, or nuclear). Generate resource group files with dynamically calculated interconnection costs and LCOE (Levelized Cost of Energy) for each potential wind and solar resource based on model region aggregation.
+7. **Interconnection** - Configure default interconnection costs for resources that are not tied to specific locations (e.g. natural gas, batteries, or nuclear). Generate resource group files with dynamically calculated interconnection costs and LCOE (Levelized Cost of Energy) for each potential wind and solar resource based on model region aggregation. A region-level network cost table is also computed after regions are finalized.
 
 8. **Renewables Clustering** - Build `renewables_clusters` settings from demand shares and LCOE data. Filter to the most cost-effective wind and solar sites to keep model size manageable while providing sufficient capacity options. Visualize supply curves to understand resource selection.
 
-9. **Export** - Generate and download complete PowerGenome settings YAML files, including `model_definition.yml`, `resources.yml`, `fuels.yml`, `transmission.yml`, and other configuration files ready for use with PowerGenome.
+9. **Export** - Generate and download complete PowerGenome settings YAML files, including `model_definition.yml`, `resources.yml`, `fuels.yml`, `transmission.yml`, and other configuration files ready for use with PowerGenome. When available, the Download All ZIP also includes `data/network_costs.csv`.
 
 ## Key Features
 

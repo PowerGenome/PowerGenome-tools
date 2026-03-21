@@ -26,6 +26,7 @@ theme:
 nav:
   - Home: index.md
   - Web Application: web_app.md
+  - Network Cost Calculation: network_costs.md
   - ESR Policies: esr_policies.md
   - Algorithms: algorithms.md
   - Development: development.md
