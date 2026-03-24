@@ -42,6 +42,7 @@ from clustering_algorithms import (
     agglomerative_cluster,
     build_transmission_graph,
     calculate_modularity,
+    enforce_contiguous_clusters,
     find_optimal_clusters,
     generate_cluster_names,
     get_regional_groups,
@@ -939,6 +940,7 @@ def run_clustering(
     max_regions=None,
     method="hierarchical-sum",
     esr_compatible=False,
+    force_contiguous=False,
 ):
     """
     Run the clustering algorithm.
@@ -948,6 +950,10 @@ def run_clustering(
 
     If esr_compatible=True, BAs are first split by trading zone connectivity
     to ensure all states in a resulting region can trade with each other.
+
+    If force_contiguous=True, any non-contiguous clusters are split into their
+    connected components after the primary clustering step, guaranteeing that
+    every model region is electrically contiguous.
     """
     try:
         info = {}
@@ -1067,6 +1073,17 @@ def run_clustering(
             graph = build_transmission_graph(state.transmission_df, cluster_bas)
             modularity = calculate_modularity(graph, clusters)
             info["modularity"] = modularity
+
+        # Enforce contiguous regions if requested (post-processing step)
+        if force_contiguous:
+            clusters, num_splits = enforce_contiguous_clusters(
+                clusters, state.transmission_df
+            )
+            if num_splits > 0:
+                # Recalculate modularity after splitting non-contiguous clusters
+                graph = build_transmission_graph(state.transmission_df, cluster_bas)
+                info["modularity"] = calculate_modularity(graph, clusters)
+                info["contiguous_splits"] = num_splits
 
         # Generate names
         cluster_names = generate_cluster_names(clusters, state.hierarchy_df)
@@ -1606,6 +1623,10 @@ def on_run_clustering(event):
     esr_compat_el = document.getElementById("esrCompatibleClustering")
     esr_compatible = esr_compat_el.checked if esr_compat_el else False
 
+    # Check if force contiguous regions is enabled
+    force_contiguous_el = document.getElementById("forceContiguous")
+    force_contiguous = force_contiguous_el.checked if force_contiguous_el else False
+
     # Run clustering
     model_regions, region_aggregations, error, info = run_clustering(
         state.selected_bas,
@@ -1617,6 +1638,7 @@ def on_run_clustering(event):
         max_regions=max_regions,
         method=method,
         esr_compatible=esr_compatible,
+        force_contiguous=force_contiguous,
     )
 
     if error:
@@ -1634,10 +1656,16 @@ def on_run_clustering(event):
     # Build status message
     num_regions = len(model_regions)
     modularity = info.get("modularity", 0)
+    contiguous_splits = info.get("contiguous_splits", 0)
+    contiguous_note = (
+        f" ({contiguous_splits} non-contiguous cluster(s) were split to enforce contiguity.)"
+        if contiguous_splits > 0
+        else ""
+    )
 
     if auto_optimize:
         chosen_n = info.get("chosen_n", num_regions)
-        msg = f"Clustering complete! {num_regions} regions (optimal from {min_regions}-{max_regions}). Modularity: {modularity:.3f}"
+        msg = f"Clustering complete! {num_regions} regions (optimal from {min_regions}-{max_regions}). Modularity: {modularity:.3f}{contiguous_note}"
 
         # Add info about optimal combinations if we forced splits
         if "optimal_combinations" in info:
@@ -1658,12 +1686,12 @@ def on_run_clustering(event):
             set_status(
                 f"Warning: Created {num_regions} regions, which is more than the target of {target_regions}. "
                 f"This can happen when 'unclustered' groups{esr_note} or disconnected BAs exceed the target. "
-                f"Modularity: {modularity:.3f}",
+                f"Modularity: {modularity:.3f}{contiguous_note}",
                 "error",
             )
         else:
             set_status(
-                f"Clustering complete! {num_regions} regions created. Modularity: {modularity:.3f}",
+                f"Clustering complete! {num_regions} regions created. Modularity: {modularity:.3f}{contiguous_note}",
                 "success",
             )
 

@@ -512,6 +512,56 @@ def hierarchical_cluster(
         return all_clusters
 
 
+def enforce_contiguous_clusters(clusters, transmission_df):
+    """
+    Split any non-contiguous clusters into their connected components.
+
+    A cluster is non-contiguous if its BAs are not all reachable from one
+    another through transmission links *within* that cluster.  This
+    post-processing step guarantees every resulting region is electrically
+    contiguous.
+
+    Parameters
+    ----------
+    clusters : dict[int, set]
+        Mapping of cluster label → set of BA identifiers.
+    transmission_df : pd.DataFrame
+        Transmission data with columns ``region_from``, ``region_to``, and
+        ``firm_ttc_mw``.
+
+    Returns
+    -------
+    new_clusters : dict[int, set]
+        Clusters after splitting non-contiguous ones.
+    num_splits : int
+        Number of original clusters that were split (i.e. that were
+        non-contiguous).
+    """
+    new_clusters = {}
+    cluster_id = 0
+    num_splits = 0
+
+    for _, nodes in clusters.items():
+        # Build subgraph restricted to this cluster's nodes
+        subgraph = build_transmission_graph(transmission_df, nodes)
+
+        # Find connected components within the subgraph
+        components = list(nx.connected_components(subgraph))
+
+        if len(components) <= 1:
+            # Already contiguous – keep as-is
+            new_clusters[cluster_id] = nodes
+            cluster_id += 1
+        else:
+            # Non-contiguous: split into one cluster per component
+            num_splits += 1
+            for component in components:
+                new_clusters[cluster_id] = component
+                cluster_id += 1
+
+    return new_clusters, num_splits
+
+
 def calculate_modularity(graph, clusters):
     """
     Calculate the modularity score for a clustering result.

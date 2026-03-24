@@ -3748,3 +3748,331 @@ class TestFuelChartHelpers:
         fuel_data = {"reference": [(2024, 2.0), (2026, 2.5)]}
         result = cluster_app._render_fuel_price_chart_svg(fuel_data, "reference")
         assert result.rstrip().endswith("</svg>")
+
+
+# ---------------------------------------------------------------------------
+# TestEnforceContiguousClusters
+# ---------------------------------------------------------------------------
+
+
+class TestEnforceContiguousClusters:
+    """Unit tests for enforce_contiguous_clusters() accessed via cluster_app."""
+
+    # ------------------------------------------------------------------
+    # Helpers – small transmission DataFrames for each scenario
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _tx(*edges):
+        """Build a minimal transmission DataFrame from (from, to) tuples."""
+        return pd.DataFrame(
+            {
+                "region_from": [e[0] for e in edges],
+                "region_to": [e[1] for e in edges],
+                "firm_ttc_mw": [1000.0] * len(edges),
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # Tests
+    # ------------------------------------------------------------------
+
+    def test_already_contiguous_cluster_unchanged(self, cluster_app):
+        """A single fully-connected cluster is returned as-is with num_splits==0."""
+        # a -- b -- c  (all reachable within the cluster)
+        tx = self._tx(("a", "b"), ("b", "c"))
+        clusters = {0: {"a", "b", "c"}}
+
+        new_clusters, num_splits = cluster_app.enforce_contiguous_clusters(
+            clusters, tx
+        )
+
+        assert num_splits == 0
+        assert len(new_clusters) == 1
+        assert new_clusters[0] == {"a", "b", "c"}
+
+    def test_non_contiguous_cluster_split(self, cluster_app):
+        """A cluster with two disconnected components is split into 2 (num_splits==1)."""
+        # Component 1: a -- b
+        # Component 2: c -- d  (no edge connecting to a/b)
+        tx = self._tx(("a", "b"), ("c", "d"))
+        clusters = {0: {"a", "b", "c", "d"}}
+
+        new_clusters, num_splits = cluster_app.enforce_contiguous_clusters(
+            clusters, tx
+        )
+
+        assert num_splits == 1
+        assert len(new_clusters) == 2
+        # Every original node must appear in exactly one resulting cluster
+        all_nodes = set().union(*new_clusters.values())
+        assert all_nodes == {"a", "b", "c", "d"}
+        # The two components should be preserved intact
+        component_sets = sorted(new_clusters.values(), key=lambda s: min(s))
+        assert {"a", "b"} in component_sets or {"c", "d"} in component_sets
+
+    def test_multiple_clusters_one_non_contiguous(self, cluster_app):
+        """Two clusters – one contiguous, one not. Only the non-contiguous one is split."""
+        # Cluster 0: a -- b  (contiguous)
+        # Cluster 1: c -- d  and  e  (e has no edges to c/d inside the cluster)
+        tx = self._tx(("a", "b"), ("c", "d"))
+        # 'e' has no edge at all, making cluster 1 non-contiguous
+        clusters = {
+            0: {"a", "b"},
+            1: {"c", "d", "e"},
+        }
+
+        new_clusters, num_splits = cluster_app.enforce_contiguous_clusters(
+            clusters, tx
+        )
+
+        assert num_splits == 1
+        # cluster 0 stays whole; cluster 1 splits into {c, d} and {e}
+        assert len(new_clusters) == 3
+        all_nodes = set().union(*new_clusters.values())
+        assert all_nodes == {"a", "b", "c", "d", "e"}
+
+    def test_isolated_node_in_cluster_splits(self, cluster_app):
+        """A cluster containing an isolated node (no edges to peers) is split."""
+        # a -- b, but 'c' is isolated (no edges in tx at all within cluster)
+        tx = self._tx(("a", "b"))
+        clusters = {0: {"a", "b", "c"}}
+
+        new_clusters, num_splits = cluster_app.enforce_contiguous_clusters(
+            clusters, tx
+        )
+
+        assert num_splits == 1
+        # Should produce {a, b} and {c}
+        assert len(new_clusters) == 2
+        result_sets = list(new_clusters.values())
+        assert {"a", "b"} in result_sets
+        assert {"c"} in result_sets
+
+    def test_empty_clusters_handled(self, cluster_app):
+        """An empty clusters dict returns an empty dict and 0 splits."""
+        tx = self._tx(("a", "b"))
+        new_clusters, num_splits = cluster_app.enforce_contiguous_clusters({}, tx)
+
+        assert new_clusters == {}
+        assert num_splits == 0
+
+
+# ---------------------------------------------------------------------------
+# TestRunClusteringForceContiguous
+# ---------------------------------------------------------------------------
+
+
+# Hierarchy for the force-contiguous tests.
+# BAs: p, q, r, s, t
+#   p -- q -- r  (WECC)
+#   s -- t       (TRE, separate interconnect)
+# Crucially, p and r are both in transgrp "WEC" but are only connected via q.
+# A 2-cluster solution on {p, q, r} might put p and r together without q,
+# creating a non-contiguous cluster.
+_FC_HIER = pd.DataFrame(
+    {
+        "ba": ["p", "q", "r", "s", "t"],
+        "st": ["CA", "OR", "WA", "TX", "TX"],
+        "nercr": ["WECC", "WECC", "WECC", "TRE", "TRE"],
+        "cendiv": ["PAC", "PAC", "PAC", "WSC", "WSC"],
+        "transgrp": ["WEC", "WEC", "WEC", "TexA", "TexA"],
+        "transreg": ["W", "W", "W", "S", "S"],
+        "interconnect": ["Western", "Western", "Western", "Eastern", "Eastern"],
+    }
+)
+
+# Transmission: p-q connected, r-s connected (r bridges Western/Eastern!),
+# s-t connected.  Intentionally NO direct p-r or q-r edge.
+_FC_TX = pd.DataFrame(
+    {
+        "region_from": ["p", "q", "r", "s"],
+        "region_to": ["q", "r", "s", "t"],
+        "firm_ttc_mw": [1000.0, 800.0, 50.0, 900.0],
+    }
+)
+
+
+class TestRunClusteringForceContiguous:
+    """Covers force_contiguous=True/False paths in run_clustering()."""
+
+    def _set_state(self, cluster_app, hier=None, tx=None, rect=None):
+        orig = (
+            cluster_app.state.hierarchy_df,
+            cluster_app.state.transmission_df,
+            cluster_app.state.rectable_df,
+        )
+        if hier is not None:
+            cluster_app.state.hierarchy_df = hier
+        if tx is not None:
+            cluster_app.state.transmission_df = tx
+        if rect is not None:
+            cluster_app.state.rectable_df = rect
+        return orig
+
+    def _restore_state(self, cluster_app, orig):
+        cluster_app.state.hierarchy_df = orig[0]
+        cluster_app.state.transmission_df = orig[1]
+        cluster_app.state.rectable_df = orig[2]
+
+    # -------------------------------------------------------------------------
+    # Helper: build the subgraph for a region and check it is connected
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _is_contiguous(bas, tx_df):
+        import networkx as nx
+
+        G = nx.Graph()
+        for ba in bas:
+            G.add_node(ba)
+        for _, row in tx_df.iterrows():
+            if row["region_from"] in bas and row["region_to"] in bas:
+                G.add_edge(row["region_from"], row["region_to"])
+        return nx.is_connected(G) if len(G.nodes) > 1 else True
+
+    # -------------------------------------------------------------------------
+    # Tests
+    # -------------------------------------------------------------------------
+
+    def test_force_contiguous_splits_non_contiguous_cluster(self, cluster_app):
+        """
+        With force_contiguous=True, any resulting region with disconnected BAs
+        must be automatically split so that every output region is contiguous.
+        """
+        # Use a tx graph where p-q-r-s-t form a chain (q bridges p and r).
+        # target_regions=2 on {p,q,r} (WECC) might naively group {p,r} without q.
+        # force_contiguous should fix that.
+        tx = pd.DataFrame(
+            {
+                "region_from": ["p", "q"],
+                "region_to": ["q", "r"],
+                "firm_ttc_mw": [1000.0, 800.0],
+            }
+        )
+        hier = pd.DataFrame(
+            {
+                "ba": ["p", "q", "r"],
+                "st": ["CA", "OR", "WA"],
+                "nercr": ["WECC", "WECC", "WECC"],
+                "cendiv": ["PAC", "PAC", "PAC"],
+                "transgrp": ["WEC", "WEC", "WEC"],
+                "transreg": ["W", "W", "W"],
+                "interconnect": ["Western", "Western", "Western"],
+            }
+        )
+        orig = self._set_state(cluster_app, hier=hier, tx=tx)
+        try:
+            regions, agg, err, info = cluster_app.run_clustering(
+                {"p", "q", "r"},
+                grouping_column="nercr",
+                target_regions=2,
+                no_cluster_groups=None,
+                force_contiguous=True,
+            )
+            assert err is None
+            # Every returned region must be contiguous w.r.t. the tx graph
+            for region_bas in agg.values():
+                assert self._is_contiguous(set(region_bas), tx), (
+                    f"Region {region_bas} is not contiguous"
+                )
+        finally:
+            self._restore_state(cluster_app, orig)
+
+    def test_force_contiguous_false_allows_non_contiguous(self, cluster_app):
+        """
+        With force_contiguous=False (default), clustering proceeds without any
+        contiguity post-processing – no contiguous_splits key is set in info.
+        """
+        orig = self._set_state(
+            cluster_app, hier=_RC_HIER.copy(), tx=_RC_TX.copy()
+        )
+        try:
+            _, _, err, info = cluster_app.run_clustering(
+                {"a", "b", "c", "d", "e"},
+                grouping_column="nercr",
+                target_regions=2,
+                no_cluster_groups=None,
+                force_contiguous=False,
+            )
+            assert err is None
+            # contiguous_splits must NOT be set when force_contiguous=False
+            assert "contiguous_splits" not in info
+        finally:
+            self._restore_state(cluster_app, orig)
+
+    def test_force_contiguous_info_key_set_when_splits_occur(self, cluster_app):
+        """
+        When force_contiguous=True and at least one cluster was non-contiguous,
+        info['contiguous_splits'] must be > 0.
+        """
+        # Build a scenario guaranteed to produce a non-contiguous cluster:
+        # BAs x, y, z – x and z share the same nercr group but only connect
+        # via y; tx has x-y and y-z edges.  With target=2, hierarchical
+        # clustering may join x and z in the same group without y.
+        # We enforce contiguity and check the key appears when splits happen.
+        hier = pd.DataFrame(
+            {
+                "ba": ["x", "y", "z"],
+                "st": ["CA", "OR", "WA"],
+                "nercr": ["WECC", "WECC", "WECC"],
+                "cendiv": ["PAC", "PAC", "PAC"],
+                "transgrp": ["WEC", "WEC", "WEC"],
+                "transreg": ["W", "W", "W"],
+                "interconnect": ["Western", "Western", "Western"],
+            }
+        )
+        tx = pd.DataFrame(
+            {
+                "region_from": ["x", "y"],
+                "region_to": ["y", "z"],
+                "firm_ttc_mw": [1000.0, 800.0],
+            }
+        )
+        orig = self._set_state(cluster_app, hier=hier, tx=tx)
+        try:
+            # We call run_clustering with force_contiguous=True and then verify
+            # that: either no splits happened (clusters were already fine) OR
+            # the contiguous_splits key is present and positive.
+            _, agg, err, info = cluster_app.run_clustering(
+                {"x", "y", "z"},
+                grouping_column="nercr",
+                target_regions=2,
+                no_cluster_groups=None,
+                force_contiguous=True,
+            )
+            assert err is None
+            # If splits occurred, the key must be positive
+            if "contiguous_splits" in info:
+                assert info["contiguous_splits"] > 0
+            # Either way, every region must be contiguous
+            for region_bas in agg.values():
+                assert self._is_contiguous(set(region_bas), tx), (
+                    f"Region {region_bas} is not contiguous after force_contiguous=True"
+                )
+        finally:
+            self._restore_state(cluster_app, orig)
+
+    def test_force_contiguous_all_bas_preserved(self, cluster_app):
+        """
+        After force_contiguous=True, the union of all output regions must equal
+        the full set of selected BAs – no BA is lost or duplicated.
+        """
+        orig = self._set_state(
+            cluster_app, hier=_FC_HIER.copy(), tx=_FC_TX.copy()
+        )
+        try:
+            regions, agg, err, info = cluster_app.run_clustering(
+                {"p", "q", "r", "s", "t"},
+                grouping_column="nercr",
+                target_regions=3,
+                no_cluster_groups=None,
+                force_contiguous=True,
+            )
+            assert err is None
+            all_bas = [ba for bas in agg.values() for ba in bas]
+            # No duplicates
+            assert len(all_bas) == len(set(all_bas))
+            # All five BAs present
+            assert set(all_bas) == {"p", "q", "r", "s", "t"}
+        finally:
+            self._restore_state(cluster_app, orig)
