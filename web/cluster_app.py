@@ -7133,20 +7133,27 @@ def generate_resources_settings():
     # Also include "all" year modified resources that are attribute-only (no identity
     # or fuel changes). These go into resource_modifiers for their overrides but must
     # also appear in new_resources so PowerGenome loads them as new build options.
-    for _k, _v in sorted(state.modified_new_resources.items()):
-        if _v.get("planning_year", "all") != "all":
+    _seen = {tuple(e) for e in base_new_resources}
+    for _, mod_res in sorted(state.modified_new_resources.items()):
+        if mod_res.get("planning_year", "all") != "all":
             continue
-        if _v.get("fuel_type") == "new":
+        if mod_res.get("fuel_type") == "new":
             continue
         if (
-            _v.get("new_technology") != _v.get("technology")
-            or _v.get("new_tech_detail") != _v.get("tech_detail")
-            or _v.get("new_cost_case") != _v.get("cost_case")
+            mod_res.get("new_technology") != mod_res.get("technology")
+            or mod_res.get("new_tech_detail") != mod_res.get("tech_detail")
+            or mod_res.get("new_cost_case") != mod_res.get("cost_case")
         ):
             continue
-        _entry = [_v["technology"], _v["tech_detail"], _v["cost_case"], _v["size_mw"]]
-        if _entry not in base_new_resources:
-            base_new_resources.append(_entry)
+        entry_key = (
+            mod_res["technology"],
+            mod_res["tech_detail"],
+            mod_res["cost_case"],
+            mod_res["size_mw"],
+        )
+        if entry_key not in _seen:
+            _seen.add(entry_key)
+            base_new_resources.append(list(entry_key))
 
     if has_year_specific:
         # Build year-specific values and only emit a keyed structure when values
@@ -7403,21 +7410,28 @@ def _build_new_resources_for_year(year):
     ]
     result = base + year_specific
     # Also include attribute-only modified resources applicable to this year
-    for _k, _v in sorted(state.modified_new_resources.items()):
-        _py = _v.get("planning_year", "all")
+    _seen = {tuple(e) for e in result}
+    for _, mod_res in sorted(state.modified_new_resources.items()):
+        _py = mod_res.get("planning_year", "all")
         if _py != "all" and _py != year:
             continue
-        if _v.get("fuel_type") == "new":
+        if mod_res.get("fuel_type") == "new":
             continue
         if (
-            _v.get("new_technology") != _v.get("technology")
-            or _v.get("new_tech_detail") != _v.get("tech_detail")
-            or _v.get("new_cost_case") != _v.get("cost_case")
+            mod_res.get("new_technology") != mod_res.get("technology")
+            or mod_res.get("new_tech_detail") != mod_res.get("tech_detail")
+            or mod_res.get("new_cost_case") != mod_res.get("cost_case")
         ):
             continue
-        _entry = [_v["technology"], _v["tech_detail"], _v["cost_case"], _v["size_mw"]]
-        if _entry not in result:
-            result.append(_entry)
+        entry_key = (
+            mod_res["technology"],
+            mod_res["tech_detail"],
+            mod_res["cost_case"],
+            mod_res["size_mw"],
+        )
+        if entry_key not in _seen:
+            _seen.add(entry_key)
+            result.append(list(entry_key))
     return result
 
 
