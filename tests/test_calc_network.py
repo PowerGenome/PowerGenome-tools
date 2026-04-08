@@ -26,6 +26,9 @@ if str(_WEB_DIR) not in sys.path:
     sys.path.insert(0, str(_WEB_DIR))
 
 from calc_network import (  # noqa: E402
+    NETWORK_COST_DOLLAR_YEAR,
+    NETWORK_COST_LIFETIME_YEARS,
+    NETWORK_COST_WACC,
     _finalize_topology,
     apply_region_mapping,
     build_base_to_model_map,
@@ -278,6 +281,8 @@ def test_calculate_network_no_settings_expected_columns():
         "total_interconnect_cost_mw",
         "total_line_loss_frac",
         "total_mw-km_per_mw",
+        "total_interconnect_annuity_mw",
+        "dollar_year",
     }
     assert expected_cols.issubset(set(result.columns))
 
@@ -301,7 +306,28 @@ def test_calculate_network_loss_in_unit_interval():
     assert (result["total_line_loss_frac"] <= 1).all()
 
 
-# ===========================================================================
+def test_calculate_network_annuity_column():
+    """total_interconnect_annuity_mw must equal cost * CRF(WACC, lifetime)."""
+    result = calculate_network(data_dir=_NETWORK_DATA_DIR, settings=None)
+    crf = (
+        NETWORK_COST_WACC
+        * (1 + NETWORK_COST_WACC) ** NETWORK_COST_LIFETIME_YEARS
+        / ((1 + NETWORK_COST_WACC) ** NETWORK_COST_LIFETIME_YEARS - 1)
+    )
+    expected = result["total_interconnect_cost_mw"] * crf
+    pd.testing.assert_series_equal(
+        result["total_interconnect_annuity_mw"],
+        expected,
+        check_names=False,
+    )
+
+
+def test_calculate_network_dollar_year():
+    """dollar_year column must equal NETWORK_COST_DOLLAR_YEAR for all rows."""
+    result = calculate_network(data_dir=_NETWORK_DATA_DIR, settings=None)
+    assert (result["dollar_year"] == NETWORK_COST_DOLLAR_YEAR).all()
+
+
 # 4. calculate_network_from_frames with a 2-region aggregation over real data
 #
 # Real data facts:

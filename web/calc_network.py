@@ -23,6 +23,12 @@ from pathlib import Path
 import networkx as nx
 import pandas as pd
 
+# ── Network cost annuity constants ────────────────────────────────────────────
+
+NETWORK_COST_WACC = 0.044
+NETWORK_COST_LIFETIME_YEARS = 60
+NETWORK_COST_DOLLAR_YEAR = 2018
+
 # ── Region mapping ─────────────────────────────────────────────────────────────
 
 
@@ -449,6 +455,15 @@ def calculate_network_from_frames(
     )
 
     result = pd.DataFrame(inter_rows)
+
+    if not result.empty:
+        crf = (
+            NETWORK_COST_WACC
+            * (1 + NETWORK_COST_WACC) ** NETWORK_COST_LIFETIME_YEARS
+            / ((1 + NETWORK_COST_WACC) ** NETWORK_COST_LIFETIME_YEARS - 1)
+        )
+        result["total_interconnect_annuity_mw"] = result["total_interconnect_cost_mw"] * crf
+        result["dollar_year"] = NETWORK_COST_DOLLAR_YEAR
 
     if output_path is not None:
         out = Path(output_path)
