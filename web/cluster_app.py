@@ -7130,6 +7130,23 @@ def generate_resources_settings():
         for r in state.new_resources
         if r.get("planning_year") == "all"
     ]
+    # Also include "all" year modified resources that are attribute-only (no identity
+    # or fuel changes). These go into resource_modifiers for their overrides but must
+    # also appear in new_resources so PowerGenome loads them as new build options.
+    for _k, _v in sorted(state.modified_new_resources.items()):
+        if _v.get("planning_year", "all") != "all":
+            continue
+        if _v.get("fuel_type") == "new":
+            continue
+        if (
+            _v.get("new_technology") != _v.get("technology")
+            or _v.get("new_tech_detail") != _v.get("tech_detail")
+            or _v.get("new_cost_case") != _v.get("cost_case")
+        ):
+            continue
+        _entry = [_v["technology"], _v["tech_detail"], _v["cost_case"], _v["size_mw"]]
+        if _entry not in base_new_resources:
+            base_new_resources.append(_entry)
 
     if has_year_specific:
         # Build year-specific values and only emit a keyed structure when values
@@ -7370,7 +7387,9 @@ def _get_year_specific_years():
 def _build_new_resources_for_year(year):
     """Build the ``new_resources`` list for a specific planning year.
 
-    Combines: all "all" resources + resources tagged to this year.
+    Combines: all "all" resources + resources tagged to this year, including
+    attribute-only modified resources (no identity/fuel changes) for "all" or
+    the given year.
     """
     base = [
         [r["technology"], r["tech_detail"], r["cost_case"], r["size_mw"]]
@@ -7382,7 +7401,24 @@ def _build_new_resources_for_year(year):
         for r in state.new_resources
         if r.get("planning_year") == year
     ]
-    return base + year_specific
+    result = base + year_specific
+    # Also include attribute-only modified resources applicable to this year
+    for _k, _v in sorted(state.modified_new_resources.items()):
+        _py = _v.get("planning_year", "all")
+        if _py != "all" and _py != year:
+            continue
+        if _v.get("fuel_type") == "new":
+            continue
+        if (
+            _v.get("new_technology") != _v.get("technology")
+            or _v.get("new_tech_detail") != _v.get("tech_detail")
+            or _v.get("new_cost_case") != _v.get("cost_case")
+        ):
+            continue
+        _entry = [_v["technology"], _v["tech_detail"], _v["cost_case"], _v["size_mw"]]
+        if _entry not in result:
+            result.append(_entry)
+    return result
 
 
 def _build_resource_modifiers_for_year(year):

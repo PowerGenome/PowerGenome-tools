@@ -612,10 +612,16 @@ class TestBuildSettingsYamlResourceModifiers:
         assert [["UtilityPV", "Class1", "Moderate", 500]] == new_res.get(2030)
         assert [["LandbasedWind", "Class3", "Moderate", 500]] == new_res.get(2040)
 
-    def test_all_year_modified_resources_export_without_base_new_resources(
+    def test_all_year_modified_resources_appear_in_new_resources(
         self, cluster_app
     ):
-        """Attribute-only modified resources still export without base new_resources."""
+        """Attribute-only modified resources must appear in new_resources.
+
+        This is a regression test for the bug where attribute-only modified
+        resources (no identity changes) were appearing in resource_modifiers
+        but were missing from the new_resources list, causing PowerGenome to
+        receive an empty new_resources list even though resources were added.
+        """
         cluster_app.state.new_resources = []
         cluster_app.state.modified_new_resources = {
             "gas_cc": _make_modified(
@@ -644,7 +650,8 @@ class TestBuildSettingsYamlResourceModifiers:
         result = cluster_app.generate_resources_settings()
         parsed = yaml.safe_load(result)
 
-        assert parsed["new_resources"] == []
+        # The attribute-only modified resource must appear in new_resources
+        assert parsed["new_resources"] == [["NaturalGas", "CC", "Moderate", 500]]
         assert parsed["resource_modifiers"]["gas_cc"]["Heat_Rate_MMBTU_per_MWh"] == 6.5
 
     def test_year_specific_resources_excluded_from_resources_yml(self, cluster_app):
@@ -721,6 +728,201 @@ class TestBuildSettingsYamlResourceModifiers:
         assert "NaturalGas" in techs
         assert "UtilitySolar" in techs
         assert "Utility-Scale Battery Storage" in techs
+
+    # -------------------------------------------------------------------------
+    # Regression tests for the attribute-only modified resource bug
+    # -------------------------------------------------------------------------
+
+    def _setup_generate_state(self, cluster_app):
+        """Apply common state and DOM setup for generate_resources_settings tests."""
+        cluster_app.state.region_aggregations = {"R1": ["ba1"]}
+        cluster_app.state.is_clustered = True
+        cluster_app.state.ba_to_region = {"ba1": "R1"}
+        cluster_app.state.plant_cluster_settings = {}
+        cluster_app.state.renewables_clusters = None
+
+    def _setup_el_map(self, cluster_app, model_years="2030"):
+        """Wire up a minimal getElementById mock."""
+        el_map = {
+            "modelYears": _mock_dom_element(model_years),
+            "targetUsdYear": _mock_dom_element("2024"),
+            "atbYearSelect": _mock_dom_element("2024"),
+        }
+        cluster_app.document.getElementById = MagicMock(
+            side_effect=lambda id_: el_map.get(id_, _mock_dom_element(""))
+        )
+
+    def test_coal_igcc_attribute_only_appears_in_new_resources_and_modifiers(
+        self, cluster_app
+    ):
+        """Regression: Coal IGCC with capex modifier appears in both new_resources
+        and resource_modifiers (exact scenario from the bug report).
+
+        Before the fix, attribute-only modified resources were written to
+        resource_modifiers but were silently omitted from new_resources, causing
+        PowerGenome to see new_resources: [].
+        """
+        cluster_app.state.new_resources = []
+        cluster_app.state.modified_new_resources = {
+            "coal_igcc": _make_modified(
+                "coal_igcc",
+                tech="Coal",
+                detail="IGCC",
+                case="Moderate",
+                size=641,
+                year="all",
+                attr_modifiers={"capex_mw": ["mul", 1.25]},
+            ),
+        }
+        self._setup_generate_state(cluster_app)
+        self._setup_el_map(cluster_app, "2030")
+
+        result = cluster_app.generate_resources_settings()
+        parsed = yaml.safe_load(result)
+
+        # Must appear in new_resources
+        assert parsed["new_resources"] == [["Coal", "IGCC", "Moderate", 641]]
+
+        # Must appear in resource_modifiers with the capex override
+        assert "coal_igcc" in parsed["resource_modifiers"]
+        assert parsed["resource_modifiers"]["coal_igcc"]["capex_mw"] == ["mul", 1.25]
+
+    def test_identity_changed_resource_not_in_new_resources(self, cluster_app):
+        """Resources with new_technology != technology must NOT appear in new_resources.
+
+        Identity-changed resources (where new_technology differs from technology)
+        are handled via a separate mechanism and should never be injected into the
+        new_resources list.
+        """
+        cluster_app.state.new_resources = []
+        cluster_app.state.modified_new_resources = {
+            "custom_gas": _make_modified(
+                "custom_gas",
+                tech="NaturalGas",
+                detail="CC",
+                year="all",
+                new_tech="CustomGasTech",  # identity change
+                attr_modifiers={"heat_rate": 6.0},
+            ),
+        }
+        self._setup_generate_state(cluster_app)
+        self._setup_el_map(cluster_app, "2030")
+
+        result = cluster_app.generate_resources_settings()
+        parsed = yaml.safe_load(result)
+
+        # The identity-changed resource must NOT appear in new_resources
+        new_res = parsed["new_resources"]
+        if isinstance(new_res, list):
+            assert new_res == []
+        else:
+            # dict form: default key must be empty
+            assert new_res.get("default", []) == []
+            for yr_list in new_res.values():
+                assert ["NaturalGas", "CC", "Moderate", 500] not in yr_list
+
+    def test_year_specific_attribute_only_modified_resource_in_new_resources(
+        self, cluster_app
+    ):
+        """Year-specific attribute-only modified resource appears under its year key.
+
+        When a resource has planning_year=2030 and is attribute-only (no identity
+        or fuel changes) it should appear in new_resources[2030] but not in
+        new_resources[default].
+        """
+        cluster_app.state.new_resources = []
+        cluster_app.state.modified_new_resources = {
+            "wind_class3": _make_modified(
+                "wind_class3",
+                tech="LandbasedWind",
+                detail="Class3",
+                case="Moderate",
+                size=200,
+                year=2030,
+                attr_modifiers={"capex_mw": ["mul", 1.1]},
+            ),
+        }
+        self._setup_generate_state(cluster_app)
+        self._setup_el_map(cluster_app, "2030")
+
+        result = cluster_app.generate_resources_settings()
+        parsed = yaml.safe_load(result)
+
+        new_res = parsed["new_resources"]
+        # With year-specific resources, output must be a dict
+        assert isinstance(new_res, dict), (
+            f"Expected dict new_resources, got {type(new_res)}: {new_res}"
+        )
+        # Default (base) list has no "all"-year entries
+        assert new_res.get("default") == []
+        # The 2030 list includes the attribute-only modified resource
+        assert [
+            "LandbasedWind",
+            "Class3",
+            "Moderate",
+            200,
+        ] in new_res.get(2030, [])
+
+        # The modifier entry must also be present.
+        # When year-specific resources exist, field values may themselves be
+        # year-keyed dicts (e.g. {"default": [...], 2030: [...]}).
+        assert "wind_class3" in parsed["resource_modifiers"]
+        capex_val = parsed["resource_modifiers"]["wind_class3"]["capex_mw"]
+        if isinstance(capex_val, dict):
+            # Year-keyed form: the 2030-specific value must be ["mul", 1.1]
+            assert capex_val.get(2030) == ["mul", 1.1]
+        else:
+            assert capex_val == ["mul", 1.1]
+
+    def test_mix_regular_and_attribute_only_modified_resources_no_duplicates(
+        self, cluster_app
+    ):
+        """Regular new_resources and attribute-only modified resources both appear
+        in new_resources, with no duplicate entries.
+
+        Verifies that combining state.new_resources with attribute-only
+        state.modified_new_resources does not produce duplicates even when both
+        refer to the same technology tuple.
+        """
+        cluster_app.state.new_resources = [
+            _make_resource(tech="NaturalGas", detail="CC", case="Moderate", size=500),
+        ]
+        cluster_app.state.modified_new_resources = {
+            "solar_class1": _make_modified(
+                "solar_class1",
+                tech="UtilitySolar",
+                detail="Class1",
+                case="Moderate",
+                size=150,
+                year="all",
+                attr_modifiers={"capex_mw": ["mul", 0.9]},
+            ),
+        }
+        self._setup_generate_state(cluster_app)
+        self._setup_el_map(cluster_app, "2030")
+
+        result = cluster_app.generate_resources_settings()
+        parsed = yaml.safe_load(result)
+
+        new_res = parsed["new_resources"]
+        # Normalise: may be a plain list or dict depending on year-specificity
+        if isinstance(new_res, dict):
+            entries = new_res.get("default", [])
+        else:
+            entries = new_res
+
+        # Both resources must be present
+        assert ["NaturalGas", "CC", "Moderate", 500] in entries
+        assert ["UtilitySolar", "Class1", "Moderate", 150] in entries
+
+        # No duplicates
+        assert len(entries) == len(
+            [list(e) for e in {tuple(e) for e in entries}]
+        ), f"Duplicate entries found in new_resources: {entries}"
+
+        # Modifier entry for the attribute-only resource must exist
+        assert "solar_class1" in parsed["resource_modifiers"]
+        assert parsed["resource_modifiers"]["solar_class1"]["capex_mw"] == ["mul", 0.9]
 
 
 # ============================================================================
