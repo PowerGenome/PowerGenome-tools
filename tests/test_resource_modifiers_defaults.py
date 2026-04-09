@@ -877,25 +877,24 @@ class TestBuildSettingsYamlResourceModifiers:
     def test_mix_regular_and_attribute_only_modified_resources_no_duplicates(
         self, cluster_app
     ):
-        """Regular new_resources and attribute-only modified resources both appear
-        in new_resources, with no duplicate entries.
-
-        Verifies that combining state.new_resources with attribute-only
-        state.modified_new_resources does not produce duplicates even when both
-        refer to the same technology tuple.
+        """Dedup: an attribute-only modified resource whose (tech, detail, case,
+        size) tuple already appears in state.new_resources must not be added
+        again to the exported new_resources list.
         """
+        # Both state.new_resources and modified_new_resources reference the
+        # exact same (NaturalGas, CC, Moderate, 500) tuple.
         cluster_app.state.new_resources = [
             _make_resource(tech="NaturalGas", detail="CC", case="Moderate", size=500),
         ]
         cluster_app.state.modified_new_resources = {
-            "solar_class1": _make_modified(
-                "solar_class1",
-                tech="UtilitySolar",
-                detail="Class1",
+            "gas_cc_override": _make_modified(
+                "gas_cc_override",
+                tech="NaturalGas",
+                detail="CC",
                 case="Moderate",
-                size=150,
+                size=500,
                 year="all",
-                attr_modifiers={"capex_mw": ["mul", 0.9]},
+                attr_modifiers={"heat_rate": 6.5},
             ),
         }
         self._setup_generate_state(cluster_app)
@@ -911,18 +910,17 @@ class TestBuildSettingsYamlResourceModifiers:
         else:
             entries = new_res
 
-        # Both resources must be present
-        assert ["NaturalGas", "CC", "Moderate", 500] in entries
-        assert ["UtilitySolar", "Class1", "Moderate", 150] in entries
+        # The resource must appear exactly once — not duplicated
+        assert entries.count(["NaturalGas", "CC", "Moderate", 500]) == 1
 
-        # No duplicates
-        assert len(entries) == len(
-            [list(e) for e in {tuple(e) for e in entries}]
-        ), f"Duplicate entries found in new_resources: {entries}"
-
-        # Modifier entry for the attribute-only resource must exist
-        assert "solar_class1" in parsed["resource_modifiers"]
-        assert parsed["resource_modifiers"]["solar_class1"]["capex_mw"] == ["mul", 0.9]
+        # Modifier entry for the attribute-only resource must still exist
+        assert "gas_cc_override" in parsed["resource_modifiers"]
+        assert (
+            parsed["resource_modifiers"]["gas_cc_override"][
+                "Heat_Rate_MMBTU_per_MWh"
+            ]
+            == 6.5
+        )
 
 
 # ============================================================================

@@ -7134,26 +7134,7 @@ def generate_resources_settings():
     # or fuel changes). These go into resource_modifiers for their overrides but must
     # also appear in new_resources so PowerGenome loads them as new build options.
     _seen = {tuple(e) for e in base_new_resources}
-    for _, mod_res in sorted(state.modified_new_resources.items()):
-        if mod_res.get("planning_year", "all") != "all":
-            continue
-        if mod_res.get("fuel_type") == "new":
-            continue
-        if (
-            mod_res.get("new_technology") != mod_res.get("technology")
-            or mod_res.get("new_tech_detail") != mod_res.get("tech_detail")
-            or mod_res.get("new_cost_case") != mod_res.get("cost_case")
-        ):
-            continue
-        entry_key = (
-            mod_res["technology"],
-            mod_res["tech_detail"],
-            mod_res["cost_case"],
-            mod_res["size_mw"],
-        )
-        if entry_key not in _seen:
-            _seen.add(entry_key)
-            base_new_resources.append(list(entry_key))
+    _append_attribute_only_modified_resources(base_new_resources, _seen, year=None)
 
     if has_year_specific:
         # Build year-specific values and only emit a keyed structure when values
@@ -7391,6 +7372,51 @@ def _get_year_specific_years():
     return sorted(years)
 
 
+def _append_attribute_only_modified_resources(entries, existing_set, year=None):
+    """Append attribute-only modified resources to ``entries`` in-place.
+
+    An "attribute-only" entry is one where the resource identity is unchanged
+    (``new_technology == technology``, ``new_tech_detail == tech_detail``,
+    ``new_cost_case == cost_case``) and the fuel type is not ``"new"``.
+    These entries must appear in ``new_resources`` so PowerGenome loads them
+    as buildable options, even though their modifiers live in
+    ``resource_modifiers``.
+
+    Args:
+        entries: The list to extend (modified in-place).
+        existing_set: A set of already-seen ``(technology, tech_detail,
+            cost_case, size_mw)`` tuples used for deduplication (mutated).
+        year: If given, only include entries with ``planning_year == "all"``
+            or ``planning_year == year``.  If ``None``, only "all" entries
+            are included (the base / no-year-specific path).
+    """
+    for _, mod_res in sorted(state.modified_new_resources.items()):
+        py = mod_res.get("planning_year", "all")
+        if year is None:
+            if py != "all":
+                continue
+        else:
+            if py != "all" and py != year:
+                continue
+        if mod_res.get("fuel_type") == "new":
+            continue
+        if (
+            mod_res.get("new_technology") != mod_res.get("technology")
+            or mod_res.get("new_tech_detail") != mod_res.get("tech_detail")
+            or mod_res.get("new_cost_case") != mod_res.get("cost_case")
+        ):
+            continue
+        entry_key = (
+            mod_res["technology"],
+            mod_res["tech_detail"],
+            mod_res["cost_case"],
+            mod_res["size_mw"],
+        )
+        if entry_key not in existing_set:
+            existing_set.add(entry_key)
+            entries.append(list(entry_key))
+
+
 def _build_new_resources_for_year(year):
     """Build the ``new_resources`` list for a specific planning year.
 
@@ -7411,27 +7437,7 @@ def _build_new_resources_for_year(year):
     result = base + year_specific
     # Also include attribute-only modified resources applicable to this year
     _seen = {tuple(e) for e in result}
-    for _, mod_res in sorted(state.modified_new_resources.items()):
-        _py = mod_res.get("planning_year", "all")
-        if _py != "all" and _py != year:
-            continue
-        if mod_res.get("fuel_type") == "new":
-            continue
-        if (
-            mod_res.get("new_technology") != mod_res.get("technology")
-            or mod_res.get("new_tech_detail") != mod_res.get("tech_detail")
-            or mod_res.get("new_cost_case") != mod_res.get("cost_case")
-        ):
-            continue
-        entry_key = (
-            mod_res["technology"],
-            mod_res["tech_detail"],
-            mod_res["cost_case"],
-            mod_res["size_mw"],
-        )
-        if entry_key not in _seen:
-            _seen.add(entry_key)
-            result.append(list(entry_key))
+    _append_attribute_only_modified_resources(result, _seen, year=year)
     return result
 
 
