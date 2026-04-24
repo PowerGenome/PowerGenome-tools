@@ -3582,6 +3582,8 @@ def _default_scenario_for_fuel(fuel: str, scenarios: list[str]) -> str | None:
         return "no_111d"
     if "reference" in scenarios_set:
         return "reference"
+    elif "baseline" in scenarios_set:
+        return "baseline"
     return scenarios[0] if scenarios else None
 
 
@@ -3868,13 +3870,13 @@ def populate_fuel_data_year_select(event=None):
     # Gather available years from loaded index
     if not state.fuel_scenario_index:
         # Fallback to a reasonable default when fuel_prices.csv can't be loaded
-        _set_select_options_simple(year_el, [2025], selected_value="2025")
+        _set_select_options_simple(year_el, [2026], selected_value="2026")
         return
 
     years = sorted(state.fuel_scenario_index.keys())
     current = _get_select_value(year_el, None)
 
-    # Choose a default: keep current if valid; else prefer 2025 if present; else latest.
+    # Choose a default: keep current if valid; else latest.
     selected = None
     try:
         current_int = int(current) if current is not None else None
@@ -3883,8 +3885,6 @@ def populate_fuel_data_year_select(event=None):
 
     if current_int in years:
         selected = current_int
-    elif 2025 in years:
-        selected = 2025
     elif years:
         selected = years[-1]
 
@@ -7662,7 +7662,7 @@ def _build_nested_year_keyed_resource_modifiers(
 
 
 def generate_fuels_settings():
-    fuel_year = int(_get_select_value(document.getElementById("fuelDataYear"), 2025))
+    fuel_year = int(_get_select_value(document.getElementById("fuelDataYear"), 2026))
 
     # Fuel scenarios: default coal to no_111d if present for selected year; otherwise reference.
     coal_sel = _get_select_value(document.getElementById("fuelScenarioCoal"), None)
