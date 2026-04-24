@@ -2432,7 +2432,7 @@
                     <label style="font-size: 12px;">Fuel Data Year</label>
                     <select id="fuelDataYear"></select>
                     <div style="font-size: 11px; color: #666; margin-top: 4px;">
-                        Uses standard fuels (coal, naturalgas, distillate, uranium). New fuels can be added when
+                        Fuels shown depend on the selected Fuel Data Year. New fuels can be added when
                         creating modified resources.
                     </div>
                 </div>
@@ -2440,42 +2440,14 @@
                 <div class="section">
                     <label>Fuel Scenarios</label>
                     <div style="font-size: 11px; color: #666; margin-bottom: 8px;">
-                        Scenario options come from PowerGenome-data fuel_prices.csv for the selected Fuel Data Year.
-                        Defaults: coal uses <em>no_111d</em> when available, otherwise <em>reference</em>; all other
-                        fuels default to <em>reference</em>.
+                        Scenario options come from PowerGenome-data fuel_prices.parquet for the selected Fuel Data Year.
+                        Defaults: coal uses <em>no_111d</em> (aka <em>alternative electricity</em>) when available,
+                        otherwise <em>baseline/reference</em>; all other fuels default to <em>baseline/reference</em>.
+                        AEO2025 uses <em>reference</em> and AEO 2026 changed the name to <em>Counterfactual
+                            Baseline</em> &mdash; abbreviated here as <em>baseline</em>.
                     </div>
 
-                    <div class="fuel-scenario-row">
-                        <div class="fuel-scenario-control">
-                            <label style="font-size: 12px;">Coal</label>
-                            <select id="fuelScenarioCoal"></select>
-                        </div>
-                        <div id="fuelChartCoal" class="fuel-price-chart"></div>
-                    </div>
-
-                    <div class="fuel-scenario-row">
-                        <div class="fuel-scenario-control">
-                            <label style="font-size: 12px; margin-top: 8px;">Natural gas</label>
-                            <select id="fuelScenarioNaturalGas"></select>
-                        </div>
-                        <div id="fuelChartNaturalGas" class="fuel-price-chart"></div>
-                    </div>
-
-                    <div class="fuel-scenario-row">
-                        <div class="fuel-scenario-control">
-                            <label style="font-size: 12px; margin-top: 8px;">Distillate</label>
-                            <select id="fuelScenarioDistillate"></select>
-                        </div>
-                        <div id="fuelChartDistillate" class="fuel-price-chart"></div>
-                    </div>
-
-                    <div class="fuel-scenario-row">
-                        <div class="fuel-scenario-control">
-                            <label style="font-size: 12px; margin-top: 8px;">Uranium</label>
-                            <select id="fuelScenarioUranium"></select>
-                        </div>
-                        <div id="fuelChartUranium" class="fuel-price-chart"></div>
-                    </div>
+                    <div id="fuelScenariosContainer"></div>
 
                     <div id="fuelScenarioHelp" style="font-size: 11px; color: #666; margin-top: 6px;"></div>
                 </div>

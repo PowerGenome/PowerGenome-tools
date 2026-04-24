@@ -38,6 +38,7 @@ import numpy as np
 # Will be imported after PyScript loads packages
 import pandas as pd
 import yaml
+from calc_network import calculate_network_from_frames
 from clustering_algorithms import (
     agglomerative_cluster,
     build_transmission_graph,
@@ -79,7 +80,6 @@ from visualization_utils import (
     GROUP_OUTLINE_COLORS,
     lighten_color,
 )
-from calc_network import calculate_network_from_frames
 
 # ============================================================================
 # Global State
@@ -3588,14 +3588,29 @@ def _default_scenario_for_fuel(fuel: str, scenarios: list[str]) -> str | None:
 
 
 def populate_fuel_scenario_selects(event=None):
-    """Populate the Fuel Scenarios selects based on the selected fuel data year."""
+    """Dynamically populate fuel scenario rows based on the selected fuel data year.
+
+    Reads the set of fuels available for the selected year from
+    ``state.fuel_scenario_index`` and rebuilds the ``fuelScenariosContainer``
+    with one row per fuel (select + mini-chart).  New fuels introduced in a
+    future AEO release (e.g. hydrogen) will appear automatically without any
+    code changes.
+    """
+    # Human-readable labels for well-known fuel keys; unknown fuels are
+    # capitalised as a reasonable fallback.
+    FUEL_LABELS: dict[str, str] = {
+        "coal": "Coal",
+        "naturalgas": "Natural gas",
+        "distillate": "Distillate",
+        "uranium": "Uranium",
+        "hydrogen": "Hydrogen",
+    }
+    # Preferred display order for standard fuels; any extra fuels sort after.
+    STANDARD_ORDER = ["coal", "naturalgas", "distillate", "uranium"]
+
     year_el = document.getElementById("fuelDataYear")
     help_el = document.getElementById("fuelScenarioHelp")
-
-    coal_el = document.getElementById("fuelScenarioCoal")
-    gas_el = document.getElementById("fuelScenarioNaturalGas")
-    dist_el = document.getElementById("fuelScenarioDistillate")
-    ura_el = document.getElementById("fuelScenarioUranium")
+    container = document.getElementById("fuelScenariosContainer")
 
     try:
         selected_year = int(_get_select_value(year_el, 0) or 0)
@@ -3603,43 +3618,63 @@ def populate_fuel_scenario_selects(event=None):
         selected_year = 0
 
     if not state.fuel_scenario_index or selected_year not in state.fuel_scenario_index:
-        # Fallback: just offer 'reference'
-        _set_select_options_simple(coal_el, ["reference"], selected_value="reference")
-        _set_select_options_simple(gas_el, ["reference"], selected_value="reference")
-        _set_select_options_simple(dist_el, ["reference"], selected_value="reference")
-        _set_select_options_simple(ura_el, ["reference"], selected_value="reference")
+        year_map = {f: ["reference"] for f in STANDARD_ORDER}
         if help_el:
             help_el.textContent = (
                 "Fuel scenario options not available for this year; using 'reference'."
             )
-        render_fuel_price_charts()
-        return
+    else:
+        year_map = state.fuel_scenario_index.get(selected_year, {})
+        if help_el:
+            coal_scenarios = year_map.get("coal", [])
+            if "no_111d" in set(coal_scenarios):
+                help_el.textContent = (
+                    "Coal defaults to 'no_111d' for this year (available)."
+                )
+            else:
+                help_el.textContent = "Coal 'no_111d' not available for this year; defaulting to 'reference'."
 
-    year_map = state.fuel_scenario_index.get(selected_year, {})
+    # Stable ordering: standard fuels first, then any extras alphabetically.
+    extras = sorted(k for k in year_map if k not in STANDARD_ORDER)
+    ordered_fuels = [f for f in STANDARD_ORDER if f in year_map] + extras
 
-    def set_for(fuel_key: str, select_el):
-        scenarios = year_map.get(fuel_key, ["reference"])
-        current = _get_select_value(select_el, None)
-        default_val = _default_scenario_for_fuel(fuel_key, scenarios)
-        chosen = current if current in scenarios else default_val
-        _set_select_options_simple(select_el, scenarios, selected_value=chosen)
+    if container:
+        # Preserve existing selections before rebuilding the container.
+        existing_selections: dict[str, str | None] = {}
+        for fuel_key in ordered_fuels:
+            sel_el = document.getElementById(f"fuelScenario_{fuel_key}")
+            if sel_el:
+                existing_selections[fuel_key] = _get_select_value(sel_el, None)
 
-    set_for("coal", coal_el)
-    set_for("naturalgas", gas_el)
-    set_for("distillate", dist_el)
-    set_for("uranium", ura_el)
-
-    if help_el:
-        # Inform about coal default if relevant
-        coal_scenarios = year_map.get("coal", [])
-        if "no_111d" in set(coal_scenarios):
-            help_el.textContent = (
-                "Coal defaults to 'no_111d' for this year (available)."
+        # Rebuild inner HTML with one row per fuel.
+        rows_html = []
+        for fuel_key in ordered_fuels:
+            label_text = FUEL_LABELS.get(fuel_key, fuel_key.capitalize())
+            sel_id = f"fuelScenario_{fuel_key}"
+            chart_id = f"fuelChart_{fuel_key}"
+            rows_html.append(
+                f'<div class="fuel-scenario-row">'
+                f'<div class="fuel-scenario-control">'
+                f'<label style="font-size: 12px;">{label_text}</label>'
+                f'<select id="{sel_id}"></select>'
+                f"</div>"
+                f'<div id="{chart_id}" class="fuel-price-chart"></div>'
+                f"</div>"
             )
-        else:
-            help_el.textContent = (
-                "Coal 'no_111d' not available for this year; defaulting to 'reference'."
-            )
+        container.innerHTML = "".join(rows_html)
+
+        # Populate each select and attach a change listener for the chart.
+        for fuel_key in ordered_fuels:
+            scenarios = year_map.get(fuel_key, ["reference"])
+            current = existing_selections.get(fuel_key)
+            default_val = _default_scenario_for_fuel(fuel_key, scenarios)
+            chosen = current if current in scenarios else default_val
+            sel_el = document.getElementById(f"fuelScenario_{fuel_key}")
+            if sel_el:
+                _set_select_options_simple(sel_el, scenarios, selected_value=chosen)
+                sel_el.addEventListener(
+                    "change", create_proxy(render_fuel_price_charts)
+                )
 
     render_fuel_price_charts()
 
@@ -3818,11 +3853,12 @@ def _render_fuel_price_chart_svg(fuel_data: dict, selected_scenario: str | None)
 
 
 def render_fuel_price_charts(event=None):
-    """Update the four fuel price mini-charts based on current state and selections.
+    """Update fuel price mini-charts for all fuels currently in the container.
 
-    Reads the selected fuel data year and each fuel scenario from the DOM,
-    builds SVG line charts via ``_render_fuel_price_chart_svg``, and injects
-    them into the corresponding chart container elements.
+    Reads the selected fuel data year and each fuel scenario select from
+    ``fuelScenariosContainer``, builds SVG line charts via
+    ``_render_fuel_price_chart_svg``, and injects them into the corresponding
+    chart container elements.
 
     Safe to call with an optional event argument (e.g., as a DOM event handler).
     """
@@ -3834,19 +3870,21 @@ def render_fuel_price_charts(event=None):
 
     chart_data = _build_fuel_chart_data(selected_year)
 
-    fuel_map = [
-        ("coal", "fuelScenarioCoal", "fuelChartCoal"),
-        ("naturalgas", "fuelScenarioNaturalGas", "fuelChartNaturalGas"),
-        ("distillate", "fuelScenarioDistillate", "fuelChartDistillate"),
-        ("uranium", "fuelScenarioUranium", "fuelChartUranium"),
-    ]
+    container = document.getElementById("fuelScenariosContainer")
+    if not container:
+        return
 
-    for fuel_key, select_id, chart_id in fuel_map:
+    # Discover all fuel selects rendered by populate_fuel_scenario_selects.
+    for sel_el in container.querySelectorAll("select"):
+        sel_id = sel_el.id
+        if not sel_id.startswith("fuelScenario_"):
+            continue
+        fuel_key = sel_id[len("fuelScenario_") :]
+        chart_id = f"fuelChart_{fuel_key}"
         chart_el = document.getElementById(chart_id)
         if not chart_el:
             continue
-        select_el = document.getElementById(select_id)
-        selected_scenario = _get_select_value(select_el, None)
+        selected_scenario = _get_select_value(sel_el, None)
         fuel_data = chart_data.get(fuel_key, {})
         svg = _render_fuel_price_chart_svg(fuel_data, selected_scenario)
         chart_el.innerHTML = svg
@@ -7664,36 +7702,36 @@ def _build_nested_year_keyed_resource_modifiers(
 def generate_fuels_settings():
     fuel_year = int(_get_select_value(document.getElementById("fuelDataYear"), 2026))
 
-    # Fuel scenarios: default coal to no_111d if present for selected year; otherwise reference.
-    coal_sel = _get_select_value(document.getElementById("fuelScenarioCoal"), None)
-    gas_sel = _get_select_value(document.getElementById("fuelScenarioNaturalGas"), None)
-    dist_sel = _get_select_value(
-        document.getElementById("fuelScenarioDistillate"), None
-    )
-    ura_sel = _get_select_value(document.getElementById("fuelScenarioUranium"), None)
+    # Collect fuel scenarios from the dynamically rendered container.
+    container = document.getElementById("fuelScenariosContainer")
+    fuel_scenarios: dict[str, str] = {}
+    if container:
+        for sel_el in container.querySelectorAll("select"):
+            sel_id = sel_el.id
+            if not sel_id.startswith("fuelScenario_"):
+                continue
+            fuel_key = sel_id[len("fuelScenario_") :]
+            fuel_scenarios[fuel_key] = str(
+                _get_select_value(sel_el, "reference") or "reference"
+            )
 
-    # Ensure selects are populated (e.g., if user generates settings before load finishes)
-    if not coal_sel or not gas_sel or not dist_sel or not ura_sel:
+    # If the container was empty (e.g. user jumped straight to export), populate
+    # first then re-read.
+    if not fuel_scenarios:
         populate_fuel_scenario_selects()
-        coal_sel = _get_select_value(
-            document.getElementById("fuelScenarioCoal"), "reference"
-        )
-        gas_sel = _get_select_value(
-            document.getElementById("fuelScenarioNaturalGas"), "reference"
-        )
-        dist_sel = _get_select_value(
-            document.getElementById("fuelScenarioDistillate"), "reference"
-        )
-        ura_sel = _get_select_value(
-            document.getElementById("fuelScenarioUranium"), "reference"
-        )
+        if container:
+            for sel_el in container.querySelectorAll("select"):
+                sel_id = sel_el.id
+                if not sel_id.startswith("fuelScenario_"):
+                    continue
+                fuel_key = sel_id[len("fuelScenario_") :]
+                fuel_scenarios[fuel_key] = str(
+                    _get_select_value(sel_el, "reference") or "reference"
+                )
 
-    fuel_scenarios = {
-        "coal": str(coal_sel or "reference"),
-        "naturalgas": str(gas_sel or "reference"),
-        "distillate": str(dist_sel or "reference"),
-        "uranium": str(ura_sel or "reference"),
-    }
+    # Guarantee standard fuels are always present.
+    for std_fuel in ("coal", "naturalgas", "distillate", "uranium"):
+        fuel_scenarios.setdefault(std_fuel, "reference")
 
     tech_fuel_map = {
         "Conventional Steam Coal": "coal",
@@ -9251,15 +9289,8 @@ async def main():
         document.getElementById("fuelDataYear").addEventListener(
             "change", create_proxy(populate_fuel_scenario_selects)
         )
-        for _fuel_sel_id in (
-            "fuelScenarioCoal",
-            "fuelScenarioNaturalGas",
-            "fuelScenarioDistillate",
-            "fuelScenarioUranium",
-        ):
-            document.getElementById(_fuel_sel_id).addEventListener(
-                "change", create_proxy(render_fuel_price_charts)
-            )
+        # Fuel scenario select change listeners are attached dynamically by
+        # populate_fuel_scenario_selects when it builds the rows.
 
         # ATB picker change events
         document.getElementById("atbYearSelect").addEventListener(
