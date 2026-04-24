@@ -4,21 +4,21 @@ The web app loads fuel price scenarios from `web/data/fuel_prices.csv`.
 This script downloads the latest data from PowerGenome-data and saves it locally.
 
 Usage:
-    # Download from default PowerGenome-data location
+    # Download from default PowerGenome-data location (tries parquet first, falls back to CSV)
     python web/build_fuel_prices.py
 
-    # Or provide a custom URL
+    # Or provide a custom URL (parquet or CSV auto-detected from extension)
     python web/build_fuel_prices.py \
-        --url https://example.com/fuel_prices.csv \
+        --url https://example.com/fuel_prices.parquet \
         --out web/data/fuel_prices.csv
 
-    # Or use a local CSV file
+    # Or use a local file (parquet or CSV)
     python web/build_fuel_prices.py \
-        --csv /path/to/fuel_prices.csv \
+        --file /path/to/fuel_prices.parquet \
         --out web/data/fuel_prices.csv
 
 Notes:
-- Requires pandas.
+- Requires pandas (and pyarrow or fastparquet for parquet support).
 - Validates required columns: data_year, fuel, scenario.
 """
 
@@ -28,27 +28,100 @@ import argparse
 import sys
 import urllib.error
 import urllib.request
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
 
-DEFAULT_URL = "https://raw.githubusercontent.com/gschivley/PowerGenome-data/main/data/fuel_prices.csv"
+DEFAULT_PARQUET_URL = "https://raw.githubusercontent.com/gschivley/PowerGenome-data/main/data/fuel_prices.parquet"
+DEFAULT_CSV_URL = "https://raw.githubusercontent.com/gschivley/PowerGenome-data/main/data/fuel_prices.csv"
 
 
-def download_csv(url: str) -> str:
-    """Download CSV from URL and return the text content."""
+def _url_format(url: str) -> str | None:
+    """Return 'parquet' or 'csv' based on URL extension, or None if unknown."""
+    lower = url.lower().split("?")[0]
+    if lower.endswith(".parquet"):
+        return "parquet"
+    if lower.endswith(".csv"):
+        return "csv"
+    return None
+
+
+_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
+
+
+def _is_lfs_pointer(data: bytes) -> bool:
+    """Return True if data looks like a Git LFS pointer file."""
+    return data.lstrip().startswith(_LFS_POINTER_PREFIX)
+
+
+def _lfs_media_url(url: str) -> str | None:
+    """Convert a raw.githubusercontent.com URL to its media.githubusercontent.com
+    equivalent, which serves actual LFS content.  Returns None if the URL is not
+    a raw GitHub URL.
+    """
+    if "raw.githubusercontent.com" in url:
+        return url.replace("raw.githubusercontent.com", "media.githubusercontent.com")
+    return None
+
+
+def download_file(url: str) -> bytes:
+    """Download file from URL and return raw bytes.
+
+    If the response is a Git LFS pointer (e.g. the file is stored in LFS on
+    GitHub) and the URL is a raw.githubusercontent.com URL, the download is
+    automatically retried via media.githubusercontent.com which serves the
+    actual LFS content.
+    """
     url = str(url).strip()
     if not url:
         raise ValueError("Empty URL")
 
     try:
         with urllib.request.urlopen(url) as resp:  # nosec - URL is user-provided
-            content = resp.read().decode("utf-8")
-        return content
+            data = resp.read()
     except urllib.error.HTTPError as exc:
         raise RuntimeError(f"Download failed ({exc.code}) for {url}") from exc
     except Exception as exc:
         raise RuntimeError(f"Download failed for {url}: {exc}") from exc
+
+    if _is_lfs_pointer(data):
+        media_url = _lfs_media_url(url)
+        if media_url:
+            print(f"  -> LFS pointer detected; retrying via media CDN: {media_url}")
+            try:
+                with urllib.request.urlopen(media_url) as resp:  # nosec
+                    data = resp.read()
+            except urllib.error.HTTPError as exc:
+                raise RuntimeError(
+                    f"LFS media download failed ({exc.code}) for {media_url}"
+                ) from exc
+            except Exception as exc:
+                raise RuntimeError(
+                    f"LFS media download failed for {media_url}: {exc}"
+                ) from exc
+        else:
+            raise RuntimeError(
+                f"Downloaded file from {url} appears to be a Git LFS pointer. "
+                "Run 'git lfs pull' in the PowerGenome-data repo to fetch the "
+                "actual file, then use --file to point to it."
+            )
+
+    return data
+
+
+def read_dataframe(source: Path | bytes, fmt: str) -> pd.DataFrame:
+    """Read a DataFrame from a local path or raw bytes in 'parquet' or 'csv' format."""
+    if fmt == "parquet":
+        if isinstance(source, bytes):
+            return pd.read_parquet(BytesIO(source))
+        return pd.read_parquet(source)
+    else:
+        if isinstance(source, bytes):
+            from io import StringIO
+
+            return pd.read_csv(StringIO(source.decode("utf-8")))
+        return pd.read_csv(source)
 
 
 def validate_and_clean(df: pd.DataFrame) -> pd.DataFrame:
@@ -112,14 +185,14 @@ def main() -> int:
     )
     source_group = parser.add_mutually_exclusive_group(required=False)
     source_group.add_argument(
-        "--csv",
+        "--file",
         type=Path,
-        help="Path to local fuel_prices.csv file",
+        help="Path to local fuel_prices file (.parquet or .csv)",
     )
     source_group.add_argument(
         "--url",
         type=str,
-        help=f"URL to download fuel_prices.csv from (default: {DEFAULT_URL})",
+        help="URL to download fuel prices from (.parquet or .csv; default tries parquet then CSV)",
     )
     parser.add_argument(
         "--out",
@@ -130,23 +203,41 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        if args.csv:
-            print(f"Reading from local file: {args.csv}")
-            df = pd.read_csv(args.csv)
+        if args.file:
+            fmt = "parquet" if args.file.suffix.lower() == ".parquet" else "csv"
+            print(f"Reading from local file ({fmt}): {args.file}")
+            df = read_dataframe(args.file, fmt)
         else:
-            url = args.url or DEFAULT_URL
-            print(f"Downloading from: {url}")
-            csv_text = download_csv(url)
-            from io import StringIO
-
-            df = pd.read_csv(StringIO(csv_text))
+            url = args.url
+            if url:
+                fmt = _url_format(url) or "csv"
+                print(f"Downloading from: {url}")
+                data = download_file(url)
+                df = read_dataframe(data, fmt)
+            else:
+                # Auto-detect: try parquet first, fall back to CSV
+                print(f"Trying parquet: {DEFAULT_PARQUET_URL}")
+                try:
+                    data = download_file(DEFAULT_PARQUET_URL)
+                    df = read_dataframe(data, "parquet")
+                    print("  -> parquet download succeeded")
+                except RuntimeError as parquet_exc:
+                    print(f"  -> parquet unavailable ({parquet_exc}), trying CSV...")
+                    print(f"Downloading from: {DEFAULT_CSV_URL}")
+                    data = download_file(DEFAULT_CSV_URL)
+                    df = read_dataframe(data, "csv")
 
         # Validate and clean
         df = validate_and_clean(df)
 
         # Save to output
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(args.out, index=False)
+        # Save as csv, only write 2 decimal places for price if present
+        df.to_csv(
+            args.out,
+            index=False,
+            float_format="%.2f" if "price" in df.columns else None,
+        )
 
         # Report stats
         n_years = df["data_year"].nunique()
