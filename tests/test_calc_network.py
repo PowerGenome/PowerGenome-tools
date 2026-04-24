@@ -597,6 +597,8 @@ def test_calculate_network_from_frames_empty_result_when_no_cross_region_edges()
 
     assert isinstance(result, pd.DataFrame)
     assert len(result) == 0
+    assert "total_interconnect_annuity_mw" in result.columns
+    assert "dollar_year" in result.columns
 
 
 # ===========================================================================
