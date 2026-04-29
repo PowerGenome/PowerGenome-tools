@@ -2375,6 +2375,70 @@ class TestESRInterconnectGuard:
         ), "eastern2 (WI, eastern) must appear in regional_tag_values"
         assert "ESR_1" in regional["eastern2"], "eastern2 must carry the WI ESR_1 tag"
 
+    def test_split_state_minority_interconnect_not_excluded(self, _cluster_app_for_esr):
+        """A region whose BA is in the *minority* interconnect for its state must not
+        be incorrectly excluded from ESR tagging when it shares an interconnect with
+        the policy state.
+
+        Scenario:
+          - SD has 3 eastern BAs (p_sd_e1, p_sd_e2, p_sd_e3) and 1 western BA (p_sd_w).
+            Under a majority-based state→interconnect mapping, SD maps to "Eastern".
+          - Region "western_sd" contains only p_sd_w (the minority/western SD BA).
+          - Policy state "nd" (ND) is in the western interconnect.
+          - rectable.loc["ND", "SD"] = 1 → SD generators can satisfy ND's RPS.
+          - The interconnect guard must NOT exclude "western_sd" because p_sd_w's actual
+            interconnect (Western) matches ND's interconnect (Western).
+          - A majority-based guard would incorrectly see SD as "Eastern" and block the tag.
+        """
+        m = _cluster_app_for_esr
+
+        # SD has 3 eastern BAs (majority eastern) + 1 western BA (minority western).
+        # ND has 1 western BA.
+        m.state.hierarchy_df = pd.DataFrame(
+            {
+                "ba": ["p_sd_e1", "p_sd_e2", "p_sd_e3", "p_sd_w", "p_nd_w"],
+                "st": ["SD", "SD", "SD", "SD", "ND"],
+                "interconnect": ["Eastern", "Eastern", "Eastern", "Western", "Western"],
+            }
+        )
+
+        # rectable: ND policy row only.
+        # rectable.loc["ND", "SD"] = 1 → SD generators can satisfy ND's RPS.
+        # ND→ND handled by the same-state shortcut.
+        m.state.rectable_df = pd.DataFrame(
+            {"ND": [1], "SD": [1]},
+            index=["ND"],
+        )
+
+        # "western_sd" holds only the minority-interconnect SD BA.
+        # "nd_region" holds the ND/western BA.
+        m.state.region_aggregations = {
+            "western_sd": ["p_sd_w"],
+            "nd_region": ["p_nd_w"],
+        }
+
+        # One RPS constraint whose policy state is ND (western interconnect).
+        m.state.esr_map = {"ESR_1": {}}
+        m.state.esr_type_map = {"ESR_1": "RPS"}
+        m.state.esr_policy_states = {"ESR_1": {"nd"}}
+        m.state.esr_rps_techs = {"Wind"}
+        m.state.esr_ces_techs = set()
+
+        m.state.modified_new_resources = {}
+        m.state.new_resources = []
+
+        result = yaml.safe_load(m.generate_resource_tags_settings())
+        regional = result.get("regional_tag_values", {})
+
+        assert "western_sd" in regional, (
+            "western_sd (SD minority-western BA) must appear in regional_tag_values "
+            "because its actual BA interconnect (Western) matches ND's interconnect"
+        )
+        assert "ESR_1" in regional["western_sd"], (
+            "western_sd must carry the ND ESR_1 tag — the BA-level interconnect guard "
+            "must not exclude it based on SD's majority (Eastern) interconnect"
+        )
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
