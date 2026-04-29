@@ -769,6 +769,45 @@ class TestESRPolicyFunctions:
             cluster_app.can_generator_satisfy_policy("ZZ", "CA", rectable_df) is False
         )
 
+    def test_can_satisfy_policy_same_state_in_rectable(self, cluster_app, rectable_df):
+        # CA generator satisfies CA policy even when same state appears in rectable
+        assert cluster_app.can_generator_satisfy_policy("CA", "CA", rectable_df) is True
+
+    def test_can_satisfy_policy_same_state_not_in_rectable_index(
+        self, cluster_app, rectable_df
+    ):
+        # IA-like state: in rectable columns but NOT in rectable index (no REC trading partner).
+        # A generator in that state should still satisfy its own state's policy.
+        states_with_ia = ["CA", "NV", "TX", "OK", "CO", "IA"]
+        data = [
+            [1, 1, 0, 0, 0, 0],
+            [1, 1, 0, 0, 0, 0],
+            [0, 0, 1, 1, 0, 0],
+            [0, 0, 1, 1, 0, 0],
+            [0, 0, 0, 0, 1, 0],
+        ]
+        # IA is only in columns, not in index (no RPS trading partners)
+        rectable_with_ia = pd.DataFrame(
+            data,
+            index=["CA", "NV", "TX", "OK", "CO"],
+            columns=states_with_ia,
+        )
+        # An Iowa generator should satisfy Iowa's own policy
+        assert (
+            cluster_app.can_generator_satisfy_policy("IA", "IA", rectable_with_ia)
+            is True
+        )
+        # An Iowa generator should NOT satisfy CA's policy (the rectable value is 0)
+        assert (
+            cluster_app.can_generator_satisfy_policy("IA", "CA", rectable_with_ia)
+            is False
+        )
+        # Case insensitive
+        assert (
+            cluster_app.can_generator_satisfy_policy("ia", "ia", rectable_with_ia)
+            is True
+        )
+
     # --- can_states_trade_transitively ---
 
     def test_single_state_true(self, cluster_app, rectable_df):

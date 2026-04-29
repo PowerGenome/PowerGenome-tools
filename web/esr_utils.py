@@ -134,6 +134,10 @@ def can_generator_satisfy_policy(generator_state, policy_state, rectable_df):
     The row represents the policy holder (whose constraint needs to be met).
     The column represents the generator location (whose generation can satisfy the policy).
 
+    A generator in the same state as the policy can always satisfy that state's own
+    policy, even if the state is not listed as a policy holder in the rectable (e.g.
+    states whose RPS policies only apply to in-state generators).
+
     Args:
         generator_state: State where the generator is located (case-insensitive)
         policy_state: State whose ESR policy needs to be satisfied (case-insensitive)
@@ -144,6 +148,10 @@ def can_generator_satisfy_policy(generator_state, policy_state, rectable_df):
     """
     policy_upper = policy_state.upper()
     generator_upper = generator_state.upper()
+
+    # A generator in the same state can always satisfy its own state's policy
+    if policy_upper == generator_upper:
+        return True
 
     if (
         policy_upper not in rectable_df.index
