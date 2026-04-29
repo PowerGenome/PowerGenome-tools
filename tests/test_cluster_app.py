@@ -11,8 +11,12 @@ NOTE: Real-import tests (color utils, graph algorithms, clustering, ESR policy,
 plant clustering, etc.) live in test_cluster_app_algorithms.py.
 """
 
+import importlib.util
 import math
 import re
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
@@ -2221,6 +2225,155 @@ SingleRegion:
         assert success is True
         assert "10 regions with 20 BAs" in msg
         assert len(state.manual_regions) == 10
+
+
+# ============================================================================
+# ESR Interconnect Guard Tests
+# ============================================================================
+
+
+@pytest.fixture()
+def _cluster_app_for_esr():
+    """Load cluster_app with mocked js/PyScript deps (function-scoped)."""
+    module_names = [
+        "js",
+        "pyodide",
+        "pyodide.ffi",
+        "renewables_utils",
+        "fast_interconnection",
+        "fast_interconnection.fast_assign",
+        "fast_interconnection.resource_groups",
+        "cluster_app",
+    ]
+    original_modules = {name: sys.modules.get(name) for name in module_names}
+    web_dir = None
+
+    try:
+        mock_js = MagicMock()
+        mock_ffi = MagicMock()
+        mock_ffi.create_proxy = lambda x: x
+        mock_ffi.to_js = lambda x: x
+        mock_ffi.JsProxy = object
+
+        sys.modules["js"] = mock_js
+        sys.modules["pyodide"] = MagicMock()
+        sys.modules["pyodide.ffi"] = mock_ffi
+        sys.modules["renewables_utils"] = MagicMock()
+        sys.modules["fast_interconnection"] = MagicMock()
+        sys.modules["fast_interconnection.fast_assign"] = MagicMock()
+        mock_rg = MagicMock()
+        mock_rg.DEFAULT_PROFILE_PATHS = {}
+        mock_rg.build_assigned_df = MagicMock(return_value=None)
+        mock_rg.build_resource_group_json = MagicMock(return_value={})
+        sys.modules["fast_interconnection.resource_groups"] = mock_rg
+
+        mock_js.L = MagicMock()
+        mock_js.document = MagicMock()
+        mock_js.window = MagicMock()
+        mock_js.fetch = MagicMock()
+        mock_js.Uint8Array = MagicMock()
+        mock_js.globalThis = MagicMock()
+
+        web_dir = Path(__file__).parent.parent / "web"
+        sys.path.insert(0, str(web_dir))
+        module_path = web_dir / "cluster_app.py"
+        spec = importlib.util.spec_from_file_location("cluster_app", module_path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["cluster_app"] = module
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        yield module
+    finally:
+        if web_dir is not None and str(web_dir) in sys.path:
+            sys.path.remove(str(web_dir))
+        for name, original in original_modules.items():
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
+
+
+class TestESRInterconnectGuard:
+    """Regression tests for the cross-interconnect guard in generate_resource_tags_settings().
+
+    Before the fix, WY1 (SD/western) was incorrectly tagged for a WI ESR constraint
+    because SD appears in the rectable for WI, ignoring that p32's SD BA is in the
+    western interconnect while WI's policy state is eastern.
+    """
+
+    @pytest.fixture()
+    def app(self, _cluster_app_for_esr):
+        """Inject minimal AppState for cross-interconnect ESR tagging scenarios."""
+        m = _cluster_app_for_esr
+
+        # p32: SD BA in the western interconnect.
+        # p46: WI BA in the eastern interconnect.
+        m.state.hierarchy_df = pd.DataFrame(
+            {
+                "ba": ["p32", "p46"],
+                "st": ["SD", "WI"],
+                "interconnect": ["Western", "Eastern"],
+            }
+        )
+
+        # rectable: WI policy row only.
+        # rectable.loc["WI", "SD"] = 2 → SD can satisfy WI's RPS per rectable.
+        # WI→WI handled by the same-state shortcut inside can_generator_satisfy_policy.
+        m.state.rectable_df = pd.DataFrame(
+            {"WI": [1], "SD": [2]},
+            index=["WI"],
+        )
+
+        # WY1 holds only the SD/western BA; eastern2 holds only the WI/eastern BA.
+        m.state.region_aggregations = {
+            "WY1": ["p32"],
+            "eastern2": ["p46"],
+        }
+
+        # One RPS constraint whose policy state is WI.
+        # esr_policy_states values are lowercase (matching get_states_in_region output).
+        m.state.esr_map = {"ESR_1": {}}
+        m.state.esr_type_map = {"ESR_1": "RPS"}
+        m.state.esr_policy_states = {"ESR_1": {"wi"}}
+        m.state.esr_rps_techs = {"Wind"}
+        m.state.esr_ces_techs = set()
+
+        # No new resources — keeps output minimal and CCS branches silent.
+        m.state.modified_new_resources = {}
+        m.state.new_resources = []
+
+        return m
+
+    def test_western_sd_region_excluded_from_eastern_wi_esr(self, app):
+        """WY1 (SD BA, western interconnect) must NOT be tagged for the WI ESR.
+
+        SD can satisfy WI's RPS per the rectable (value=2), but p32's SD BA
+        sits in the western interconnect while WI's policy state is eastern.
+        The interconnect guard must prevent the tag from being assigned.
+        """
+        result = yaml.safe_load(app.generate_resource_tags_settings())
+        regional = result.get("regional_tag_values", {})
+
+        wy1_esr_tags = regional.get("WY1", {})
+        assert "ESR_1" not in wy1_esr_tags, (
+            "WY1 (SD, western) must not receive the WI ESR_1 tag "
+            "even though SD appears in the rectable for WI"
+        )
+
+    def test_eastern_wi_region_included_in_wi_esr(self, app):
+        """eastern2 (WI BA, eastern interconnect) MUST be tagged for the WI ESR.
+
+        A WI generator shares the eastern interconnect with the WI policy state
+        and always satisfies its own state's ESR constraint.
+        """
+        result = yaml.safe_load(app.generate_resource_tags_settings())
+        regional = result.get("regional_tag_values", {})
+
+        assert (
+            "eastern2" in regional
+        ), "eastern2 (WI, eastern) must appear in regional_tag_values"
+        assert "ESR_1" in regional["eastern2"], "eastern2 must carry the WI ESR_1 tag"
 
 
 if __name__ == "__main__":

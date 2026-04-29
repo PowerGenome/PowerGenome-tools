@@ -8072,6 +8072,7 @@ def generate_resource_tags_settings():
     # A generator in region R can satisfy ESR constraint E if:
     #   - Any state in R can export to the policy states of E
     #   - This uses asymmetric rectable: rectable.loc[policy_state, generator_state] > 0
+    #   - Generator state and policy state must be in the same interconnect
     if (
         state.esr_map
         and state.esr_type_map
@@ -8079,6 +8080,9 @@ def generate_resource_tags_settings():
         and state.region_aggregations
     ):
         regional_tag_values = {}
+
+        # Build interconnect map once; used to prevent cross-interconnect ESR tagging
+        state_to_interconnect = build_state_to_interconnect_map(state.hierarchy_df)
 
         for esr_name in state.esr_map.keys():
             esr_type = state.esr_type_map.get(esr_name)
@@ -8106,10 +8110,16 @@ def generate_resource_tags_settings():
 
                 # Check if any state in this region can export to any policy state
                 # Uses asymmetric check: rectable.loc[policy_state, generator_state]
+                # Also requires generator and policy states share the same interconnect.
                 can_satisfy = False
                 if state.rectable_df is not None:
                     for gen_state in region_states:
                         for policy_state in policy_states:
+                            # Reject cross-interconnect trading
+                            gen_ic = state_to_interconnect.get(gen_state)
+                            pol_ic = state_to_interconnect.get(policy_state)
+                            if gen_ic and pol_ic and gen_ic != pol_ic:
+                                continue
                             if can_generator_satisfy_policy(
                                 gen_state, policy_state, state.rectable_df
                             ):
