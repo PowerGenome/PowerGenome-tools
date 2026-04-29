@@ -778,8 +778,6 @@ class TestESRPolicyFunctions:
     ):
         # IA-like state: in rectable columns but NOT in rectable index (no REC trading partner).
         # A generator in that state should still satisfy its own state's policy.
-        import pandas as pd
-
         states_with_ia = ["CA", "NV", "TX", "OK", "CO", "IA"]
         data = [
             [1, 1, 0, 0, 0, 0],
@@ -799,7 +797,7 @@ class TestESRPolicyFunctions:
             cluster_app.can_generator_satisfy_policy("IA", "IA", rectable_with_ia)
             is True
         )
-        # An Iowa generator should NOT satisfy CA's policy (no rectable entry)
+        # An Iowa generator should NOT satisfy CA's policy (the rectable value is 0)
         assert (
             cluster_app.can_generator_satisfy_policy("IA", "CA", rectable_with_ia)
             is False
