@@ -8084,7 +8084,7 @@ def generate_resource_tags_settings():
         # Build BA-level interconnect maps once for accurate cross-interconnect guard.
         # Using BA-level (not state-level majority) correctly handles split states
         # (e.g. SD and MT have BAs in both Western and Eastern interconnects).
-        ba_to_interconnect_ic: dict = {}
+        ba_to_interconnect: dict = {}
         state_to_interconnects_global: dict = {}
         if state.hierarchy_df is not None and "interconnect" in state.hierarchy_df.columns:
             for _, row in state.hierarchy_df.iterrows():
@@ -8092,7 +8092,7 @@ def generate_resource_tags_settings():
                 st_val = str(row.get("st", "")).lower()
                 ic = str(row.get("interconnect", "")).strip()
                 if ba and ic:
-                    ba_to_interconnect_ic[ba] = ic
+                    ba_to_interconnect[ba] = ic
                 if st_val and ic:
                     state_to_interconnects_global.setdefault(st_val, set()).add(ic)
 
@@ -8133,10 +8133,10 @@ def generate_resource_tags_settings():
                         # spans multiple interconnects (minority-interconnect BAs are not
                         # misclassified by a majority-based state→interconnect mapping).
                         gen_ics = {
-                            ba_to_interconnect_ic[ba]
+                            ba_to_interconnect[ba]
                             for ba in region_bas
                             if ba_to_state_region.get(ba) == gen_state
-                            and ba in ba_to_interconnect_ic
+                            and ba in ba_to_interconnect
                         }
                         for policy_state in policy_states:
                             # Reject cross-interconnect trading: skip if the gen BA
