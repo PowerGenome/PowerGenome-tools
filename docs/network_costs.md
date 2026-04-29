@@ -190,6 +190,8 @@ Output rows are canonical unordered region pairs. `start_region` and `dest_regio
 | `total_interconnect_cost_mw` | Interregional + source adder + destination adder cost | $/MW |
 | `total_line_loss_frac` | Interregional + source adder + destination adder loss | fraction |
 | `total_mw-km_per_mw` | Interregional + source adder + destination adder distance | MW-km/MW |
+| `total_interconnect_annuity_mw` | Annualized cost using 4.4% WACC and 60-year lifetime | $/MW/yr |
+| `dollar_year` | Dollar-year for cost figures | year (2018) |
 
 ## Edge Cases and Fallback Behavior
 
