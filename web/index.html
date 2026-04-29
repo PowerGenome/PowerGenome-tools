@@ -1500,6 +1500,37 @@
             font-family: var(--font-mono);
             color: var(--navy-mid);
         }
+
+        /* ── Step 9: Demand ──────────────────────────────────── */
+        .demand-chart-wrap {
+            overflow-x: auto;
+            width: 100%;
+        }
+
+        .demand-chart-wrap svg {
+            display: block;
+        }
+
+        #demandChoroplethMap {
+            width: 100%;
+        }
+
+        .demand-map-legend {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .demand-legend-ramp {
+            flex: 1;
+            max-width: 160px;
+            height: 10px;
+            border-radius: 3px;
+            background: linear-gradient(to right, #dbe9f7, #1a56c4);
+            border: 1px solid var(--border);
+        }
     </style>
 </head>
 
@@ -1606,7 +1637,8 @@
             <div class="nav-step" onclick="goToStep(6)"><span class="step-num">6</span> ESR Policies</div>
             <div class="nav-step" onclick="goToStep(7)"><span class="step-num">7</span> Interconnection</div>
             <div class="nav-step" onclick="goToStep(8)"><span class="step-num">8</span> Renewables</div>
-            <div class="nav-step" onclick="goToStep(9)"><span class="step-num">9</span> Export</div>
+            <div class="nav-step" onclick="goToStep(9)"><span class="step-num">9</span> Demand</div>
+            <div class="nav-step" onclick="goToStep(10)"><span class="step-num">10</span> Export</div>
         </div>
         <a href="https://gschivley.github.io/PowerGenome-tools/" target="_blank" class="nav-docs-link">Docs ↗</a>
     </div>
@@ -2779,7 +2811,7 @@
 
                 <div class="step-footer">
                     <button class="btn btn-secondary" onclick="goToStep(7)">&larr; Back</button>
-                    <button class="btn btn-primary" onclick="goToStep(9)">Next: Export &rarr;</button>
+                    <button class="btn btn-primary" onclick="goToStep(9)">Next: Demand &rarr;</button>
                 </div>
 
                 <div class="section renewables-plot-results">
@@ -2791,8 +2823,74 @@
             </div>
         </div>
 
-        <!-- Step 9: Export -->
+        <!-- Step 9: Demand -->
         <div id="step-9" class="step-pane">
+            <div class="centered-step">
+                <div class="step-header">
+                    <h2>Demand</h2>
+                </div>
+
+                <div class="instructions">
+                    <div class="instructions-header"
+                        onclick="toggleCollapsible('demandInstructionsContent', 'demandInstructionsToggle')">
+                        <span>📖 How to Use</span>
+                        <span class="instructions-toggle" id="demandInstructionsToggle">▶ Show</span>
+                    </div>
+                    <div class="instructions-content hidden" id="demandInstructionsContent">
+                        <ol>
+                            <li><strong>Prerequisites:</strong> Set up model regions (Step 1) and model years (Step 2)
+                                before using this step.</li>
+                            <li><strong>Scenario:</strong> Select a demand scenario to visualize.</li>
+                            <li><strong>Charts:</strong> Three visualizations show demand by model region — a bar
+                                chart for each planning year, a trend line chart across years, and a choropleth map
+                                using average demand. Values shown are averages across weather years.</li>
+                        </ol>
+                    </div>
+                </div>
+
+                <div id="demandStatus" class="status info" style="display: none;"></div>
+
+                <div class="section">
+                    <label>Demand Scenario</label>
+                    <select id="demandScenarioSelect" style="width: 100%; max-width: 300px;"></select>
+                </div>
+
+                <div class="section">
+                    <button class="btn btn-primary" id="renderDemandBtn" type="button">
+                        Show Demand Visualizations
+                    </button>
+                </div>
+
+                <!-- Visualization 1: Bar chart — demand by region, grouped by year -->
+                <div class="section" id="demandBarSection" style="display: none;">
+                    <label>Annual Demand by Region (TWh) — Average Across Weather Years</label>
+                    <div id="demandBarChartContainer" style="width: 100%; overflow-x: auto;"></div>
+                </div>
+
+                <!-- Visualization 2: Line chart — demand trend across planning years -->
+                <div class="section" id="demandLineSection" style="display: none;">
+                    <label>Demand Trend by Region (TWh) — Planning Years</label>
+                    <div id="demandLineChartContainer" style="width: 100%; overflow-x: auto;"></div>
+                </div>
+
+                <!-- Visualization 3: Choropleth map — average demand by model region -->
+                <div class="section" id="demandMapSection" style="display: none;">
+                    <label>Average Annual Demand by Model Region (TWh)</label>
+                    <div id="demandChoroplethMap"
+                        style="height: 400px; border: 1px solid var(--border); border-radius: 4px;"></div>
+                    <div id="demandMapLegend" style="margin-top: 6px; font-size: 12px; color: var(--text-muted);">
+                    </div>
+                </div>
+
+                <div class="step-footer">
+                    <button class="btn btn-secondary" onclick="goToStep(8)">&larr; Back</button>
+                    <button class="btn btn-primary" onclick="goToStep(10)">Next: Export &rarr;</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 10: Export -->
+        <div id="step-10" class="step-pane">
             <div class="centered-step">
                 <div class="step-header">
                     <h2>Export Settings</h2>
@@ -2816,7 +2914,7 @@
                 </div>
 
                 <div class="step-footer">
-                    <button class="btn btn-secondary" onclick="goToStep(8)">&larr; Back</button>
+                    <button class="btn btn-secondary" onclick="goToStep(9)">&larr; Back</button>
                     <div></div>
                 </div>
             </div>
@@ -2877,6 +2975,18 @@
                     setTimeout(() => {
                         window.invalidateRenewablesMaps();
                     }, 100);
+                }
+            }
+
+            // Demand step: invalidate map size and populate scenario dropdown
+            if (stepNum === 9) {
+                if (window.invalidateDemandMap) {
+                    setTimeout(() => {
+                        window.invalidateDemandMap();
+                    }, 100);
+                }
+                if (window.populateDemandScenarioSelect) {
+                    window.populateDemandScenarioSelect();
                 }
             }
         }
