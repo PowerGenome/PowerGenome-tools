@@ -8072,6 +8072,7 @@ def generate_resource_tags_settings():
     # A generator in region R can satisfy ESR constraint E if:
     #   - Any state in R can export to the policy states of E
     #   - This uses asymmetric rectable: rectable.loc[policy_state, generator_state] > 0
+    #   - Generator state and policy state must be in the same interconnect
     if (
         state.esr_map
         and state.esr_type_map
@@ -8079,6 +8080,21 @@ def generate_resource_tags_settings():
         and state.region_aggregations
     ):
         regional_tag_values = {}
+
+        # Build BA-level interconnect maps once for accurate cross-interconnect guard.
+        # Using BA-level (not state-level majority) correctly handles split states
+        # (e.g. SD and MT have BAs in both Western and Eastern interconnects).
+        ba_to_interconnect: dict = {}
+        state_to_interconnects_global: dict = {}
+        if state.hierarchy_df is not None and "interconnect" in state.hierarchy_df.columns:
+            for _, row in state.hierarchy_df.iterrows():
+                ba = row.get("ba")
+                st_val = str(row.get("st", "")).lower()
+                ic = str(row.get("interconnect", "")).strip()
+                if ba and ic:
+                    ba_to_interconnect[ba] = ic
+                if st_val and ic:
+                    state_to_interconnects_global.setdefault(st_val, set()).add(ic)
 
         for esr_name in state.esr_map.keys():
             esr_type = state.esr_type_map.get(esr_name)
@@ -8101,15 +8117,33 @@ def generate_resource_tags_settings():
 
             # Check each region to see if its generators can satisfy this ESR's policies
             for region_name, region_bas in state.region_aggregations.items():
-                # Get states in this region
-                region_states = get_states_in_region(region_bas, state.hierarchy_df)
+                # Get BA→state mapping for this region, then derive region_states from it.
+                # Keeping the mapping lets us look up each BA's state for the IC guard below.
+                ba_to_state_region = extract_state_for_region(region_bas, state.hierarchy_df)
+                region_states = set(ba_to_state_region.values())
 
                 # Check if any state in this region can export to any policy state
                 # Uses asymmetric check: rectable.loc[policy_state, generator_state]
+                # Also requires generator and policy states share the same interconnect.
                 can_satisfy = False
                 if state.rectable_df is not None:
                     for gen_state in region_states:
+                        # Get interconnects of the region's BAs that belong to gen_state.
+                        # BA-level comparison correctly handles split states where a state
+                        # spans multiple interconnects (minority-interconnect BAs are not
+                        # misclassified by a majority-based state→interconnect mapping).
+                        gen_ics = {
+                            ba_to_interconnect[ba]
+                            for ba in region_bas
+                            if ba_to_state_region.get(ba) == gen_state
+                            and ba in ba_to_interconnect
+                        }
                         for policy_state in policy_states:
+                            # Reject cross-interconnect trading: skip if the gen BA
+                            # interconnects and policy state interconnects don't overlap.
+                            pol_ics = state_to_interconnects_global.get(policy_state, set())
+                            if gen_ics and pol_ics and not gen_ics.intersection(pol_ics):
+                                continue
                             if can_generator_satisfy_policy(
                                 gen_state, policy_state, state.rectable_df
                             ):

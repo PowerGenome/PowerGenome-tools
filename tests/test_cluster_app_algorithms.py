@@ -3787,3 +3787,179 @@ class TestFuelChartHelpers:
         fuel_data = {"reference": [(2024, 2.0), (2026, 2.5)]}
         result = cluster_app._render_fuel_price_chart_svg(fuel_data, "reference")
         assert result.rstrip().endswith("</svg>")
+
+
+# ---------------------------------------------------------------------------
+# ESR Interconnect Guard
+# ---------------------------------------------------------------------------
+
+
+class TestESRInterconnectGuard:
+    """Regression tests for the cross-interconnect guard in generate_resource_tags_settings().
+
+    Before the fix, WY1 (SD/western) was incorrectly tagged for a WI ESR constraint
+    because SD appears in the rectable for WI, ignoring that p32's SD BA is in the
+    western interconnect while WI's policy state is eastern.
+    """
+
+    # State attributes modified by the fixtures below — saved and restored to
+    # avoid polluting the session-scoped cluster_app module for later tests.
+    _STATE_ATTRS = (
+        "hierarchy_df",
+        "rectable_df",
+        "region_aggregations",
+        "esr_map",
+        "esr_type_map",
+        "esr_policy_states",
+        "esr_rps_techs",
+        "esr_ces_techs",
+        "modified_new_resources",
+        "new_resources",
+    )
+
+    @pytest.fixture()
+    def app(self, cluster_app):
+        """Inject minimal AppState for cross-interconnect ESR tagging scenarios.
+
+        Saves and restores all modified state attributes so the session-scoped
+        cluster_app module is left clean for subsequent tests.
+        """
+        saved = {attr: getattr(cluster_app.state, attr, None) for attr in self._STATE_ATTRS}
+        try:
+            # p32: SD BA in the western interconnect.
+            # p46: WI BA in the eastern interconnect.
+            cluster_app.state.hierarchy_df = pd.DataFrame(
+                {
+                    "ba": ["p32", "p46"],
+                    "st": ["SD", "WI"],
+                    "interconnect": ["Western", "Eastern"],
+                }
+            )
+
+            # rectable: WI policy row only.
+            # rectable.loc["WI", "SD"] = 2 → SD can satisfy WI's RPS per rectable.
+            # WI→WI handled by the same-state shortcut inside can_generator_satisfy_policy.
+            cluster_app.state.rectable_df = pd.DataFrame(
+                {"WI": [1], "SD": [2]},
+                index=["WI"],
+            )
+
+            # WY1 holds only the SD/western BA; eastern2 holds only the WI/eastern BA.
+            cluster_app.state.region_aggregations = {
+                "WY1": ["p32"],
+                "eastern2": ["p46"],
+            }
+
+            # One RPS constraint whose policy state is WI.
+            # esr_policy_states values are lowercase (matching get_states_in_region output).
+            cluster_app.state.esr_map = {"ESR_1": {}}
+            cluster_app.state.esr_type_map = {"ESR_1": "RPS"}
+            cluster_app.state.esr_policy_states = {"ESR_1": {"wi"}}
+            cluster_app.state.esr_rps_techs = {"Wind"}
+            cluster_app.state.esr_ces_techs = set()
+
+            # No new resources — keeps output minimal and CCS branches silent.
+            cluster_app.state.modified_new_resources = {}
+            cluster_app.state.new_resources = []
+
+            yield cluster_app
+        finally:
+            for attr, val in saved.items():
+                setattr(cluster_app.state, attr, val)
+
+    def test_western_sd_region_excluded_from_eastern_wi_esr(self, app):
+        """WY1 (SD BA, western interconnect) must NOT be tagged for the WI ESR.
+
+        SD can satisfy WI's RPS per the rectable (value=2), but p32's SD BA
+        sits in the western interconnect while WI's policy state is eastern.
+        The interconnect guard must prevent the tag from being assigned.
+        """
+        result = yaml.safe_load(app.generate_resource_tags_settings())
+        regional = result.get("regional_tag_values", {})
+
+        wy1_esr_tags = regional.get("WY1", {})
+        assert "ESR_1" not in wy1_esr_tags, (
+            "WY1 (SD, western) must not receive the WI ESR_1 tag "
+            "even though SD appears in the rectable for WI"
+        )
+
+    def test_eastern_wi_region_included_in_wi_esr(self, app):
+        """eastern2 (WI BA, eastern interconnect) MUST be tagged for the WI ESR.
+
+        A WI generator shares the eastern interconnect with the WI policy state
+        and always satisfies its own state's ESR constraint.
+        """
+        result = yaml.safe_load(app.generate_resource_tags_settings())
+        regional = result.get("regional_tag_values", {})
+
+        assert (
+            "eastern2" in regional
+        ), "eastern2 (WI, eastern) must appear in regional_tag_values"
+        assert "ESR_1" in regional["eastern2"], "eastern2 must carry the WI ESR_1 tag"
+
+    def test_split_state_minority_interconnect_not_excluded(self, cluster_app):
+        """A region whose BA is in the *minority* interconnect for its state must not
+        be incorrectly excluded from ESR tagging when it shares an interconnect with
+        the policy state.
+
+        Scenario:
+          - SD has 3 eastern BAs (p_sd_e1, p_sd_e2, p_sd_e3) and 1 western BA (p_sd_w).
+            Under a majority-based state→interconnect mapping, SD maps to "Eastern".
+          - Region "western_sd" contains only p_sd_w (the minority/western SD BA).
+          - Policy state "nd" (ND) is in the western interconnect.
+          - rectable.loc["ND", "SD"] = 1 → SD generators can satisfy ND's RPS.
+          - The interconnect guard must NOT exclude "western_sd" because p_sd_w's actual
+            interconnect (Western) matches ND's interconnect (Western).
+          - A majority-based guard would incorrectly see SD as "Eastern" and block the tag.
+        """
+        saved = {attr: getattr(cluster_app.state, attr, None) for attr in self._STATE_ATTRS}
+        try:
+            # SD has 3 eastern BAs (majority eastern) + 1 western BA (minority western).
+            # ND has 1 western BA.
+            cluster_app.state.hierarchy_df = pd.DataFrame(
+                {
+                    "ba": ["p_sd_e1", "p_sd_e2", "p_sd_e3", "p_sd_w", "p_nd_w"],
+                    "st": ["SD", "SD", "SD", "SD", "ND"],
+                    "interconnect": ["Eastern", "Eastern", "Eastern", "Western", "Western"],
+                }
+            )
+
+            # rectable: ND policy row only.
+            # rectable.loc["ND", "SD"] = 1 → SD generators can satisfy ND's RPS.
+            # ND→ND handled by the same-state shortcut.
+            cluster_app.state.rectable_df = pd.DataFrame(
+                {"ND": [1], "SD": [1]},
+                index=["ND"],
+            )
+
+            # "western_sd" holds only the minority-interconnect SD BA.
+            # "nd_region" holds the ND/western BA.
+            cluster_app.state.region_aggregations = {
+                "western_sd": ["p_sd_w"],
+                "nd_region": ["p_nd_w"],
+            }
+
+            # One RPS constraint whose policy state is ND (western interconnect).
+            cluster_app.state.esr_map = {"ESR_1": {}}
+            cluster_app.state.esr_type_map = {"ESR_1": "RPS"}
+            cluster_app.state.esr_policy_states = {"ESR_1": {"nd"}}
+            cluster_app.state.esr_rps_techs = {"Wind"}
+            cluster_app.state.esr_ces_techs = set()
+
+            cluster_app.state.modified_new_resources = {}
+            cluster_app.state.new_resources = []
+
+            result = yaml.safe_load(cluster_app.generate_resource_tags_settings())
+            regional = result.get("regional_tag_values", {})
+
+            assert "western_sd" in regional, (
+                "western_sd (SD minority-western BA) must appear in regional_tag_values "
+                "because its actual BA interconnect (Western) matches ND's interconnect"
+            )
+            assert "ESR_1" in regional["western_sd"], (
+                "western_sd must carry the ND ESR_1 tag — the BA-level interconnect guard "
+                "must not exclude it based on SD's majority (Eastern) interconnect"
+            )
+        finally:
+            for attr, val in saved.items():
+                setattr(cluster_app.state, attr, val)
