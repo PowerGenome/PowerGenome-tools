@@ -8086,7 +8086,10 @@ def generate_resource_tags_settings():
         # (e.g. SD and MT have BAs in both Western and Eastern interconnects).
         ba_to_interconnect: dict = {}
         state_to_interconnects_global: dict = {}
-        if state.hierarchy_df is not None and "interconnect" in state.hierarchy_df.columns:
+        if (
+            state.hierarchy_df is not None
+            and "interconnect" in state.hierarchy_df.columns
+        ):
             for _, row in state.hierarchy_df.iterrows():
                 ba = row.get("ba")
                 st_val = str(row.get("st", "")).lower()
@@ -8119,7 +8122,9 @@ def generate_resource_tags_settings():
             for region_name, region_bas in state.region_aggregations.items():
                 # Get BA→state mapping for this region, then derive region_states from it.
                 # Keeping the mapping lets us look up each BA's state for the IC guard below.
-                ba_to_state_region = extract_state_for_region(region_bas, state.hierarchy_df)
+                ba_to_state_region = extract_state_for_region(
+                    region_bas, state.hierarchy_df
+                )
                 region_states = set(ba_to_state_region.values())
 
                 # Check if any state in this region can export to any policy state
@@ -8141,8 +8146,14 @@ def generate_resource_tags_settings():
                         for policy_state in policy_states:
                             # Reject cross-interconnect trading: skip if the gen BA
                             # interconnects and policy state interconnects don't overlap.
-                            pol_ics = state_to_interconnects_global.get(policy_state, set())
-                            if gen_ics and pol_ics and not gen_ics.intersection(pol_ics):
+                            pol_ics = state_to_interconnects_global.get(
+                                policy_state, set()
+                            )
+                            if (
+                                gen_ics
+                                and pol_ics
+                                and not gen_ics.intersection(pol_ics)
+                            ):
                                 continue
                             if can_generator_satisfy_policy(
                                 gen_state, policy_state, state.rectable_df

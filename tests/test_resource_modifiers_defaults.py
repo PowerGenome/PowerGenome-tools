@@ -612,9 +612,7 @@ class TestBuildSettingsYamlResourceModifiers:
         assert [["UtilityPV", "Class1", "Moderate", 500]] == new_res.get(2030)
         assert [["LandbasedWind", "Class3", "Moderate", 500]] == new_res.get(2040)
 
-    def test_all_year_modified_resources_appear_in_new_resources(
-        self, cluster_app
-    ):
+    def test_all_year_modified_resources_appear_in_new_resources(self, cluster_app):
         """Attribute-only modified resources must appear in new_resources.
 
         This is a regression test for the bug where attribute-only modified
@@ -850,9 +848,9 @@ class TestBuildSettingsYamlResourceModifiers:
 
         new_res = parsed["new_resources"]
         # With year-specific resources, output must be a dict
-        assert isinstance(new_res, dict), (
-            f"Expected dict new_resources, got {type(new_res)}: {new_res}"
-        )
+        assert isinstance(
+            new_res, dict
+        ), f"Expected dict new_resources, got {type(new_res)}: {new_res}"
         # Default (base) list has no "all"-year entries
         assert new_res.get("default") == []
         # The 2030 list includes the attribute-only modified resource
@@ -916,9 +914,7 @@ class TestBuildSettingsYamlResourceModifiers:
         # Modifier entry for the attribute-only resource must still exist
         assert "gas_cc_override" in parsed["resource_modifiers"]
         assert (
-            parsed["resource_modifiers"]["gas_cc_override"][
-                "Heat_Rate_MMBTU_per_MWh"
-            ]
+            parsed["resource_modifiers"]["gas_cc_override"]["Heat_Rate_MMBTU_per_MWh"]
             == 6.5
         )
 
