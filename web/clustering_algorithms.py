@@ -213,6 +213,48 @@ def get_regional_groups(hierarchy_df, grouping_column, valid_bas):
     return groups
 
 
+def connect_disconnected_group_components(graph, groups):
+    """Add weak synthetic edges so each grouping group is connected.
+
+    This prevents fully isolated BAs inside the same grouping column value from
+    being forced into singleton clusters solely due to missing direct
+    transmission rows.
+
+    Synthetic edges are added only between disconnected components in the same
+    group. Their weight uses the weakest real internal edge in that group when
+    available, so the bridge is strong enough to matter for within-group
+    clustering without changing any cross-group relationships.
+    """
+    if graph.number_of_nodes() == 0:
+        return
+
+    for _, bas in groups.items():
+        group_nodes = [ba for ba in bas if ba in graph]
+        if len(group_nodes) < 2:
+            continue
+
+        subgraph = graph.subgraph(group_nodes)
+        group_weights = [
+            float(data.get("weight", 0.0))
+            for _, _, data in subgraph.edges(data=True)
+            if float(data.get("weight", 0.0)) > 0.0
+        ]
+        base_floor = min(group_weights) if group_weights else 1.0
+
+        components = [sorted(list(c)) for c in nx.connected_components(subgraph)]
+
+        if len(components) <= 1:
+            continue
+
+        # Connect components in a simple chain using representative nodes.
+        reps = [comp[0] for comp in components]
+        for i in range(len(reps) - 1):
+            u = reps[i]
+            v = reps[i + 1]
+            if not graph.has_edge(u, v):
+                graph.add_edge(u, v, weight=base_floor)
+
+
 def agglomerative_cluster(graph, n_clusters, linkage="sum"):
     """
     Perform agglomerative clustering on a graph.
@@ -443,6 +485,13 @@ def hierarchical_cluster(
             groups[group] = set()
         groups[group].add(ba)
 
+    # Pre-compute demand boost factors once so every branch can use them.
+    boost = {}
+    if demand_weights and demand_weight_method and demand_weight_method != "none":
+        boost = compute_demand_boost_factors(
+            cluster_bas, demand_weights, demand_weight_method
+        )
+
     # Build BA to state mapping for ESR-compatible clustering
     ba_to_state = {}
     if esr_rectable_df is not None:
@@ -504,6 +553,10 @@ def hierarchical_cluster(
 
         graph.remove_edges_from(edges_to_remove)
 
+        # Keep each grouping-column group weakly connected so isolated BAs in
+        # the same group can still be merged when appropriate.
+        connect_disconnected_group_components(graph, groups)
+
         if algo == "spectral":
             # For spectral clustering, we must run it independently on each group
             # to avoid mixing eigenvectors of disconnected components.
@@ -534,13 +587,10 @@ def hierarchical_cluster(
                     continue
 
                 group_bas = groups[group]
-                # Build subgraph for this group
-                subgraph = build_transmission_graph(
-                    transmission_df,
-                    group_bas,
-                    demand_weights=demand_weights,
-                    demand_weight_method=demand_weight_method,
-                )
+                # Use the already-constrained graph so spectral clustering sees
+                # the same grouping boundaries, ESR filtering, and synthetic
+                # weak intra-group links used during allocation.
+                subgraph = graph.subgraph(group_bas).copy()
 
                 # Run spectral on subgraph
                 sub_clusters = spectral_cluster(subgraph, count)
@@ -572,6 +622,13 @@ def hierarchical_cluster(
             ba_from = row["region_from"]
             ba_to = row["region_to"]
             capacity = row["firm_ttc_mw"]
+
+            # Apply demand boost in the group-merge branch as well so the
+            # selected demand weighting method changes merge preferences.
+            if boost:
+                b_from = boost.get(ba_from, 1.0)
+                b_to = boost.get(ba_to, 1.0)
+                capacity = capacity * max(b_from, b_to)
 
             # Find which groups these BAs belong to
             group_from = None
@@ -681,6 +738,13 @@ def find_optimal_clusters(
             groups[group] = set()
         groups[group].add(ba)
 
+    # Keep a BA->group lookup so downstream merge logic can preserve boundaries
+    # when the requested max still allows at least one region per group.
+    ba_to_group = {}
+    for group, bas in groups.items():
+        for ba in bas:
+            ba_to_group[ba] = group
+
     # Build graph for the cluster BAs
     graph = build_transmission_graph(
         transmission_df,
@@ -758,6 +822,10 @@ def find_optimal_clusters(
 
     # If we have more clusters than max_regions, merge using agglomerative
     if num_clusters > max_regions:
+        # If the requested max is at least the number of grouping-column groups,
+        # we should not merge across group boundaries while reducing cluster count.
+        preserve_group_boundaries = max_regions >= len(groups)
+
         # Build a graph of the current clusters
         cluster_graph = nx.Graph()
         for cid in all_clusters:
@@ -783,6 +851,12 @@ def find_optimal_clusters(
                 and cluster_to is not None
                 and cluster_from != cluster_to
             ):
+                if preserve_group_boundaries:
+                    group_from = ba_to_group.get(ba_from)
+                    group_to = ba_to_group.get(ba_to)
+                    if group_from is None or group_to is None or group_from != group_to:
+                        continue
+
                 if cluster_graph.has_edge(cluster_from, cluster_to):
                     cluster_graph[cluster_from][cluster_to]["weight"] += capacity
                 else:

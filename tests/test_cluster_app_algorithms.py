@@ -3824,7 +3824,9 @@ class TestESRInterconnectGuard:
         Saves and restores all modified state attributes so the session-scoped
         cluster_app module is left clean for subsequent tests.
         """
-        saved = {attr: getattr(cluster_app.state, attr, None) for attr in self._STATE_ATTRS}
+        saved = {
+            attr: getattr(cluster_app.state, attr, None) for attr in self._STATE_ATTRS
+        }
         try:
             # p32: SD BA in the western interconnect.
             # p46: WI BA in the eastern interconnect.
@@ -3912,7 +3914,9 @@ class TestESRInterconnectGuard:
             interconnect (Western) matches ND's interconnect (Western).
           - A majority-based guard would incorrectly see SD as "Eastern" and block the tag.
         """
-        saved = {attr: getattr(cluster_app.state, attr, None) for attr in self._STATE_ATTRS}
+        saved = {
+            attr: getattr(cluster_app.state, attr, None) for attr in self._STATE_ATTRS
+        }
         try:
             # SD has 3 eastern BAs (majority eastern) + 1 western BA (minority western).
             # ND has 1 western BA.
@@ -3920,7 +3924,13 @@ class TestESRInterconnectGuard:
                 {
                     "ba": ["p_sd_e1", "p_sd_e2", "p_sd_e3", "p_sd_w", "p_nd_w"],
                     "st": ["SD", "SD", "SD", "SD", "ND"],
-                    "interconnect": ["Eastern", "Eastern", "Eastern", "Western", "Western"],
+                    "interconnect": [
+                        "Eastern",
+                        "Eastern",
+                        "Eastern",
+                        "Western",
+                        "Western",
+                    ],
                 }
             )
 

@@ -15,6 +15,7 @@ import math
 import sys
 from pathlib import Path
 
+import networkx as nx
 import numpy as np
 import pandas as pd
 import pytest
@@ -24,8 +25,16 @@ import pytest
 # ---------------------------------------------------------------------------
 web_dir = Path(__file__).parent.parent / "web"
 sys.path.insert(0, str(web_dir))
-from clustering_algorithms import build_transmission_graph, compute_demand_boost_factors
+import clustering_algorithms
+from clustering_algorithms import (
+    build_transmission_graph,
+    compute_demand_boost_factors,
+    connect_disconnected_group_components,
+    find_optimal_clusters,
+    hierarchical_cluster,
+)
 
+_DATA_DIR = Path(__file__).parent.parent / "data"
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -135,9 +144,9 @@ class TestComputeDemandBoostFactorsLog:
         }
         boosts = compute_demand_boost_factors(valid_bas, demand_weights, self.method)
 
-        assert boosts["tiny"] > boosts["moderate"], (
-            "Tiny-demand BA should have a larger boost than moderate-demand BA"
-        )
+        assert (
+            boosts["tiny"] > boosts["moderate"]
+        ), "Tiny-demand BA should have a larger boost than moderate-demand BA"
 
     def test_max_demand_ba_gets_boost_of_one(self):
         """The BA with the highest demand should get boost = 1.0 (log_max / log_max)."""
@@ -286,7 +295,7 @@ class TestBuildTransmissionGraphDemandWeighting:
         """An edge touching a low-demand BA should have a larger weight after boosting."""
         # A has very low demand → its edge A-B should be boosted
         demand_weights = {
-            "a": 1.0,      # very low
+            "a": 1.0,  # very low
             "b": 1_000.0,  # high
             "c": 1_000.0,  # high
         }
@@ -301,9 +310,9 @@ class TestBuildTransmissionGraphDemandWeighting:
         w_plain_ab = self._edge_weight(G_plain, "A", "B")
         w_boosted_ab = self._edge_weight(G_boosted, "A", "B")
 
-        assert w_boosted_ab > w_plain_ab, (
-            "Edge A-B weight should increase when A has low demand"
-        )
+        assert (
+            w_boosted_ab > w_plain_ab
+        ), "Edge A-B weight should increase when A has low demand"
 
     def test_demand_sqrt_equal_demand_no_change(self, simple_tx_df, valid_bas_abc):
         """When all BAs have identical demand, boosts are all 1.0 → weights unchanged."""
@@ -356,7 +365,7 @@ class TestBuildTransmissionGraphDemandWeighting:
     ):
         """demand-log method also boosts edges connecting low-demand BAs."""
         demand_weights = {
-            "a": 1.0,      # tiny
+            "a": 1.0,  # tiny
             "b": 10_000.0,
             "c": 10_000.0,
         }
@@ -395,3 +404,338 @@ class TestBuildTransmissionGraphDemandWeighting:
         assert self._edge_weight(G_plain, "A", "B") == pytest.approx(
             self._edge_weight(G_method_only, "A", "B")
         )
+
+
+class TestHierarchicalClusterDemandWeighting:
+    def test_group_merge_branch_demand_log_changes_merged_pair(self):
+        """Demand weighting should affect group merges when target_regions < num_groups."""
+        hierarchy_df = pd.DataFrame(
+            {
+                "ba": ["A", "B", "C"],
+                "grp": ["g1", "g2", "g3"],
+            }
+        )
+        transmission_df = pd.DataFrame(
+            {
+                "region_from": ["A", "B"],
+                "region_to": ["B", "C"],
+                "firm_ttc_mw": [90.0, 100.0],
+            }
+        )
+        cluster_bas = {"A", "B", "C"}
+
+        clusters_unweighted = hierarchical_cluster(
+            hierarchy_df,
+            transmission_df,
+            cluster_bas,
+            grouping_column="grp",
+            target_regions=2,
+            method="hierarchical-sum",
+        )
+        clusters_weighted = hierarchical_cluster(
+            hierarchy_df,
+            transmission_df,
+            cluster_bas,
+            grouping_column="grp",
+            target_regions=2,
+            method="hierarchical-sum",
+            demand_weights={"a": 1.0, "b": 1000.0, "c": 1000.0},
+            demand_weight_method="demand-log",
+        )
+
+        merged_unweighted = next(c for c in clusters_unweighted.values() if len(c) == 2)
+        merged_weighted = next(c for c in clusters_weighted.values() if len(c) == 2)
+
+        assert merged_unweighted == {"B", "C"}
+        assert merged_weighted == {"A", "B"}
+
+
+class TestFindOptimalClustersGroupingBoundaries:
+    def test_merge_down_does_not_cross_group_boundaries_when_max_matches_groups(self):
+        """Merge-down should stay within grouping boundaries even with a dominant cross-group edge."""
+        hierarchy_df = pd.DataFrame(
+            {
+                "ba": ["A", "B", "C", "D", "E", "F"],
+                "grp": ["g1", "g1", "g1", "g2", "g2", "g2"],
+            }
+        )
+        transmission_df = pd.DataFrame(
+            {
+                "region_from": ["A", "B", "C", "D", "E"],
+                "region_to": ["B", "C", "D", "E", "F"],
+                "firm_ttc_mw": [40.0, 1.0, 1_000.0, 40.0, 1.0],
+            }
+        )
+
+        clusters, num_clusters, _modularity, _scores, _optimal = find_optimal_clusters(
+            hierarchy_df,
+            transmission_df,
+            cluster_bas={"A", "B", "C", "D", "E", "F"},
+            grouping_column="grp",
+            min_regions=2,
+            max_regions=2,
+        )
+
+        assert num_clusters == 2
+
+        ba_to_group = dict(zip(hierarchy_df["ba"], hierarchy_df["grp"]))
+        cluster_sets = [set(nodes) for nodes in clusters.values()]
+
+        assert {"A", "B", "C"} in cluster_sets
+        assert {"D", "E", "F"} in cluster_sets
+        assert all(
+            len({ba_to_group[ba] for ba in cluster}) == 1 for cluster in cluster_sets
+        )
+
+
+class TestDisconnectedGroupConnectivity:
+    def test_connect_disconnected_group_components_adds_single_weak_edge(self):
+        """A disconnected BA in the same group should get one synthetic connector edge."""
+        graph = nx.Graph()
+        graph.add_edge("A", "B", weight=100.0)
+        graph.add_node("C")
+        groups = {"g1": {"A", "B", "C"}}
+
+        before_edges = set(frozenset((u, v)) for u, v in graph.edges())
+        connect_disconnected_group_components(graph, groups)
+        after_edges = set(frozenset((u, v)) for u, v in graph.edges())
+
+        added_edges = after_edges - before_edges
+
+        assert len(added_edges) == 1
+        added_edge = next(iter(added_edges))
+        assert "C" in added_edge
+        assert nx.is_connected(graph.subgraph(["A", "B", "C"]))
+
+    def test_connect_disconnected_group_components_uses_weakest_internal_edge(self):
+        """Synthetic bridges should use the weakest real internal edge in the group."""
+        graph = nx.Graph()
+        graph.add_edge("A", "B", weight=40.0)
+        graph.add_edge("B", "C", weight=25.0)
+        graph.add_node("D")
+        groups = {"g1": {"A", "B", "C", "D"}}
+
+        before_edges = set(frozenset((u, v)) for u, v in graph.edges())
+        connect_disconnected_group_components(graph, groups)
+        after_edges = set(frozenset((u, v)) for u, v in graph.edges())
+
+        added_edges = after_edges - before_edges
+        edges_touching_d = [edge for edge in added_edges if "D" in edge]
+
+        assert len(added_edges) == 1
+        assert len(edges_touching_d) == 1
+
+        added_edge = next(iter(edges_touching_d))
+        u, v = tuple(added_edge)
+        assert graph[u][v]["weight"] == pytest.approx(25.0)
+
+    def test_hierarchical_spectral_target_ge_groups_avoids_singleton_isolated_ba(self):
+        """Spectral target>=groups should avoid forcing isolated C into a singleton cluster."""
+        hierarchy_df = pd.DataFrame(
+            {
+                "ba": ["A", "B", "C", "D", "E"],
+                "grp": ["g1", "g1", "g1", "g2", "g2"],
+            }
+        )
+        transmission_df = pd.DataFrame(
+            {
+                "region_from": ["A", "D"],
+                "region_to": ["B", "E"],
+                "firm_ttc_mw": [100.0, 0.0],
+            }
+        )
+
+        clusters = hierarchical_cluster(
+            hierarchy_df,
+            transmission_df,
+            cluster_bas={"A", "B", "C", "D", "E"},
+            grouping_column="grp",
+            target_regions=3,
+            method="spectral",
+        )
+
+        cluster_sets = [set(nodes) for nodes in clusters.values()]
+
+        assert {"C"} not in cluster_sets
+
+    def test_hierarchical_average_target_ge_groups_merges_isolated_ba_within_group(
+        self,
+    ):
+        """Hierarchical-average should merge an isolated BA into its group once bridged."""
+        hierarchy_df = pd.DataFrame(
+            {
+                "ba": ["A", "B", "C", "D", "E"],
+                "grp": ["g1", "g1", "g1", "g2", "g2"],
+            }
+        )
+        transmission_df = pd.DataFrame(
+            {
+                "region_from": ["A", "D"],
+                "region_to": ["B", "E"],
+                "firm_ttc_mw": [100.0, 20.0],
+            }
+        )
+
+        clusters = hierarchical_cluster(
+            hierarchy_df,
+            transmission_df,
+            cluster_bas={"A", "B", "C", "D", "E"},
+            grouping_column="grp",
+            target_regions=2,
+            method="hierarchical-average",
+        )
+
+        cluster_sets = [set(nodes) for nodes in clusters.values()]
+
+        assert {"C"} not in cluster_sets
+        assert {"A", "B", "C"} in cluster_sets
+        assert {"D", "E"} in cluster_sets
+
+    def test_hierarchical_spectral_grouped_path_uses_constrained_subgraph(
+        self, monkeypatch
+    ):
+        """Grouped spectral clustering should receive the constrained graph with synthetic links."""
+        hierarchy_df = pd.DataFrame(
+            {
+                "ba": ["A", "B", "C", "D", "E"],
+                "grp": ["g1", "g1", "g1", "g2", "g2"],
+            }
+        )
+        transmission_df = pd.DataFrame(
+            {
+                "region_from": ["A", "D"],
+                "region_to": ["B", "E"],
+                "firm_ttc_mw": [100.0, 50.0],
+            }
+        )
+        captured_subgraphs = {}
+
+        def fake_agglomerative_cluster(graph, n_clusters, linkage):
+            assert n_clusters == 3
+            assert linkage == "average"
+            return {
+                0: {"A", "B"},
+                1: {"C"},
+                2: {"D", "E"},
+            }
+
+        def fake_spectral_cluster(graph, n_clusters):
+            captured_subgraphs[frozenset(graph.nodes())] = graph.copy()
+            nodes = sorted(graph.nodes())
+            if n_clusters <= 1:
+                return {0: set(nodes)}
+            return {0: {nodes[0]}, 1: set(nodes[1:])}
+
+        monkeypatch.setattr(
+            clustering_algorithms,
+            "agglomerative_cluster",
+            fake_agglomerative_cluster,
+        )
+        monkeypatch.setattr(
+            clustering_algorithms,
+            "spectral_cluster",
+            fake_spectral_cluster,
+        )
+
+        hierarchical_cluster(
+            hierarchy_df,
+            transmission_df,
+            cluster_bas={"A", "B", "C", "D", "E"},
+            grouping_column="grp",
+            target_regions=3,
+            method="spectral",
+        )
+
+        g1_subgraph = captured_subgraphs[frozenset({"A", "B", "C"})]
+
+        assert any("C" in {u, v} for u, v in g1_subgraph.edges())
+
+
+@pytest.fixture(scope="module")
+def real_clustering_inputs():
+    hierarchy_df = pd.read_csv(_DATA_DIR / "hierarchy.csv")
+    transmission_df = pd.read_csv(_DATA_DIR / "transmission_capacity_reeds.csv")
+    demand_df = pd.read_csv(_DATA_DIR / "reeds_annual_demand_2050.csv")
+
+    demand_df["region"] = demand_df["region"].astype(str).str.lower()
+    demand_weights = demand_df.groupby("region")["annual_demand_mwh"].mean().to_dict()
+    cluster_bas = set(hierarchy_df["ba"])
+    grouping_by_ba = {
+        column: hierarchy_df.set_index("ba")[column].to_dict()
+        for column in ["transgrp", "transreg"]
+    }
+
+    return hierarchy_df, transmission_df, cluster_bas, demand_weights, grouping_by_ba
+
+
+@pytest.mark.parametrize(
+    ("grouping_column", "target_regions", "method"),
+    [
+        ("transgrp", 18, "hierarchical-average"),
+        ("transgrp", 18, "spectral"),
+        ("transgrp", 26, "hierarchical-average"),
+        ("transgrp", 26, "spectral"),
+        ("transreg", 11, "hierarchical-average"),
+        ("transreg", 11, "spectral"),
+        ("transreg", 16, "hierarchical-average"),
+        ("transreg", 16, "spectral"),
+    ],
+    ids=[
+        "transgrp-18-hierarchical-average",
+        "transgrp-18-spectral",
+        "transgrp-26-hierarchical-average",
+        "transgrp-26-spectral",
+        "transreg-11-hierarchical-average",
+        "transreg-11-spectral",
+        "transreg-16-hierarchical-average",
+        "transreg-16-spectral",
+    ],
+)
+def test_real_data_hierarchical_cluster_preserves_grouping_boundaries(
+    real_clustering_inputs, grouping_column, target_regions, method
+):
+    hierarchy_df, transmission_df, cluster_bas, _, grouping_by_ba = (
+        real_clustering_inputs
+    )
+
+    clusters = hierarchical_cluster(
+        hierarchy_df,
+        transmission_df,
+        cluster_bas=cluster_bas,
+        grouping_column=grouping_column,
+        target_regions=target_regions,
+        method=method,
+    )
+
+    covered_bas = set().union(*clusters.values())
+
+    assert covered_bas == cluster_bas
+
+    for members in clusters.values():
+        assert len({grouping_by_ba[grouping_column][ba] for ba in members}) == 1
+
+
+def test_real_data_demand_weighted_hierarchical_average_keeps_p8_non_singleton(
+    real_clustering_inputs,
+):
+    hierarchy_df, transmission_df, cluster_bas, demand_weights, grouping_by_ba = (
+        real_clustering_inputs
+    )
+
+    clusters = hierarchical_cluster(
+        hierarchy_df,
+        transmission_df,
+        cluster_bas=cluster_bas,
+        grouping_column="transgrp",
+        target_regions=26,
+        method="hierarchical-average",
+        demand_weights=demand_weights,
+        demand_weight_method="demand-log",
+    )
+
+    p8_cluster = next(members for members in clusters.values() if "p8" in members)
+
+    assert p8_cluster != {"p8"}
+    assert {grouping_by_ba["transgrp"][ba] for ba in p8_cluster} == {
+        "NorthernGrid_South"
+    }

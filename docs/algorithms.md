@@ -18,6 +18,16 @@ For context on how these algorithms fit into the overall workflow, see the [Web 
 * **Why it's used**: This method often produces balanced regions by finding "cuts" that minimize the ratio of cut weight to cluster volume.
 * **Workflow**: When `Target Regions >= Number of Groups`, the algorithm uses a "Split-Apply-Combine" strategy to ensure disconnected groups are not mixed.
 
+#### Handling Disconnected BAs Within a Group
+
+After cross-group edges are removed, some BAs inside the same group may be mutually unreachable — for example, when a BA has no direct transmission record to its neighbours in the dataset. Without intervention these isolated BAs would become forced singleton regions regardless of the target count.
+
+To prevent this, the algorithm inserts **synthetic weak edges** to connect any disconnected components that share the same grouping value:
+
+* The synthetic edge weight is at most `min(10 MW, smallest real edge weight in the graph)`.
+* One synthetic edge is added per pair of adjacent disconnected components (chain linkage), so the number of additions is minimal.
+* These links are intentionally weak — they serve only to make the group traversable and should not meaningfully influence which BAs ultimately merge together.
+
 ```mermaid
 flowchart TD
     Start([Start]) --> GroupBAs[Group BAs by Grouping Column]
@@ -57,7 +67,7 @@ flowchart TD
 2. **Average Linkage**: Merges based on the **average** weight of edges (Total Weight / (Size A * Size B)). This penalizes merging large clusters, leading to more even cluster sizes.
 3. **Max Linkage**: Merges based on the **maximum** single edge weight between clusters (Single Linkage).
 
-**Workflow**: When selected (and `Target Regions >= Number of Groups`), the algorithm runs on the full graph but respects group boundaries by removing edges between groups.
+**Workflow**: When selected (and `Target Regions >= Number of Groups`), the algorithm runs on the full graph but respects group boundaries by removing edges between groups. Synthetic weak edges are inserted to reconnect any disconnected components within a group (see [Handling Disconnected BAs Within a Group](#handling-disconnected-bas-within-a-group)).
 
 ```mermaid
 flowchart TD
