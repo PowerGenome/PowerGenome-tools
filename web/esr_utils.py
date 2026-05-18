@@ -347,11 +347,22 @@ def get_qualified_technologies(plants_df, new_resources, allowed_techs_df):
     if new_resources:
         for res in new_resources:
             if isinstance(res, (list, tuple)) and len(res) > 0:
-                # Combine technology and tech_detail for matching (e.g., "NaturalGas | CCS")
-                tech_name = str(res[0])
-                tech_detail = str(res[1]) if len(res) > 1 else ""
+                tech_name = str(res[0]).strip()
+                tech_detail = str(res[1]).strip() if len(res) > 1 else ""
+
+                # Prefer the base technology name when it already qualifies.
+                # Fall back to the combined name so detail-only qualifiers such
+                # as CCS can still be matched.
                 combined = f"{tech_name} {tech_detail}".strip()
-                all_techs.add(combined)
+                candidate = tech_name
+                candidate_lower = candidate.lower()
+                if not any(
+                    keyword in candidate_lower
+                    for keyword in rps_keywords + ces_keywords
+                ):
+                    candidate = combined
+
+                all_techs.add(candidate)
 
     rps_qualified = set()
     ces_qualified = set()

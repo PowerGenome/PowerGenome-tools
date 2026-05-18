@@ -190,6 +190,7 @@ Technologies are matched using keyword matching against the `RPS` and `CES` colu
 
 * If a technology name contains any keyword in the `RPS` column, it qualifies for RPS
 * If a technology name contains any keyword in the `CES` column, it qualifies for CES
+* For new-build resources, ESR-facing technology labels use the base technology name, and `tech_detail` is used for matching only rather than becoming part of the ESR key
 
 ### CES ≥ RPS Rule
 

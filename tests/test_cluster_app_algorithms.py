@@ -3794,6 +3794,115 @@ class TestFuelChartHelpers:
 # ---------------------------------------------------------------------------
 
 
+class TestESRNewResourceTechNames:
+    """Regression tests for ESR tech keys derived from new-build resources."""
+
+    _STATE_ATTRS = (
+        "hierarchy_df",
+        "rectable_df",
+        "region_aggregations",
+        "esr_map",
+        "esr_type_map",
+        "esr_policy_states",
+        "esr_rps_techs",
+        "esr_ces_techs",
+        "allowed_techs_df",
+        "modified_new_resources",
+        "new_resources",
+    )
+
+    @pytest.fixture()
+    def app(self, cluster_app):
+        saved = {
+            attr: getattr(cluster_app.state, attr, None) for attr in self._STATE_ATTRS
+        }
+        try:
+            cluster_app.state.hierarchy_df = pd.DataFrame(
+                {
+                    "ba": ["ba1"],
+                    "st": ["CA"],
+                    "interconnect": ["Western"],
+                }
+            )
+            cluster_app.state.rectable_df = None
+            cluster_app.state.region_aggregations = {"Region1": ["ba1"]}
+            cluster_app.state.esr_map = {"ESR_1": {}, "ESR_2": {}}
+            cluster_app.state.esr_type_map = {"ESR_1": "RPS", "ESR_2": "CES"}
+            cluster_app.state.esr_policy_states = {
+                "ESR_1": {"ca"},
+                "ESR_2": {"ca"},
+            }
+            cluster_app.state.allowed_techs_df = pd.DataFrame(
+                {
+                    "RPS": ["wind", "utilitypv"],
+                    "CES": ["utilitypv", "CCS"],
+                }
+            )
+            cluster_app.state.esr_rps_techs = set()
+            cluster_app.state.esr_ces_techs = set()
+            cluster_app.state.modified_new_resources = {}
+            cluster_app.state.new_resources = [
+                {
+                    "technology": "LandbasedWind",
+                    "tech_detail": "Class3",
+                    "cost_case": "Moderate",
+                    "size_mw": 200,
+                    "planning_year": "all",
+                },
+                {
+                    "technology": "UtilityPV",
+                    "tech_detail": "Class1",
+                    "cost_case": "Moderate",
+                    "size_mw": 100,
+                    "planning_year": "all",
+                },
+                {
+                    "technology": "NaturalGas",
+                    "tech_detail": "F-Frame CC 95% CCS",
+                    "cost_case": "Moderate",
+                    "size_mw": 500,
+                    "planning_year": "all",
+                },
+            ]
+
+            yield cluster_app
+        finally:
+            for attr, val in saved.items():
+                setattr(cluster_app.state, attr, val)
+
+    def test_new_resources_use_base_names_in_esr_tags(self, app):
+        new_resources = [
+            [r["technology"], r["tech_detail"], r["cost_case"], r["size_mw"]]
+            for r in app.state.new_resources
+        ]
+
+        rps_qualified, ces_qualified = app.get_qualified_technologies(
+            None, new_resources, app.state.allowed_techs_df
+        )
+
+        assert rps_qualified == {"LandbasedWind", "UtilityPV"}
+        assert ces_qualified == {"UtilityPV", "NaturalGas F-Frame CC 95% CCS"}
+
+        app.state.esr_rps_techs = rps_qualified
+        app.state.esr_ces_techs = ces_qualified
+
+        result = yaml.safe_load(app.generate_resource_tags_settings())
+        regional = result.get("regional_tag_values", {})
+
+        assert "Region1" in regional
+        assert regional["Region1"]["ESR_1"] == {
+            "LandbasedWind": 1,
+            "UtilityPV": 1,
+        }
+        assert regional["Region1"]["ESR_2"] == {
+            "UtilityPV": 1,
+            "NaturalGas F-Frame CC 95% CCS": 1,
+        }
+        assert "LandbasedWind Class3" not in regional["Region1"]["ESR_1"]
+        assert "UtilityPV Class1" not in regional["Region1"]["ESR_1"]
+        assert "NaturalGas" not in regional["Region1"]["ESR_2"]
+
+
 class TestESRInterconnectGuard:
     """Regression tests for the cross-interconnect guard in generate_resource_tags_settings().
 
@@ -3824,7 +3933,9 @@ class TestESRInterconnectGuard:
         Saves and restores all modified state attributes so the session-scoped
         cluster_app module is left clean for subsequent tests.
         """
-        saved = {attr: getattr(cluster_app.state, attr, None) for attr in self._STATE_ATTRS}
+        saved = {
+            attr: getattr(cluster_app.state, attr, None) for attr in self._STATE_ATTRS
+        }
         try:
             # p32: SD BA in the western interconnect.
             # p46: WI BA in the eastern interconnect.
@@ -3912,7 +4023,9 @@ class TestESRInterconnectGuard:
             interconnect (Western) matches ND's interconnect (Western).
           - A majority-based guard would incorrectly see SD as "Eastern" and block the tag.
         """
-        saved = {attr: getattr(cluster_app.state, attr, None) for attr in self._STATE_ATTRS}
+        saved = {
+            attr: getattr(cluster_app.state, attr, None) for attr in self._STATE_ATTRS
+        }
         try:
             # SD has 3 eastern BAs (majority eastern) + 1 western BA (minority western).
             # ND has 1 western BA.
@@ -3920,7 +4033,13 @@ class TestESRInterconnectGuard:
                 {
                     "ba": ["p_sd_e1", "p_sd_e2", "p_sd_e3", "p_sd_w", "p_nd_w"],
                     "st": ["SD", "SD", "SD", "SD", "ND"],
-                    "interconnect": ["Eastern", "Eastern", "Eastern", "Western", "Western"],
+                    "interconnect": [
+                        "Eastern",
+                        "Eastern",
+                        "Eastern",
+                        "Western",
+                        "Western",
+                    ],
                 }
             )
 
