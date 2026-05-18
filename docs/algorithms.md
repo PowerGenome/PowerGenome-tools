@@ -126,3 +126,77 @@ flowchart TD
 
 !!! note
     ESR-compatible clustering may produce more regions than your target if state trading boundaries require additional separation. This is expected behavior—the algorithm prioritizes policy compliance over hitting the exact target number.
+
+## Demand-Based Edge Weighting
+
+When clustering BAs into model regions, BAs that have both **small annual demand** and **weak transmission connections** can end up as isolated single-BA regions. These tiny regions waste model variables without adding useful fidelity.
+
+Demand-based edge weighting addresses this by inflating the edge weights of low-demand BAs in the transmission graph before clustering runs. A heavier edge makes a BA look more strongly connected to its neighbours, so the clustering algorithm is more likely to merge it rather than leave it alone.
+
+### Data Source
+
+Boost factors are derived from `data/reeds_annual_demand_2050.csv`, which contains ReEDS 2050 projected annual demand (MWh) by BA and weather year. The per-BA value used is the **average demand across all weather years** in that file.
+
+### Boost Factor Calculation
+
+A scalar *boost factor* ≥ 1.0 is computed for every BA. When an edge connects BA *u* and BA *v* with raw transmission capacity *w*, the adjusted weight used by the clustering algorithm is:
+
+```
+adjusted_weight = w × max(boost_u, boost_v)
+```
+
+Using the **maximum** of the two endpoints means that if *either* BA has low demand, the shared edge is strengthened. BAs at or above the reference demand level receive a boost of exactly 1.0 — their edges are never suppressed.
+
+#### Sqrt Inverse Demand (mild)
+
+```
+boost = max(1.0, sqrt(median_demand / demand))
+```
+
+| Demand relative to median | Boost factor |
+|--------------------------|-------------|
+| 4× above median | 1.0 (clamped) |
+| At median (1×) | 1.0 |
+| ¼ of median | 2.0× |
+| 1/16 of median | 4.0× |
+
+The square-root relationship produces a gentle, graduated boost. Most BAs are affected only mildly, and only extreme outliers receive a large adjustment.
+
+#### Log Inverse Demand (aggressive)
+
+```
+boost = max(1.0, log(max_demand + 1) / log(demand + 1))
+```
+
+This method anchors the boost to the highest-demand BA in the dataset. The logarithm compresses large values and expands small ones, so very-low-demand BAs receive a disproportionately large boost. Use this when sqrt weighting still leaves small BAs isolated.
+
+### Interaction with Clustering Algorithms
+
+Demand weighting only modifies edge weights during graph construction in `build_transmission_graph()`. The clustering algorithm itself (Spectral, Hierarchical, or Louvain) runs unchanged on the adjusted graph.
+
+```mermaid
+flowchart TD
+    Start([Start]) --> LoadDemand[Load avg annual demand\nper BA from ReEDS CSV]
+    LoadDemand --> ComputeBoost[Compute boost factor\nfor each BA]
+    ComputeBoost --> BuildGraph[Build Transmission Graph]
+
+    subgraph EdgeWeight ["For each edge (u, v, w)"]
+        BuildGraph --> ApplyBoost["adjusted_weight = w × max(boost_u, boost_v)"]
+    end
+
+    ApplyBoost --> RunCluster[Run Selected\nClustering Algorithm]
+    RunCluster --> End([Final Regions])
+```
+
+### Using Demand Weighting in the UI
+
+The **Demand Weighting** dropdown appears in the **Clustering** settings panel (Step 1), directly below the **Clustering Method** dropdown. It is hidden when Auto-optimize mode is enabled.
+
+| Option | Method | When to use |
+|--------|--------|-------------|
+| None (transmission only) | No boost applied | Default; use when small isolated regions are acceptable |
+| Sqrt inverse demand (mild) | `demand-sqrt` | First choice when a few BAs form unwanted tiny regions |
+| Log inverse demand (aggressive) | `demand-log` | When sqrt weighting is insufficient for very-small-demand BAs |
+
+!!! tip
+    Start with **Sqrt inverse demand** and inspect the resulting map. If very small BAs are still appearing as singleton regions, switch to **Log inverse demand**. The tradeoff is that aggressive weighting can pull small BAs into geographically distant neighbours if the direct transmission path is weak.

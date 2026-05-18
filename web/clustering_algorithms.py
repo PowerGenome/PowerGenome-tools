@@ -78,9 +78,94 @@ def run_kmeans_simple(features, k, weights=None, max_iter=40, seed=42):
     return inertia, centers, labels
 
 
-def build_transmission_graph(transmission_df, valid_bas):
-    """Build undirected weighted graph from transmission data."""
+def compute_demand_boost_factors(valid_bas, demand_weights, method):
+    """Compute per-BA demand boost factors for transmission edge weighting.
+
+    Low-demand BAs receive a boost factor > 1, causing their edges to appear
+    heavier in the clustering graph so they are merged into neighbouring regions
+    rather than left as tiny standalone regions.
+
+    Two non-linear methods are supported:
+
+    * ``"demand-sqrt"`` – boost = sqrt(median_demand / demand).
+      Mild: a BA with 1/4 the median demand receives a 2x boost.
+    * ``"demand-log"`` – boost = log(max_demand + 1) / log(demand + 1).
+      Aggressive: very-low-demand BAs receive a much larger boost, making
+      them strongly attracted to any neighbour regardless of line capacity.
+
+    In both cases:
+    * ``demand`` is the average annual demand (MWh) for the BA.
+    * BAs missing from *demand_weights* receive a boost of 1.0 (no change).
+    * The boost is always >= 1.0.
+
+    Args:
+        valid_bas: iterable of BA ids to compute boosts for.
+        demand_weights: dict mapping BA id (lowercase) -> avg annual demand (MWh).
+        method: ``"demand-sqrt"`` or ``"demand-log"``.
+
+    Returns:
+        dict mapping BA id -> boost factor (float >= 1.0).
+    """
+    demands = {}
+    for ba in valid_bas:
+        key = str(ba).lower()
+        d = demand_weights.get(key)
+        if d is not None:
+            demands[ba] = max(float(d), 1.0)
+
+    if not demands:
+        return {ba: 1.0 for ba in valid_bas}
+
+    if method == "demand-sqrt":
+        median_d = float(np.median(list(demands.values())))
+        boosts = {}
+        for ba in valid_bas:
+            d = demands.get(ba)
+            if d is None:
+                boosts[ba] = 1.0
+            else:
+                boosts[ba] = max(1.0, np.sqrt(median_d / d))
+    elif method == "demand-log":
+        max_d = max(demands.values())
+        log_max = np.log(max_d + 1.0)
+        boosts = {}
+        for ba in valid_bas:
+            d = demands.get(ba)
+            if d is None:
+                boosts[ba] = 1.0
+            else:
+                log_d = np.log(d + 1.0)
+                boosts[ba] = max(1.0, log_max / max(log_d, 1e-9))
+    else:
+        boosts = {ba: 1.0 for ba in valid_bas}
+
+    return boosts
+
+
+def build_transmission_graph(
+    transmission_df, valid_bas, demand_weights=None, demand_weight_method=None
+):
+    """Build undirected weighted graph from transmission data.
+
+    Args:
+        transmission_df: DataFrame with columns ``region_from``, ``region_to``,
+            ``firm_ttc_mw``.
+        valid_bas: iterable of BA ids to include as nodes.
+        demand_weights: optional dict mapping BA id (lowercase) -> avg annual
+            demand (MWh).  When provided together with *demand_weight_method*,
+            edge weights are scaled by demand-based boost factors so that
+            low-demand BAs are more strongly pulled towards neighbours.
+        demand_weight_method: ``"demand-sqrt"``, ``"demand-log"``, or ``None``
+            (no demand weighting).
+    """
     G = nx.Graph()
+
+    # Pre-compute demand boost factors if requested
+    boost = {}
+    if demand_weights and demand_weight_method and demand_weight_method != "none":
+        boost = compute_demand_boost_factors(
+            valid_bas, demand_weights, demand_weight_method
+        )
 
     for _, row in transmission_df.iterrows():
         region_from = row["region_from"]
@@ -90,6 +175,13 @@ def build_transmission_graph(transmission_df, valid_bas):
         # Only include edges between valid BAs
         if region_from not in valid_bas or region_to not in valid_bas:
             continue
+
+        # Apply demand boost: use the maximum boost of the two endpoints so
+        # that either low-demand BA causes the edge to be strengthened.
+        if boost:
+            b_from = boost.get(region_from, 1.0)
+            b_to = boost.get(region_to, 1.0)
+            capacity = capacity * max(b_from, b_to)
 
         if G.has_edge(region_from, region_to):
             G[region_from][region_to]["weight"] += capacity
@@ -313,6 +405,8 @@ def hierarchical_cluster(
     target_regions,
     method="hierarchical-sum",
     esr_rectable_df=None,
+    demand_weights=None,
+    demand_weight_method=None,
 ):
     """
     Hierarchical clustering that respects grouping column boundaries.
@@ -324,6 +418,9 @@ def hierarchical_cluster(
 
     If esr_rectable_df is provided, also removes edges between BAs in states
     that cannot trade (even transitively), ensuring ESR-compatible clustering.
+
+    If demand_weights and demand_weight_method are provided, edge weights are
+    scaled by demand-based boost factors (see build_transmission_graph).
     """
     # Parse method
     if method == "spectral":
@@ -381,7 +478,12 @@ def hierarchical_cluster(
                 ba_to_group[ba] = group
 
         # Build full graph
-        graph = build_transmission_graph(transmission_df, cluster_bas)
+        graph = build_transmission_graph(
+            transmission_df,
+            cluster_bas,
+            demand_weights=demand_weights,
+            demand_weight_method=demand_weight_method,
+        )
 
         # Remove edges between different groups to enforce group boundaries
         edges_to_remove = []
@@ -433,7 +535,12 @@ def hierarchical_cluster(
 
                 group_bas = groups[group]
                 # Build subgraph for this group
-                subgraph = build_transmission_graph(transmission_df, group_bas)
+                subgraph = build_transmission_graph(
+                    transmission_df,
+                    group_bas,
+                    demand_weights=demand_weights,
+                    demand_weight_method=demand_weight_method,
+                )
 
                 # Run spectral on subgraph
                 sub_clusters = spectral_cluster(subgraph, count)
@@ -549,6 +656,8 @@ def find_optimal_clusters(
     grouping_column,
     min_regions,
     max_regions,
+    demand_weights=None,
+    demand_weight_method=None,
 ):
     """
     Find the optimal clustering using Louvain community detection.
@@ -557,6 +666,9 @@ def find_optimal_clusters(
     The min_regions and max_regions are used to constrain the result:
     - If Louvain finds fewer clusters than min_regions, we don't split further
     - If Louvain finds more clusters than max_regions, we merge using agglomerative
+
+    If demand_weights and demand_weight_method are provided, edge weights are
+    scaled by demand-based boost factors (see build_transmission_graph).
 
     Returns (best_clusters, best_n, best_modularity, all_scores)
     """
@@ -570,7 +682,12 @@ def find_optimal_clusters(
         groups[group].add(ba)
 
     # Build graph for the cluster BAs
-    graph = build_transmission_graph(transmission_df, cluster_bas)
+    graph = build_transmission_graph(
+        transmission_df,
+        cluster_bas,
+        demand_weights=demand_weights,
+        demand_weight_method=demand_weight_method,
+    )
 
     # Use Louvain on within-group subgraphs, respecting grouping boundaries
     all_clusters = {}
@@ -582,7 +699,12 @@ def find_optimal_clusters(
             cluster_id += 1
         else:
             # Build subgraph for this group
-            subgraph = build_transmission_graph(transmission_df, group_bas)
+            subgraph = build_transmission_graph(
+                transmission_df,
+                group_bas,
+                demand_weights=demand_weights,
+                demand_weight_method=demand_weight_method,
+            )
             # Use Louvain to find natural communities within this group
             sub_clusters = louvain_cluster(subgraph)
 
@@ -619,7 +741,7 @@ def find_optimal_clusters(
             cid_to_split, _ = max(candidates, key=lambda x: x[1])
             nodes_to_split = current_clusters[cid_to_split]
 
-            # Build subgraph
+            # Build subgraph (no demand weighting for splits — we want balanced halves)
             subgraph = build_transmission_graph(transmission_df, nodes_to_split)
 
             # Split into 2 using agglomerative clustering (average linkage for balanced splits)

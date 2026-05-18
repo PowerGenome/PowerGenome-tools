@@ -939,6 +939,7 @@ def run_clustering(
     max_regions=None,
     method="hierarchical-sum",
     esr_compatible=False,
+    demand_weight_method=None,
 ):
     """
     Run the clustering algorithm.
@@ -1019,6 +1020,13 @@ def run_clustering(
             actual_max = min(actual_max, len(cluster_bas))
             actual_min = min(actual_min, actual_max)
 
+            # Resolve demand weights for optional demand-based edge weighting
+            demand_weights = (
+                state.reeds_annual_demand_avg
+                if demand_weight_method and demand_weight_method != "none"
+                else None
+            )
+
             clusters, chosen_n, modularity, all_scores, optimal_clusters = (
                 find_optimal_clusters(
                     hierarchy,
@@ -1027,6 +1035,8 @@ def run_clustering(
                     grouping_column,
                     actual_min,
                     actual_max,
+                    demand_weights=demand_weights,
+                    demand_weight_method=demand_weight_method,
                 )
             )
 
@@ -1040,6 +1050,13 @@ def run_clustering(
             actual_target = max(1, target_regions - num_unclustered)
             actual_target = min(actual_target, len(cluster_bas))
 
+            # Resolve demand weights for optional demand-based edge weighting
+            demand_weights = (
+                state.reeds_annual_demand_avg
+                if demand_weight_method and demand_weight_method != "none"
+                else None
+            )
+
             if method == "louvain":
                 clusters, _, modularity_val, _, _ = find_optimal_clusters(
                     hierarchy,
@@ -1048,6 +1065,8 @@ def run_clustering(
                     grouping_column,
                     actual_target,  # min
                     actual_target,  # max
+                    demand_weights=demand_weights,
+                    demand_weight_method=demand_weight_method,
                 )
                 # find_optimal_clusters calculates modularity, but we'll recalculate it below
                 # to be consistent with other methods.
@@ -1061,6 +1080,8 @@ def run_clustering(
                     actual_target,
                     method=method,
                     esr_rectable_df=state.rectable_df if esr_compatible else None,
+                    demand_weights=demand_weights,
+                    demand_weight_method=demand_weight_method,
                 )
 
             # Calculate modularity for info
@@ -1606,6 +1627,10 @@ def on_run_clustering(event):
     esr_compat_el = document.getElementById("esrCompatibleClustering")
     esr_compatible = esr_compat_el.checked if esr_compat_el else False
 
+    # Read demand weighting method
+    demand_weight_el = document.getElementById("demandWeightMethod")
+    demand_weight_method = demand_weight_el.value if demand_weight_el else "none"
+
     # Run clustering
     model_regions, region_aggregations, error, info = run_clustering(
         state.selected_bas,
@@ -1617,6 +1642,7 @@ def on_run_clustering(event):
         max_regions=max_regions,
         method=method,
         esr_compatible=esr_compatible,
+        demand_weight_method=demand_weight_method,
     )
 
     if error:
