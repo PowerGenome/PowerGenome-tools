@@ -636,37 +636,54 @@ def find_optimal_clusters(
 
     # If we have more clusters than max_regions, merge using agglomerative
     if num_clusters > max_regions:
-        # Build a graph of the current clusters
+        # Build BA-to-group and cluster-to-group mappings to enforce group boundaries
+        ba_to_group = {}
+        for group, bas in groups.items():
+            for ba in bas:
+                ba_to_group[ba] = group
+
+        cluster_to_group = {}
+        for cid, bas in all_clusters.items():
+            if bas:
+                rep = next(iter(bas))
+                cluster_to_group[cid] = ba_to_group.get(rep)
+
+        # Build cluster graph with ONLY intra-group edges to respect group boundaries
         cluster_graph = nx.Graph()
         for cid in all_clusters:
             cluster_graph.add_node(cid)
 
-        # Add edges based on transmission between clusters
+        # Build BA-to-cluster lookup for efficiency
+        ba_to_cluster = {}
+        for cid, bas in all_clusters.items():
+            for ba in bas:
+                ba_to_cluster[ba] = cid
+
+        # Add edges between clusters in the same group only
         for _, row in transmission_df.iterrows():
             ba_from = row["region_from"]
             ba_to = row["region_to"]
             capacity = row["firm_ttc_mw"]
 
-            # Find which clusters these BAs belong to
-            cluster_from = None
-            cluster_to = None
-            for cid, bas in all_clusters.items():
-                if ba_from in bas:
-                    cluster_from = cid
-                if ba_to in bas:
-                    cluster_to = cid
+            cluster_from = ba_to_cluster.get(ba_from)
+            cluster_to = ba_to_cluster.get(ba_to)
+
+            grp_from = cluster_to_group.get(cluster_from)
+            grp_to = cluster_to_group.get(cluster_to)
 
             if (
                 cluster_from is not None
                 and cluster_to is not None
                 and cluster_from != cluster_to
+                and grp_from is not None
+                and grp_from == grp_to  # same group only; skip if either group is unknown
             ):
                 if cluster_graph.has_edge(cluster_from, cluster_to):
                     cluster_graph[cluster_from][cluster_to]["weight"] += capacity
                 else:
                     cluster_graph.add_edge(cluster_from, cluster_to, weight=capacity)
 
-        # Merge clusters down to max_regions
+        # Merge within-group clusters down to max_regions
         merged = agglomerative_cluster(cluster_graph, max_regions)
 
         # Convert back to BA clusters
@@ -678,6 +695,57 @@ def find_optimal_clusters(
             new_clusters[new_id] = combined_bas
 
         all_clusters = new_clusters
+        num_clusters = len(all_clusters)
+
+        # If still over max_regions (e.g. isolated sub-clusters with no intra-group edges),
+        # fall back to group-level merging: consolidate each group then merge groups
+        if num_clusters > max_regions:
+            # Re-compute BA-to-group for the consolidated clusters
+            group_combined = {}
+            for cid, bas in all_clusters.items():
+                if bas:
+                    rep = next(iter(bas))
+                    grp = ba_to_group.get(rep)
+                    if grp is None:
+                        continue  # skip BAs not in any known group
+                    if grp not in group_combined:
+                        group_combined[grp] = set()
+                    group_combined[grp].update(bas)
+
+            # Build group-level graph
+            group_graph = nx.Graph()
+            for grp in group_combined:
+                group_graph.add_node(grp)
+
+            group_ba_lookup = {}
+            for grp, bas in group_combined.items():
+                for ba in bas:
+                    group_ba_lookup[ba] = grp
+
+            for _, row in transmission_df.iterrows():
+                ba_from = row["region_from"]
+                ba_to = row["region_to"]
+                capacity = row["firm_ttc_mw"]
+
+                grp_from = group_ba_lookup.get(ba_from)
+                grp_to = group_ba_lookup.get(ba_to)
+
+                if grp_from and grp_to and grp_from != grp_to:
+                    if group_graph.has_edge(grp_from, grp_to):
+                        group_graph[grp_from][grp_to]["weight"] += capacity
+                    else:
+                        group_graph.add_edge(grp_from, grp_to, weight=capacity)
+
+            merged_groups = agglomerative_cluster(group_graph, max_regions)
+
+            new_clusters = {}
+            for new_id, grp_set in merged_groups.items():
+                combined_bas = set()
+                for grp in grp_set:
+                    combined_bas.update(group_combined[grp])
+                new_clusters[new_id] = combined_bas
+
+            all_clusters = new_clusters
 
     # Calculate final modularity
     modularity = calculate_modularity(graph, all_clusters)
