@@ -1656,6 +1656,10 @@
                                 <li><strong>Exclude groups:</strong> Check any groups in <em>Groups to Keep
                                         Unclustered</em>
                                     to keep them as individual BAs (they will not be merged with others).</li>
+                                <li><strong>Force groups together:</strong> Check any groups in <em>Groups to Cluster
+                                        Together</em>
+                                    to ensure all BAs in that group end up in the same single region. Each checked group
+                                    is merged independently.</li>
                                 <li><strong>Run clustering:</strong> Click <em>Run Clustering</em> to generate the
                                     region
                                     aggregations. The map will update to show the new regions.</li>
@@ -1846,6 +1850,19 @@
                         </div>
                         <div id="noClusterContent" class="collapsible-content hidden">
                             <div id="noClusterContainer" class="checkbox-group">
+                                <em>Loading...</em>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="section" id="forceClusterSection">
+                        <div class="collapsible-header"
+                            onclick="toggleCollapsible('forceClusterContent', 'forceClusterToggle')">
+                            <label style="margin: 0; cursor: pointer;">Groups to Cluster Together</label>
+                            <span id="forceClusterToggle" style="font-size: 12px; color: #666;">▶ Show</span>
+                        </div>
+                        <div id="forceClusterContent" class="collapsible-content hidden">
+                            <div id="forceClusterContainer" class="checkbox-group">
                                 <em>Loading...</em>
                             </div>
                         </div>
@@ -2881,6 +2898,24 @@
             }
         }
 
+        // Sync group checkboxes: disable a value in one list when it is checked in the other
+        function syncGroupCheckboxes(changed) {
+            const otherName = changed.name === 'noCluster' ? 'forceCluster' : 'noCluster';
+            const otherContainerId = changed.name === 'noCluster' ? 'forceClusterContainer' : 'noClusterContainer';
+            const otherContainer = document.getElementById(otherContainerId);
+            if (!otherContainer) return;
+            const counterpart = otherContainer.querySelector(
+                'input[name="' + otherName + '"][value="' + CSS.escape(changed.value) + '"]'
+            );
+            if (!counterpart) return;
+            counterpart.disabled = changed.checked;
+            const lbl = counterpart.closest('label');
+            if (lbl) {
+                lbl.style.opacity = changed.checked ? '0.4' : '';
+                lbl.style.cursor = changed.checked ? 'not-allowed' : '';
+            }
+        }
+
         // Instructions Toggles
         function toggleCollapsible(contentId, toggleId) {
             const content = document.getElementById(contentId);
@@ -2944,7 +2979,7 @@
             // Show/hide relevant sections
             const clusteringSections = [
                 'groupingSection', 'esrSection', 'targetRegionsSection',
-                'clusteringMethodSection', 'noClusterSection', 'clusteringButtons'
+                'clusteringMethodSection', 'noClusterSection', 'forceClusterSection', 'clusteringButtons'
             ];
             const manualSections = ['manualRegionSection', 'manualButtons'];
 

@@ -313,6 +313,211 @@ def test_run_clustering_no_cluster_groups(app):
         assert region_aggs[region_name] == [ba]
 
 
+def test_run_clustering_force_cluster_groups_merges_bas(app):
+    """Test that force_cluster_groups merges BAs from the same group into one region.
+
+    Setup: 4 BAs – A and B in G1, C and D in G2.
+    Transmission edges create cross-group connectivity (A–C, A–B, C–D).
+    With target_regions=3 and no forcing, the algorithm may split A and B
+    across different clusters.  With force_cluster_groups=["G1"] the post-
+    clustering merge must guarantee A and B end up in the same region.
+    """
+    app.state.hierarchy_df = pd.DataFrame(
+        {
+            "ba": ["A", "B", "C", "D"],
+            "grp": ["G1", "G1", "G2", "G2"],
+            "st": ["S1", "S1", "S2", "S2"],
+        }
+    )
+    app.state.transmission_df = pd.DataFrame(
+        {
+            "region_from": ["A", "A", "C"],
+            "region_to": ["B", "C", "D"],
+            "firm_ttc_mw": [100.0, 200.0, 100.0],
+        }
+    )
+
+    selected_bas = {"A", "B", "C", "D"}
+    model_regions, region_aggs, error, info = app.run_clustering(
+        selected_bas=selected_bas,
+        grouping_column="grp",
+        target_regions=3,
+        no_cluster_groups=[],
+        force_cluster_groups=["G1"],
+        method="hierarchical-sum",
+    )
+
+    assert error is None
+
+    # All four BAs must appear in the output exactly once
+    all_output_bas = [ba for bas in region_aggs.values() for ba in bas]
+    assert sorted(all_output_bas) == ["A", "B", "C", "D"]
+
+    # A and B must be in the same region
+    a_region = next(r for r, bas in region_aggs.items() if "A" in bas)
+    b_region = next(r for r, bas in region_aggs.items() if "B" in bas)
+    assert a_region == b_region, (
+        f"A is in {a_region!r} but B is in {b_region!r}; "
+        "force_cluster_groups should have merged them"
+    )
+
+
+def test_run_clustering_force_cluster_already_together(app):
+    """Test that force_cluster_groups is a no-op when BAs already cluster together.
+
+    When A and B (both in G1) naturally end up in the same cluster, the
+    force-merge code should skip them (len(labels_with_group) <= 1) and
+    the output should still be correct with no errors.
+    """
+    app.state.hierarchy_df = pd.DataFrame(
+        {
+            "ba": ["A", "B", "C"],
+            "grp": ["G1", "G1", "G2"],
+            "st": ["S1", "S1", "S2"],
+        }
+    )
+    # Strong A–B edge and weak A–C / B–C edges – hierarchical clustering
+    # should naturally keep A and B together when target_regions=2.
+    app.state.transmission_df = pd.DataFrame(
+        {
+            "region_from": ["A", "A", "B"],
+            "region_to": ["B", "C", "C"],
+            "firm_ttc_mw": [500.0, 10.0, 10.0],
+        }
+    )
+
+    selected_bas = {"A", "B", "C"}
+    model_regions, region_aggs, error, info = app.run_clustering(
+        selected_bas=selected_bas,
+        grouping_column="grp",
+        target_regions=2,
+        no_cluster_groups=[],
+        force_cluster_groups=["G1"],
+        method="hierarchical-sum",
+    )
+
+    assert error is None
+    assert model_regions is not None
+
+    # All BAs accounted for
+    all_output_bas = [ba for bas in region_aggs.values() for ba in bas]
+    assert sorted(all_output_bas) == ["A", "B", "C"]
+
+    # A and B are still in the same region
+    a_region = next(r for r, bas in region_aggs.items() if "A" in bas)
+    b_region = next(r for r, bas in region_aggs.items() if "B" in bas)
+    assert a_region == b_region
+
+
+def test_run_clustering_force_cluster_multiple_groups(app):
+    """Test that force_cluster_groups enforces co-location for every listed group.
+
+    Setup: 6 BAs – A,B in G1; C,D in G2; E,F in G3.
+    force_cluster_groups=["G1", "G2"] must ensure:
+      * A and B are in the same region, AND
+      * C and D are in the same region.
+    G3 (E, F) is not forced, so the algorithm can split them freely.
+    """
+    app.state.hierarchy_df = pd.DataFrame(
+        {
+            "ba": ["A", "B", "C", "D", "E", "F"],
+            "grp": ["G1", "G1", "G2", "G2", "G3", "G3"],
+            "st": ["S1", "S1", "S2", "S2", "S3", "S3"],
+        }
+    )
+    # Create a chain A–B–C–D–E–F so that the algorithm has room to split any pair
+    app.state.transmission_df = pd.DataFrame(
+        {
+            "region_from": ["A", "B", "C", "D", "E"],
+            "region_to": ["B", "C", "D", "E", "F"],
+            "firm_ttc_mw": [100.0, 100.0, 100.0, 100.0, 100.0],
+        }
+    )
+
+    selected_bas = {"A", "B", "C", "D", "E", "F"}
+    model_regions, region_aggs, error, info = app.run_clustering(
+        selected_bas=selected_bas,
+        grouping_column="grp",
+        target_regions=4,
+        no_cluster_groups=[],
+        force_cluster_groups=["G1", "G2"],
+        method="hierarchical-sum",
+    )
+
+    assert error is None
+
+    # All six BAs must appear exactly once
+    all_output_bas = [ba for bas in region_aggs.values() for ba in bas]
+    assert sorted(all_output_bas) == ["A", "B", "C", "D", "E", "F"]
+
+    # G1 constraint: A and B in the same region
+    a_region = next(r for r, bas in region_aggs.items() if "A" in bas)
+    b_region = next(r for r, bas in region_aggs.items() if "B" in bas)
+    assert a_region == b_region, (
+        f"G1 force failed: A→{a_region!r}, B→{b_region!r}"
+    )
+
+    # G2 constraint: C and D in the same region
+    c_region = next(r for r, bas in region_aggs.items() if "C" in bas)
+    d_region = next(r for r, bas in region_aggs.items() if "D" in bas)
+    assert c_region == d_region, (
+        f"G2 force failed: C→{c_region!r}, D→{d_region!r}"
+    )
+
+
+def test_run_clustering_force_cluster_groups_with_no_cluster_groups(app):
+    """Test that force_cluster_groups and no_cluster_groups work together correctly.
+
+    Setup: A,B in G1; C,D in G2; E in G3.
+    * no_cluster_groups=["G3"]  → E stays as its own singleton region.
+    * force_cluster_groups=["G1"] → A and B must end up in the same region.
+    C and D (G2) are neither forced nor excluded, so the algorithm clusters them.
+    """
+    app.state.hierarchy_df = pd.DataFrame(
+        {
+            "ba": ["A", "B", "C", "D", "E"],
+            "grp": ["G1", "G1", "G2", "G2", "G3"],
+            "st": ["S1", "S1", "S2", "S2", "S3"],
+        }
+    )
+    app.state.transmission_df = pd.DataFrame(
+        {
+            "region_from": ["A", "B", "C", "D"],
+            "region_to": ["B", "C", "D", "E"],
+            "firm_ttc_mw": [100.0, 100.0, 100.0, 100.0],
+        }
+    )
+
+    selected_bas = {"A", "B", "C", "D", "E"}
+    model_regions, region_aggs, error, info = app.run_clustering(
+        selected_bas=selected_bas,
+        grouping_column="grp",
+        target_regions=3,
+        no_cluster_groups=["G3"],
+        force_cluster_groups=["G1"],
+        method="hierarchical-sum",
+    )
+
+    assert error is None
+
+    # All five BAs must appear exactly once
+    all_output_bas = [ba for bas in region_aggs.values() for ba in bas]
+    assert sorted(all_output_bas) == ["A", "B", "C", "D", "E"]
+
+    # no_cluster constraint: E must be in its own singleton region
+    e_region = next(r for r, bas in region_aggs.items() if "E" in bas)
+    assert region_aggs[e_region] == ["E"], (
+        f"no_cluster failed: E's region {e_region!r} contains {region_aggs[e_region]}"
+    )
+
+    # force_cluster constraint: A and B must be in the same region
+    a_region = next(r for r, bas in region_aggs.items() if "A" in bas)
+    b_region = next(r for r, bas in region_aggs.items() if "B" in bas)
+    assert a_region == b_region, (
+        f"force_cluster failed: A→{a_region!r}, B→{b_region!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # 3. YAML Generation Tests
 # ---------------------------------------------------------------------------
