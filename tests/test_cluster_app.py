@@ -2223,6 +2223,5 @@ SingleRegion:
         assert len(state.manual_regions) == 10
 
 
-
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

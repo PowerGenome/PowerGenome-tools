@@ -1764,6 +1764,21 @@
                         </div>
                     </div>
 
+                    <div class="section" id="demandWeightSection">
+                        <label>Demand Weighting
+                            <span class="info-icon"
+                                data-tooltip="Boosts edge weights for low-demand BAs so they are merged into a neighbour rather than left as tiny standalone regions. 'Sqrt' gives a mild boost; 'Log' gives a stronger, non-linear boost for very small regions.">?</span>
+                        </label>
+                        <select id="demandWeightMethod">
+                            <option value="none" selected>None (transmission only)</option>
+                            <option value="demand-sqrt">Sqrt inverse demand (mild)</option>
+                            <option value="demand-log">Log inverse demand (aggressive)</option>
+                        </select>
+                        <div style="font-size: 11px; color: #666; margin-top: 4px;">
+                            Scales edge weights using annual demand to discourage tiny isolated regions.
+                        </div>
+                    </div>
+
                     <!-- Manual Region Definition UI -->
                     <div class="section" id="manualRegionSection" style="display: none;">
                         <label>Manual Region Definition</label>
@@ -2904,15 +2919,18 @@
             const fixedRow = document.getElementById('fixedTargetRow');
             const rangeRow = document.getElementById('rangeTargetRow');
             const methodSection = document.getElementById('clusteringMethodSection');
+            const demandSection = document.getElementById('demandWeightSection');
 
             if (checkbox.checked) {
                 fixedRow.style.display = 'none';
                 rangeRow.style.display = 'block';
                 if (methodSection) methodSection.style.display = 'none';
+                if (demandSection) demandSection.style.display = 'none';
             } else {
                 fixedRow.style.display = 'block';
                 rangeRow.style.display = 'none';
                 if (methodSection) methodSection.style.display = 'block';
+                if (demandSection) demandSection.style.display = 'block';
             }
         }
 
@@ -2944,7 +2962,7 @@
             // Show/hide relevant sections
             const clusteringSections = [
                 'groupingSection', 'esrSection', 'targetRegionsSection',
-                'clusteringMethodSection', 'noClusterSection', 'clusteringButtons'
+                'clusteringMethodSection', 'demandWeightSection', 'noClusterSection', 'clusteringButtons'
             ];
             const manualSections = ['manualRegionSection', 'manualButtons'];
 
