@@ -24,7 +24,7 @@ After cross-group edges are removed, some BAs inside the same group may be mutua
 
 To prevent this, the algorithm inserts **synthetic weak edges** to connect any disconnected components that share the same grouping value:
 
-* The synthetic edge weight is at most `min(10 MW, smallest real edge weight in the graph)`.
+* The synthetic edge weight is based on the smallest real edge weight within that same grouping group.
 * One synthetic edge is added per pair of adjacent disconnected components (chain linkage), so the number of additions is minimal.
 * These links are intentionally weak — they serve only to make the group traversable and should not meaningfully influence which BAs ultimately merge together.
 
