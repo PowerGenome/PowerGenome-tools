@@ -90,6 +90,8 @@ from visualization_utils import (
 # and _get_default_resource_modifiers().
 _BATTERY_DEFAULT_VAR_OM = 0.15
 _BATTERY_DEFAULT_VAR_OM_IN = 0.15
+# ATB does not include a WACC for batteries; use this default value (real).
+_BATTERY_DEFAULT_WACC = 0.05
 
 # Default new-build resources (ATB 2024, planning_year="all").
 # Sizes are taken from web/data/atb_size.json where available.
@@ -133,6 +135,7 @@ _DEFAULT_NEW_RESOURCES = [
         "size_mw": 60,
         "variable_o_m_mwh": _BATTERY_DEFAULT_VAR_OM,
         "variable_o_m_mwh_in": _BATTERY_DEFAULT_VAR_OM_IN,
+        "wacc_real": _BATTERY_DEFAULT_WACC,
         "planning_year": "all",
         "data_year": 2024,
     },
@@ -4198,9 +4201,12 @@ def update_mod_size_field_from_atb_size():
 
 
 def populate_default_battery_attributes():
-    """Auto-populate default battery O&M cost attributes in the override panel.
+    """Auto-populate default battery attributes in the override panel.
 
-    For battery storage with Lithium Ion, sets default values for:
+    For any battery/storage technology, sets default values for:
+    - WACC real (0–1): 0.05 (ATB does not provide a WACC for batteries)
+
+    For battery storage with Lithium Ion, also sets:
     - Variable O&M ($/MWh): 0.15
     - Variable O&M In ($/MWh): 0.15
 
@@ -4218,10 +4224,17 @@ def populate_default_battery_attributes():
     # Get default modifiers
     defaults = _get_default_resource_modifiers(tech, detail)
 
-    # Map ATB keys to input element IDs
+    # Map internal/ATB keys to input element IDs
     atb_key_to_element_id = {
+        "wacc_real": "atbOverrideWacc",
         "Var_OM_Cost_per_MWh": "atbOverrideVarOM",
         "Var_OM_Cost_per_MWh_In": "atbOverrideVarOMIn",
+    }
+    # Known default values used for clearing stale defaults when switching technology
+    _default_values = {
+        "wacc_real": str(_BATTERY_DEFAULT_WACC),
+        "Var_OM_Cost_per_MWh": "0.15",
+        "Var_OM_Cost_per_MWh_In": "0.15",
     }
 
     # First, clear any non-default values in battery fields
@@ -4229,7 +4242,10 @@ def populate_default_battery_attributes():
         elem = document.getElementById(elem_id)
         if elem and atb_key not in defaults:
             # Only clear if field is empty or contains a default value
-            if not elem.value or elem.value.strip() in ["", "0.15"]:
+            if not elem.value or elem.value.strip() in [
+                "",
+                _default_values.get(atb_key, ""),
+            ]:
                 elem.value = ""
 
     # Then populate fields that have defaults
@@ -5231,7 +5247,7 @@ def _get_default_resource_modifiers(technology, tech_detail):
     """Get default modifier values for a resource.
 
     Returns a dict with default attribute modifiers. Currently, utility-scale
-    battery storage gets variable O&M defaults.
+    battery storage gets variable O&M and WACC defaults.
 
     Args:
         technology: The technology name (e.g., "Utility-Scale Battery Storage")
@@ -5242,8 +5258,10 @@ def _get_default_resource_modifiers(technology, tech_detail):
     """
     defaults = {}
 
-    # Default variable O&M for battery storage
+    # Default attributes for battery storage
     if "battery" in technology.lower() or "storage" in technology.lower():
+        # ATB does not provide a WACC for batteries; use the default value.
+        defaults["wacc_real"] = _BATTERY_DEFAULT_WACC
         if "lithium" in tech_detail.lower():
             defaults["Var_OM_Cost_per_MWh"] = _BATTERY_DEFAULT_VAR_OM
             defaults["Var_OM_Cost_per_MWh_In"] = _BATTERY_DEFAULT_VAR_OM_IN

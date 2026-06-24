@@ -159,14 +159,16 @@ class TestGetDefaultResourceModifiers:
     """Test the _get_default_resource_modifiers function."""
 
     def test_battery_storage_lithium_gets_defaults(self, cluster_app):
-        """Utility-Scale Battery Storage with Lithium Ion gets default O&M values."""
+        """Utility-Scale Battery Storage with Lithium Ion gets default O&M and WACC values."""
         defaults = cluster_app._get_default_resource_modifiers(
             "Utility-Scale Battery Storage", "Lithium Ion"
         )
 
         assert isinstance(defaults, dict)
+        assert "wacc_real" in defaults
         assert "Var_OM_Cost_per_MWh" in defaults
         assert "Var_OM_Cost_per_MWh_In" in defaults
+        assert defaults["wacc_real"] == 0.05
         assert defaults["Var_OM_Cost_per_MWh"] == 0.15
         assert defaults["Var_OM_Cost_per_MWh_In"] == 0.15
 
@@ -176,6 +178,7 @@ class TestGetDefaultResourceModifiers:
             "utility-scale battery storage", "Lithium Ion"
         )
 
+        assert defaults["wacc_real"] == 0.05
         assert defaults["Var_OM_Cost_per_MWh"] == 0.15
         assert defaults["Var_OM_Cost_per_MWh_In"] == 0.15
 
@@ -185,6 +188,7 @@ class TestGetDefaultResourceModifiers:
             "UTILITY-SCALE BATTERY STORAGE", "Lithium Ion"
         )
 
+        assert defaults["wacc_real"] == 0.05
         assert defaults["Var_OM_Cost_per_MWh"] == 0.15
         assert defaults["Var_OM_Cost_per_MWh_In"] == 0.15
 
@@ -194,6 +198,7 @@ class TestGetDefaultResourceModifiers:
             "Utility-Scale Battery Storage", "lithium ion"
         )
 
+        assert defaults["wacc_real"] == 0.05
         assert defaults["Var_OM_Cost_per_MWh"] == 0.15
         assert defaults["Var_OM_Cost_per_MWh_In"] == 0.15
 
@@ -203,17 +208,26 @@ class TestGetDefaultResourceModifiers:
             "Utility-Scale Battery Storage", "LITHIUM ION"
         )
 
+        assert defaults["wacc_real"] == 0.05
         assert defaults["Var_OM_Cost_per_MWh"] == 0.15
         assert defaults["Var_OM_Cost_per_MWh_In"] == 0.15
 
-    def test_battery_without_lithium_no_defaults(self, cluster_app):
-        """Battery storage with non-lithium tech_detail gets no defaults."""
+    def test_battery_without_lithium_gets_wacc_default(self, cluster_app):
+        """Battery storage with non-lithium tech_detail still gets the WACC default.
+
+        ATB does not provide WACC for any battery technology, so the default applies
+        regardless of tech_detail.
+        """
         defaults = cluster_app._get_default_resource_modifiers(
             "Utility-Scale Battery Storage", "Lead Acid"
         )
 
         assert isinstance(defaults, dict)
-        assert len(defaults) == 0
+        assert "wacc_real" in defaults
+        assert defaults["wacc_real"] == 0.05
+        # No O&M defaults for non-lithium batteries
+        assert "Var_OM_Cost_per_MWh" not in defaults
+        assert "Var_OM_Cost_per_MWh_In" not in defaults
 
     def test_battery_with_mixed_case_lithium(self, cluster_app):
         """Works with mixed case lithium identifier."""
@@ -221,6 +235,7 @@ class TestGetDefaultResourceModifiers:
             "Utility-Scale Battery Storage", "LiThIuM IoN"
         )
 
+        assert defaults["wacc_real"] == 0.05
         assert defaults["Var_OM_Cost_per_MWh"] == 0.15
         assert defaults["Var_OM_Cost_per_MWh_In"] == 0.15
 
@@ -228,6 +243,7 @@ class TestGetDefaultResourceModifiers:
         """Generic 'Battery' technology with lithium gets defaults."""
         defaults = cluster_app._get_default_resource_modifiers("Battery", "Lithium Ion")
 
+        assert defaults["wacc_real"] == 0.05
         assert defaults["Var_OM_Cost_per_MWh"] == 0.15
         assert defaults["Var_OM_Cost_per_MWh_In"] == 0.15
 
@@ -251,6 +267,7 @@ class TestGetDefaultResourceModifiers:
             "Energy Storage", "Lithium Ion"
         )
 
+        assert defaults["wacc_real"] == 0.05
         assert defaults["Var_OM_Cost_per_MWh"] == 0.15
         assert defaults["Var_OM_Cost_per_MWh_In"] == 0.15
 
@@ -403,11 +420,14 @@ class TestBuildSettingsYamlResourceModifiers:
                 break
 
         assert battery_mod is not None
+        assert battery_mod.get("wacc_real") == 0.05
         assert battery_mod.get("Var_OM_Cost_per_MWh") == 0.15
         assert battery_mod.get("Var_OM_Cost_per_MWh_In") == 0.15
 
-    def test_battery_without_lithium_no_defaults_in_modifiers(self, cluster_app):
-        """Battery storage without lithium doesn't get default O&M values."""
+    def test_battery_without_lithium_gets_wacc_but_no_om_defaults_in_modifiers(
+        self, cluster_app
+    ):
+        """Battery storage without lithium gets WACC default but not O&M defaults."""
         cluster_app.state.new_resources = [
             _make_resource(
                 tech="Utility-Scale Battery Storage",
@@ -445,7 +465,8 @@ class TestBuildSettingsYamlResourceModifiers:
                 break
 
         assert battery_mod is not None
-        # Should have tech/detail but not O&M defaults
+        # Should have WACC default but not O&M defaults
+        assert battery_mod.get("wacc_real") == 0.05
         assert "Var_OM_Cost_per_MWh" not in battery_mod
         assert "Var_OM_Cost_per_MWh_In" not in battery_mod
 

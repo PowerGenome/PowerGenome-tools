@@ -117,6 +117,7 @@ EXPECTED_ENTRIES = [
         "size_mw": 60,
         "variable_o_m_mwh": 0.15,
         "variable_o_m_mwh_in": 0.15,
+        "wacc_real": 0.05,
         "planning_year": "all",
     },
     {
@@ -136,7 +137,7 @@ REQUIRED_KEYS = {
     "planning_year",
     "data_year",
 }
-BATTERY_OPTIONAL_KEYS = {"variable_o_m_mwh", "variable_o_m_mwh_in"}
+BATTERY_OPTIONAL_KEYS = {"variable_o_m_mwh", "variable_o_m_mwh_in", "wacc_real"}
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +173,7 @@ class TestDefaultNewResourcesConstant:
                 assert extra_battery_keys == BATTERY_OPTIONAL_KEYS
                 assert entry["variable_o_m_mwh"] == 0.15
                 assert entry["variable_o_m_mwh_in"] == 0.15
+                assert entry["wacc_real"] == 0.05
             else:
                 assert (
                     not extra_battery_keys
@@ -337,6 +339,7 @@ class TestNewResourcesListRendering:
                 "size_mw": 60,
                 "variable_o_m_mwh": 0.15,
                 "variable_o_m_mwh_in": 0.15,
+                "wacc_real": 0.05,
                 "planning_year": "all",
             }
         ]
@@ -346,6 +349,7 @@ class TestNewResourcesListRendering:
 
         assert "variable_o_m_mwh=0.15" in container.innerHTML
         assert "variable_o_m_mwh_in=0.15" in container.innerHTML
+        assert "wacc_real=0.05" in container.innerHTML
         assert "background-color: #fff3cd;" in container.innerHTML
 
     def test_regular_resource_capex_override_renders_in_resource_list(
