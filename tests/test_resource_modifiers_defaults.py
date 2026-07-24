@@ -159,14 +159,16 @@ class TestGetDefaultResourceModifiers:
     """Test the _get_default_resource_modifiers function."""
 
     def test_battery_storage_lithium_gets_defaults(self, cluster_app):
-        """Utility-Scale Battery Storage with Lithium Ion gets default O&M values."""
+        """Utility-Scale Battery Storage with Lithium Ion gets default O&M and WACC values."""
         defaults = cluster_app._get_default_resource_modifiers(
             "Utility-Scale Battery Storage", "Lithium Ion"
         )
 
         assert isinstance(defaults, dict)
+        assert "wacc_real" in defaults
         assert "Var_OM_Cost_per_MWh" in defaults
         assert "Var_OM_Cost_per_MWh_In" in defaults
+        assert defaults["wacc_real"] == 0.05
         assert defaults["Var_OM_Cost_per_MWh"] == 0.15
         assert defaults["Var_OM_Cost_per_MWh_In"] == 0.15
 
@@ -176,6 +178,7 @@ class TestGetDefaultResourceModifiers:
             "utility-scale battery storage", "Lithium Ion"
         )
 
+        assert defaults["wacc_real"] == 0.05
         assert defaults["Var_OM_Cost_per_MWh"] == 0.15
         assert defaults["Var_OM_Cost_per_MWh_In"] == 0.15
 
@@ -185,6 +188,7 @@ class TestGetDefaultResourceModifiers:
             "UTILITY-SCALE BATTERY STORAGE", "Lithium Ion"
         )
 
+        assert defaults["wacc_real"] == 0.05
         assert defaults["Var_OM_Cost_per_MWh"] == 0.15
         assert defaults["Var_OM_Cost_per_MWh_In"] == 0.15
 
@@ -194,6 +198,7 @@ class TestGetDefaultResourceModifiers:
             "Utility-Scale Battery Storage", "lithium ion"
         )
 
+        assert defaults["wacc_real"] == 0.05
         assert defaults["Var_OM_Cost_per_MWh"] == 0.15
         assert defaults["Var_OM_Cost_per_MWh_In"] == 0.15
 
@@ -203,17 +208,26 @@ class TestGetDefaultResourceModifiers:
             "Utility-Scale Battery Storage", "LITHIUM ION"
         )
 
+        assert defaults["wacc_real"] == 0.05
         assert defaults["Var_OM_Cost_per_MWh"] == 0.15
         assert defaults["Var_OM_Cost_per_MWh_In"] == 0.15
 
-    def test_battery_without_lithium_no_defaults(self, cluster_app):
-        """Battery storage with non-lithium tech_detail gets no defaults."""
+    def test_battery_without_lithium_gets_wacc_default(self, cluster_app):
+        """Battery storage with non-lithium tech_detail still gets the WACC default.
+
+        ATB does not provide WACC for any battery technology, so the default applies
+        regardless of tech_detail.
+        """
         defaults = cluster_app._get_default_resource_modifiers(
             "Utility-Scale Battery Storage", "Lead Acid"
         )
 
         assert isinstance(defaults, dict)
-        assert len(defaults) == 0
+        assert "wacc_real" in defaults
+        assert defaults["wacc_real"] == 0.05
+        # No O&M defaults for non-lithium batteries
+        assert "Var_OM_Cost_per_MWh" not in defaults
+        assert "Var_OM_Cost_per_MWh_In" not in defaults
 
     def test_battery_with_mixed_case_lithium(self, cluster_app):
         """Works with mixed case lithium identifier."""
@@ -221,6 +235,7 @@ class TestGetDefaultResourceModifiers:
             "Utility-Scale Battery Storage", "LiThIuM IoN"
         )
 
+        assert defaults["wacc_real"] == 0.05
         assert defaults["Var_OM_Cost_per_MWh"] == 0.15
         assert defaults["Var_OM_Cost_per_MWh_In"] == 0.15
 
@@ -228,6 +243,7 @@ class TestGetDefaultResourceModifiers:
         """Generic 'Battery' technology with lithium gets defaults."""
         defaults = cluster_app._get_default_resource_modifiers("Battery", "Lithium Ion")
 
+        assert defaults["wacc_real"] == 0.05
         assert defaults["Var_OM_Cost_per_MWh"] == 0.15
         assert defaults["Var_OM_Cost_per_MWh_In"] == 0.15
 
@@ -245,14 +261,28 @@ class TestGetDefaultResourceModifiers:
         assert isinstance(defaults, dict)
         assert len(defaults) == 0
 
-    def test_storage_technology_with_lithium(self, cluster_app):
-        """Generic 'Storage' technology with lithium gets defaults."""
+    def test_energy_storage_technology_with_lithium(self, cluster_app):
+        """'Energy Storage' technology with lithium gets defaults."""
         defaults = cluster_app._get_default_resource_modifiers(
             "Energy Storage", "Lithium Ion"
         )
 
+        assert defaults["wacc_real"] == 0.05
         assert defaults["Var_OM_Cost_per_MWh"] == 0.15
         assert defaults["Var_OM_Cost_per_MWh_In"] == 0.15
+
+    def test_pumped_hydro_storage_gets_no_defaults(self, cluster_app):
+        """Pumped hydro storage does not get battery defaults.
+
+        The predicate only matches 'battery' or 'energy storage', not generic
+        'storage' technologies like pumped hydro.
+        """
+        defaults = cluster_app._get_default_resource_modifiers(
+            "Hydroelectric Pumped Storage", "Conventional"
+        )
+
+        assert isinstance(defaults, dict)
+        assert len(defaults) == 0
 
     def test_natural_gas_gets_no_defaults(self, cluster_app):
         """Natural gas resources get no defaults."""
@@ -403,11 +433,14 @@ class TestBuildSettingsYamlResourceModifiers:
                 break
 
         assert battery_mod is not None
+        assert battery_mod.get("wacc_real") == 0.05
         assert battery_mod.get("Var_OM_Cost_per_MWh") == 0.15
         assert battery_mod.get("Var_OM_Cost_per_MWh_In") == 0.15
 
-    def test_battery_without_lithium_no_defaults_in_modifiers(self, cluster_app):
-        """Battery storage without lithium doesn't get default O&M values."""
+    def test_battery_without_lithium_gets_wacc_but_no_om_defaults_in_modifiers(
+        self, cluster_app
+    ):
+        """Battery storage without lithium gets WACC default but not O&M defaults."""
         cluster_app.state.new_resources = [
             _make_resource(
                 tech="Utility-Scale Battery Storage",
@@ -445,7 +478,8 @@ class TestBuildSettingsYamlResourceModifiers:
                 break
 
         assert battery_mod is not None
-        # Should have tech/detail but not O&M defaults
+        # Should have WACC default but not O&M defaults
+        assert battery_mod.get("wacc_real") == 0.05
         assert "Var_OM_Cost_per_MWh" not in battery_mod
         assert "Var_OM_Cost_per_MWh_In" not in battery_mod
 
@@ -1192,6 +1226,8 @@ class TestPopulateDefaultBatteryAttributes:
         mock_var_om_el.value = ""
         mock_var_om_in_el = MagicMock()
         mock_var_om_in_el.value = ""
+        mock_wacc_el = MagicMock()
+        mock_wacc_el.value = ""
 
         # Mock getElementById
         original_get_elem = cluster_app.document.getElementById
@@ -1205,6 +1241,8 @@ class TestPopulateDefaultBatteryAttributes:
                 return mock_var_om_el
             elif elem_id == "atbOverrideVarOMIn":
                 return mock_var_om_in_el
+            elif elem_id == "atbOverrideWacc":
+                return mock_wacc_el
             return original_get_elem(elem_id)
 
         cluster_app.document.getElementById = mock_get_elem
@@ -1223,9 +1261,10 @@ class TestPopulateDefaultBatteryAttributes:
         # Verify defaults were populated
         assert mock_var_om_el.value == "0.15"
         assert mock_var_om_in_el.value == "0.15"
+        assert mock_wacc_el.value == "0.05"
 
     def test_non_battery_fields_cleared(self, cluster_app):
-        """Non-battery technologies have O&M fields cleared."""
+        """Non-battery technologies have battery fields cleared."""
         # Create mock DOM elements
         mock_tech_el = MagicMock()
         mock_tech_el.value = "NaturalGas"
@@ -1235,6 +1274,8 @@ class TestPopulateDefaultBatteryAttributes:
         mock_var_om_el.value = "0.15"  # Pre-filled from previous selection
         mock_var_om_in_el = MagicMock()
         mock_var_om_in_el.value = "0.15"
+        mock_wacc_el = MagicMock()
+        mock_wacc_el.value = "0.05"  # Pre-filled from previous battery selection
 
         # Mock getElementById
         original_get_elem = cluster_app.document.getElementById
@@ -1248,6 +1289,8 @@ class TestPopulateDefaultBatteryAttributes:
                 return mock_var_om_el
             elif elem_id == "atbOverrideVarOMIn":
                 return mock_var_om_in_el
+            elif elem_id == "atbOverrideWacc":
+                return mock_wacc_el
             return original_get_elem(elem_id)
 
         cluster_app.document.getElementById = mock_get_elem
@@ -1266,6 +1309,7 @@ class TestPopulateDefaultBatteryAttributes:
         # Verify fields were cleared (since non-battery tech has no defaults)
         assert mock_var_om_el.value == ""
         assert mock_var_om_in_el.value == ""
+        assert mock_wacc_el.value == ""
 
     def test_preserves_user_values(self, cluster_app):
         """User-entered values are not overwritten by defaults."""
@@ -1278,6 +1322,8 @@ class TestPopulateDefaultBatteryAttributes:
         mock_var_om_el.value = "0.25"  # User-specified value
         mock_var_om_in_el = MagicMock()
         mock_var_om_in_el.value = ""
+        mock_wacc_el = MagicMock()
+        mock_wacc_el.value = "0.08"  # User-specified WACC override
 
         # Mock getElementById
         original_get_elem = cluster_app.document.getElementById
@@ -1291,6 +1337,8 @@ class TestPopulateDefaultBatteryAttributes:
                 return mock_var_om_el
             elif elem_id == "atbOverrideVarOMIn":
                 return mock_var_om_in_el
+            elif elem_id == "atbOverrideWacc":
+                return mock_wacc_el
             return original_get_elem(elem_id)
 
         cluster_app.document.getElementById = mock_get_elem
@@ -1306,9 +1354,10 @@ class TestPopulateDefaultBatteryAttributes:
         # Call function
         cluster_app.populate_default_battery_attributes()
 
-        # User value should be preserved, other field should get default
+        # User values should be preserved, empty fields should get defaults
         assert mock_var_om_el.value == "0.25"
         assert mock_var_om_in_el.value == "0.15"
+        assert mock_wacc_el.value == "0.08"
 
     def test_case_insensitive_battery_detection(self, cluster_app):
         """Battery detection works with different capitalizations."""
@@ -1321,6 +1370,8 @@ class TestPopulateDefaultBatteryAttributes:
         mock_var_om_el.value = ""
         mock_var_om_in_el = MagicMock()
         mock_var_om_in_el.value = ""
+        mock_wacc_el = MagicMock()
+        mock_wacc_el.value = ""
 
         # Mock getElementById
         original_get_elem = cluster_app.document.getElementById
@@ -1334,6 +1385,8 @@ class TestPopulateDefaultBatteryAttributes:
                 return mock_var_om_el
             elif elem_id == "atbOverrideVarOMIn":
                 return mock_var_om_in_el
+            elif elem_id == "atbOverrideWacc":
+                return mock_wacc_el
             return original_get_elem(elem_id)
 
         cluster_app.document.getElementById = mock_get_elem
@@ -1352,3 +1405,52 @@ class TestPopulateDefaultBatteryAttributes:
         # Defaults should be populated despite case differences
         assert mock_var_om_el.value == "0.15"
         assert mock_var_om_in_el.value == "0.15"
+        assert mock_wacc_el.value == "0.05"
+
+    def test_wacc_populated_for_non_lithium_battery(self, cluster_app):
+        """WACC default is populated for battery storage even without lithium."""
+        # Create mock DOM elements for Lead Acid battery
+        mock_tech_el = MagicMock()
+        mock_tech_el.value = "Utility-Scale Battery Storage"
+        mock_detail_el = MagicMock()
+        mock_detail_el.value = "Lead Acid"  # Non-lithium battery
+        mock_var_om_el = MagicMock()
+        mock_var_om_el.value = ""
+        mock_var_om_in_el = MagicMock()
+        mock_var_om_in_el.value = ""
+        mock_wacc_el = MagicMock()
+        mock_wacc_el.value = ""
+
+        # Mock getElementById
+        original_get_elem = cluster_app.document.getElementById
+
+        def mock_get_elem(elem_id):
+            if elem_id == "atbTechSelect":
+                return mock_tech_el
+            elif elem_id == "atbTechDetailSelect":
+                return mock_detail_el
+            elif elem_id == "atbOverrideVarOM":
+                return mock_var_om_el
+            elif elem_id == "atbOverrideVarOMIn":
+                return mock_var_om_in_el
+            elif elem_id == "atbOverrideWacc":
+                return mock_wacc_el
+            return original_get_elem(elem_id)
+
+        cluster_app.document.getElementById = mock_get_elem
+
+        # Mock _get_select_value
+        def mock_get_select_value(elem, default):
+            if hasattr(elem, "value"):
+                return elem.value if elem.value else default
+            return default
+
+        cluster_app._get_select_value = mock_get_select_value
+
+        # Call function
+        cluster_app.populate_default_battery_attributes()
+
+        # WACC should be populated, but O&M should not (no lithium)
+        assert mock_wacc_el.value == "0.05"
+        assert mock_var_om_el.value == ""
+        assert mock_var_om_in_el.value == ""
