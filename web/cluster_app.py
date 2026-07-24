@@ -5258,8 +5258,10 @@ def _get_default_resource_modifiers(technology, tech_detail):
     """
     defaults = {}
 
-    # Default attributes for battery storage
-    if "battery" in technology.lower() or "storage" in technology.lower():
+    # Default attributes for battery storage (not pumped hydro or other storage types)
+    tech_lower = technology.lower()
+    is_battery_storage = "battery" in tech_lower or "energy storage" in tech_lower
+    if is_battery_storage:
         # ATB does not provide a WACC for batteries; use the default value.
         defaults["wacc_real"] = _BATTERY_DEFAULT_WACC
         if "lithium" in tech_detail.lower():
