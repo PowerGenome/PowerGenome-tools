@@ -1590,6 +1590,20 @@
                         <div class="welcome-link-desc">Full documentation for PowerGenome data processing</div>
                     </a>
                 </div>
+
+                <div class="section" style="margin-top: 20px;">
+                    <h3>Continue an Existing Workflow</h3>
+                    <p style="font-size: 12px; line-height: 1.5;">
+                        Upload the complete settings ZIP or its <code>workflow_state.yml</code> manifest
+                        to restore your editable defaults.
+                    </p>
+                    <input type="file" id="uploadWorkflowInput" accept=".zip,.yml,.yaml"
+                        aria-label="Upload workflow ZIP or workflow state manifest"
+                        style="width: 100%; margin-top: 6px;" />
+                    <div id="workflowImportHint" style="font-size: 11px; color: #666; margin-top: 6px;">
+                        A manifest that references supplemental files must be uploaded with the full ZIP.
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -3195,6 +3209,25 @@
 
         window.resetPlanningPeriodEditorForTests = function () {
             initializePlanningPeriodEditor();
+        };
+
+        window.restorePlanningPeriods = function (periods) {
+            const rowsContainer = document.getElementById('planningPeriodRows');
+            if (!rowsContainer) return;
+            rowsContainer.innerHTML = '';
+            const restored = Array.isArray(periods) ? periods : [];
+            restored.forEach(period => {
+                const start = period && period.period_start != null ? String(period.period_start) : '';
+                const year = period && period.planning_year != null ? String(period.planning_year) : '';
+                const row = addPlanningPeriodRow(start, year);
+                if (row && period && period.start_mode) {
+                    row.dataset.startMode = String(period.start_mode);
+                    row.dataset.autofillValue = String(period.autofill_value || '');
+                }
+            });
+            if (!restored.length) addPlanningPeriodRow('', '');
+            updatePlanningPeriodRowState();
+            syncPlanningPeriodInputs();
         };
 
         function validateModelYears() {
