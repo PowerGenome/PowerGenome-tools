@@ -279,6 +279,7 @@ state = AppState()
 
 
 SETTINGS_FILENAMES = [
+    "data.yml",
     "model_definition.yml",
     "resources.yml",
     "fuels.yml",
@@ -8274,8 +8275,41 @@ def generate_model_definition_settings():
     return yaml.dump(out, default_flow_style=False, sort_keys=False)
 
 
+def generate_data_settings():
+    """Generate the data file path and table-name template for PowerGenome."""
+    out = {
+        "input_folder": "extra_inputs",
+        "demand_segments_fn": "demand_segments_voll.csv",
+        "emission_policies_fn": "emission_policies.csv",
+        "RESOURCE_GROUPS": "path/to/resource/groups/folder",
+        "RESOURCE_GROUP_PROFILES": "path/to/resource/profiles/folder",
+        "data_location": [
+            "path/to/your/primary/data/folder",
+            "data",
+        ],
+        "generation_table": "reeds_generators_transformed.csv",
+        "plant_region_table": "plant_region_map.csv",
+        "resource_heat_rate_table": "technology_heat_rates_nrelatb.csv",
+        "resource_cost_table": "technology_costs_atb.parquet",
+        "operational_constraints_table": "operational_constraints_reeds.csv",
+        "transmission_constraints_table": "transmission_capacity_reeds.csv",
+        "fuel_price_table": "fuel_prices.parquet",
+        "dollar_year_table": "dollar_year_adjustment.csv",
+        "transmission_cost_table": _build_network_costs_filename(),
+        "demand_table": "reeds_load_transformed.parquet",
+        "regional_cost_factor_table": "regional_cost_multipliers.csv",
+        "distributed_capacity_table": "distributed_capacity.parquet",
+        "distributed_profile_table": "distributed_profiles.parquet",
+    }
+    return (
+        yaml.dump(out, default_flow_style=False, sort_keys=False)
+        + "\n# weather_year: 2012\n"
+    )
+
+
 def build_settings_yamls():
     result = {
+        "data.yml": generate_data_settings(),
         "model_definition.yml": generate_model_definition_settings(),
         "resources.yml": generate_resources_settings(),
         "fuels.yml": generate_fuels_settings(),
@@ -8840,7 +8874,7 @@ def on_download_all_settings(event):
     if state.network_costs_df is None:
         set_status(
             "Network cost calculation has not completed or was not run; "
-            "data/network_costs.csv is not included in the downloaded ZIP.",
+            "the generated network cost CSV is not included in the downloaded ZIP.",
             "warning",
         )
 

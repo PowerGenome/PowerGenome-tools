@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
+import yaml
 
 # ---------------------------------------------------------------------------
 # Fixture: load cluster_app with mocked browser globals
@@ -358,6 +359,44 @@ class TestOnDownloadAllSettings:
             "settings/extra_inputs.yaml",
             "extra_inputs/emission_policies.csv",
         }
+
+    def test_data_yaml_is_included_with_required_placeholders(self, cluster_app):
+        """data.yml is exported under settings/ with the ZIP's network-cost filename."""
+        cluster_app.state.region_aggregations = {"Region1": ["BA1"]}
+        cluster_app.state.current_grouping = "interconnect"
+        cluster_app.state.network_costs_df = pd.DataFrame(
+            {"region_from": ["Region1"], "region_to": ["Region1"], "cost": [0.0]}
+        )
+        network_costs_filename = cluster_app._build_network_costs_filename()
+        cluster_app.state.settings_yamls = {
+            "data.yml": cluster_app.generate_data_settings()
+        }
+        cluster_app.state.emission_policies_df = None
+        calls = _capture_zip_download(cluster_app)
+
+        cluster_app.on_download_all_settings(None)
+
+        with _open_zip_from_calls(calls) as zf:
+            assert set(zf.namelist()) == {
+                "settings/data.yml",
+                f"data/{network_costs_filename}",
+            }
+            exported_data = yaml.safe_load(zf.read("settings/data.yml"))
+
+        assert exported_data["input_folder"] == "extra_inputs"
+        assert exported_data["demand_segments_fn"] == "demand_segments_voll.csv"
+        assert exported_data["emission_policies_fn"] == "emission_policies.csv"
+        assert exported_data["RESOURCE_GROUPS"] == "path/to/resource/groups/folder"
+        assert (
+            exported_data["RESOURCE_GROUP_PROFILES"]
+            == "path/to/resource/profiles/folder"
+        )
+        assert exported_data["data_location"] == [
+            "path/to/your/primary/data/folder",
+            "data",
+        ]
+        assert exported_data["data_location"][-1] == "data"
+        assert exported_data["transmission_cost_table"] == network_costs_filename
 
     @pytest.mark.parametrize(
         "n_yamls,has_emissions",

@@ -1008,7 +1008,7 @@ The Export step generates complete PowerGenome settings files based on all previ
 
 ### Generated Files
 
-The app always generates these seven YAML files:
+The app generates these seven core YAML files:
 
 * `model_definition.yml` - Model regions, years, and financial settings
 * `resources.yml` - Existing plant clusters, new resources, resource attribute modifiers, and modified resources. Year-specific resources are embedded directly using year-keyed values (PowerGenome v0.8.0+ format).
@@ -1017,6 +1017,11 @@ The app always generates these seven YAML files:
 * `distributed_gen.yml` - Distributed generation settings
 * `resource_tags.yml` - Resource classification tags
 * `startup_costs.yml` - Startup cost parameters
+
+The **Download All** ZIP also includes `settings/data.yml`. This file is a
+starter template for the resource and data locations used by PowerGenome.
+Replace its placeholder resource/data paths with paths that match your local
+data installation before running a model.
 
 #### Download All ZIP Structure
 
@@ -1027,9 +1032,9 @@ When you click **Download All**, the ZIP archive contains:
 
 This includes:
 
-* `settings/*.yml` (always for core settings)
+* `settings/*.yml` (core settings plus the `data.yml` path template)
 * `extra_inputs/emission_policies.csv` (only when ESR policies are generated)
-* `data/network_costs.csv` (only when network costs were computed successfully)
+* `data/<generated network-cost filename>.csv` (only when network costs were computed successfully)
 
 #### Conditional ESR Policy File
 
@@ -1039,9 +1044,11 @@ If ESR policies are generated in Step 6, the export also includes:
 
 #### Conditional Network Cost File
 
-If network costs were computed after regions were finalized, the export also includes:
+If network costs were computed after regions were finalized, the export also includes
+a CSV whose descriptive filename is generated from the region count,
+interconnections, and grouping:
 
-* `network_costs.csv` - Region-to-region transmission proxy table (written to `data/` in **Download All**). See [Network Cost Calculation](network_costs.md).
+* `data/network_costs_<regions>r_<interconnections>_<grouping>.csv` - Region-to-region transmission proxy table. The generated filename is inserted into the ZIP under `data/`; use that filename when referencing the export. See [Network Cost Calculation](network_costs.md).
 
 ##### How Year-Specific Resources Work
 
@@ -1077,7 +1084,6 @@ resource_modifiers:
 
 The app intentionally **does not generate** these files (configure separately):
 
-* `data.yml`
 * `time_clustering.yml`
 * `demand.yml`
 

@@ -31,7 +31,7 @@ The web application guides you through a 9-step workflow to build complete Power
 
 8. **Renewables Clustering** - Build `renewables_clusters` settings from demand shares and LCOE data. Filter to the most cost-effective wind and solar sites to keep model size manageable while providing sufficient capacity options. Visualize supply curves to understand resource selection.
 
-9. **Export** - Generate and download complete PowerGenome settings YAML files, including `model_definition.yml`, `resources.yml`, `fuels.yml`, `transmission.yml`, and other configuration files ready for use with PowerGenome. When available, the Download All ZIP also includes `data/network_costs.csv`.
+9. **Export** - Generate and download complete PowerGenome settings YAML files, including `model_definition.yml`, `resources.yml`, `fuels.yml`, `transmission.yml`, and other configuration files ready for use with PowerGenome. The Download All ZIP also includes `settings/data.yml` (with customizable resource/data path placeholders) and, when available, a generated network-cost CSV under `data/`.
 
 ## Key Features
 
