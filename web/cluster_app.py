@@ -9228,6 +9228,94 @@ def _load_resource_group_lcoe_tables(resource_group_files):
     }
 
 
+async def _load_resource_group_lcoe_tables_async(resource_group_files):
+    """Read ZIP Parquet sources after loading a Pyodide parquet engine."""
+    parquet_files = [
+        (filename, payload)
+        for filename, payload in (resource_group_files or {}).items()
+        if str(filename).lower().endswith(".parquet")
+    ]
+    if not parquet_files:
+        return {}
+
+    parquet_ready = False
+    for package in ["pyarrow", "fastparquet"]:
+        try:
+            __import__(package)
+            parquet_ready = True
+            break
+        except ImportError:
+            try:
+                if await _load_pyodide_package(package):
+                    __import__(package)
+                    parquet_ready = True
+                    break
+            except Exception:
+                continue
+
+    if not parquet_ready:
+        set_renewables_status(
+            "Parquet LCOE files were found, but no parquet reader is available.",
+            "error",
+        )
+        return {}
+
+    parsed = {}
+    for filename, payload in parquet_files:
+        try:
+            parsed[filename] = pd.read_parquet(BytesIO(payload))
+        except Exception as exc:
+            set_renewables_status(
+                f"Could not read resource-group file {filename}: {exc}", "error"
+            )
+    normalized = {}
+    for filename, df in parsed.items():
+        lower = str(filename).lower()
+        tech = next(
+            (
+                value
+                for value, prefix in [
+                    ("onshorewind", "onshorewind_lcoe_"),
+                    ("solar", "solar_lcoe_"),
+                ]
+                if lower.startswith(prefix)
+            ),
+            None,
+        )
+        if tech is None:
+            continue
+        region_column = "model_region" if "model_region" in df.columns else "region"
+        capacity_column = "capacity_mw" if "capacity_mw" in df.columns else "cpa_mw"
+        required = {region_column, capacity_column, "cf", "lcoe"}
+        if not required <= set(df.columns):
+            continue
+        table = df[[region_column, capacity_column, "cf", "lcoe"]].copy()
+        table.columns = ["region", "cpa_mw", "cf", "lcoe"]
+        table.insert(0, "tech", tech)
+        normalized.setdefault(tech, []).append(table)
+    return {
+        tech: pd.concat(parts, ignore_index=True)
+        for tech, parts in normalized.items()
+        if parts
+    }
+
+
+async def _rebuild_imported_renewables(resource_group_files):
+    """Load imported renewable sources, then rebuild derived curves."""
+    if resource_group_files:
+        restored_lcoe = await _load_resource_group_lcoe_tables_async(
+            resource_group_files
+        )
+        if restored_lcoe:
+            tables = [table for table in restored_lcoe.values() if not table.empty]
+            state.resource_group_assignments = pd.concat(tables, ignore_index=True)
+            state.uploaded_lcoe_onshorewind = None
+            state.uploaded_lcoe_solar = None
+
+    if state.resource_group_assignments is not None:
+        await _compute_renewables_clusters()
+
+
 def _set_workflow_form_value(element_id, value):
     element = document.getElementById(element_id)
     if element is None or value is None:
@@ -9344,21 +9432,6 @@ def _restore_workflow_state(manifest, settings_yamls=None, resource_group_files=
     state.uploaded_lcoe_solar = _workflow_dataframe_from_payload(
         tables.get("uploaded_lcoe_solar"), "uploaded_lcoe_solar"
     )
-    restored_lcoe = _load_resource_group_lcoe_tables(resource_group_files)
-    if restored_lcoe:
-        assignments = [
-            table
-            for table in restored_lcoe.values()
-            if table is not None and not table.empty
-        ]
-        state.resource_group_assignments = (
-            pd.concat(assignments, ignore_index=True) if assignments else None
-        )
-        if "onshorewind" in restored_lcoe:
-            state.uploaded_lcoe_onshorewind = None
-        if "solar" in restored_lcoe:
-            state.uploaded_lcoe_solar = None
-
     # Rebuild dynamic controls and previews without invoking reset handlers.
     # Force grouping colors to be rebuilt for the imported grouping column.
     state.current_grouping = None
@@ -9405,8 +9478,10 @@ def _restore_workflow_state(manifest, settings_yamls=None, resource_group_files=
     # Renewable curves are derived from the restored source tables. Recompute
     # them asynchronously so importing a ZIP does not serialize large arrays
     # into the manifest or block the rest of the wizard from being restored.
-    if state.region_aggregations and state.resource_group_assignments is not None:
-        asyncio.create_task(_compute_renewables_clusters())
+    if state.region_aggregations and (
+        state.resource_group_assignments is not None or resource_group_files
+    ):
+        asyncio.create_task(_rebuild_imported_renewables(resource_group_files))
 
 
 def _import_workflow_bytes(data, filename):
