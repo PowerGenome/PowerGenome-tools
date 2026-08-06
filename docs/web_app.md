@@ -1110,6 +1110,12 @@ Every time you click **Download All**, the resulting ZIP archive automatically i
 * The full application state (selected BAs, region assignments, new resources, plant cluster settings, renewables clusters, ESR policies, network costs, resource group assignments, and pre-generated settings YAMLs)
 * References to any supplemental files—such as resource group files—that are stored in the ZIP alongside the manifest
 
+Renewable supply-curve arrays are an exception: they are **derived during workflow
+import** from the available renewable LCOE/resource data and are not stored in
+`workflow_state.yml`. The manifest stores the renewable cluster settings and
+capacity selections needed to restore the workflow, then the app rebuilds the
+curve arrays when the corresponding data is available.
+
 You do not need to take any extra steps to produce this manifest; it is always written into **Download All**.
 
 #### The `workflow_state.yml` Manifest Format
@@ -1139,6 +1145,14 @@ A "Continue an Existing Workflow" upload control appears on the app's main page.
 ##### When a standalone `workflow_state.yml` is enough
 
 If `required_supplemental_files` is empty in the manifest—meaning the workflow did not generate any resource group files—you can upload just the `workflow_state.yml` file on its own. The app will restore all form values and state without needing anything else.
+
+Because curve arrays are recalculated from source data, the imported curves are
+only reproducible when the available LCOE/resource files are consistent with
+those used when the workflow was exported. Changed resource-group inputs,
+different LCOE files, or changed region assignments can produce different
+curves and capacity limits. If the required source data is unavailable, the
+workflow settings can still be restored, but supply-curve arrays are not
+available until the data is supplied and renewables clusters are recomputed.
 
 ##### When you must upload the full ZIP
 

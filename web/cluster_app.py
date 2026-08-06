@@ -9058,14 +9058,9 @@ def build_workflow_state_manifest():
         "esr_policy_states": state.esr_policy_states,
         "esr_rps_techs": state.esr_rps_techs,
         "esr_ces_techs": state.esr_ces_techs,
-        "renewables_clusters": state.renewables_clusters,
-        "renewables_clusters_info": state.renewables_clusters_info,
-        "renewables_region_capacity_mw": state.renewables_region_capacity_mw,
-        "renewables_region_base_capacity_mw": state.renewables_region_base_capacity_mw,
-        "renewables_pending_region_capacity_mw": state.renewables_pending_region_capacity_mw,
-        "renewables_region_available_mw": state.renewables_region_available_mw,
+        # Curves and their summaries are derived from the restored LCOE data,
+        # demand data, and the user-controlled renewable inputs below.
         "renewables_capacity_overrides_mw": state.renewables_capacity_overrides_mw,
-        "renewables_curve_data": state.renewables_curve_data,
         "renewables_selected_region": state.renewables_selected_region,
         "renewables_selected_tech": state.renewables_selected_tech,
         "show_transmission_lines": state.show_transmission_lines,
@@ -9254,21 +9249,16 @@ def _restore_workflow_state(manifest, settings_yamls=None, resource_group_files=
     )
     state.esr_rps_techs = set(state_payload.get("esr_rps_techs") or [])
     state.esr_ces_techs = set(state_payload.get("esr_ces_techs") or [])
-    for attr in (
-        "renewables_clusters",
-        "renewables_clusters_info",
-        "renewables_region_capacity_mw",
-        "renewables_region_base_capacity_mw",
-        "renewables_pending_region_capacity_mw",
-        "renewables_region_available_mw",
-        "renewables_capacity_overrides_mw",
-        "renewables_curve_data",
-    ):
-        setattr(
-            state,
-            attr,
-            state_payload.get(attr) or ({} if attr != "renewables_clusters" else None),
-        )
+    state.renewables_clusters = None
+    state.renewables_clusters_info = None
+    state.renewables_region_capacity_mw = {}
+    state.renewables_region_base_capacity_mw = {}
+    state.renewables_pending_region_capacity_mw = {}
+    state.renewables_region_available_mw = {}
+    state.renewables_curve_data = {}
+    state.renewables_capacity_overrides_mw = dict(
+        state_payload.get("renewables_capacity_overrides_mw") or {}
+    )
     state.renewables_selected_region = state_payload.get("renewables_selected_region")
     state.renewables_selected_tech = state_payload.get(
         "renewables_selected_tech", "landbasedwind"
@@ -9340,6 +9330,12 @@ def _restore_workflow_state(manifest, settings_yamls=None, resource_group_files=
     _render_renewables_preview()
     _render_renewables_advanced_panel()
     set_status("Workflow defaults imported successfully.", "success")
+
+    # Renewable curves are derived from the restored source tables. Recompute
+    # them asynchronously so importing a ZIP does not serialize large arrays
+    # into the manifest or block the rest of the wizard from being restored.
+    if state.region_aggregations and state.resource_group_assignments is not None:
+        asyncio.create_task(_compute_renewables_clusters())
 
 
 def _import_workflow_bytes(data, filename):

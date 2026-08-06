@@ -656,3 +656,307 @@ class TestStateRoundTrip:
         )
 
         assert cluster_app.state.resource_group_files.get("groups.json") == grp_bytes
+
+
+# ---------------------------------------------------------------------------
+# Manifest omits derived renewables_curve_data
+# ---------------------------------------------------------------------------
+
+
+class TestManifestOmitsDerivedRenewablesCurveData:
+    """Verify that build_workflow_state_manifest never serialises
+    renewables_curve_data (a runtime-derived cache) into the manifest.
+
+    The contract is:
+      * manifest["state"] must NOT contain a 'renewables_curve_data' key.
+      * manifest["tables"] must NOT contain a 'renewables_curve_data' key.
+
+    This is intentional: the curve data is large and is always recomputed from
+    the uploaded LCOE tables / resource-group assignments after import.
+    """
+
+    def _setup_state_with_curve_data(self, ca):
+        """Populate state with pre-computed renewables_curve_data so that if the
+        manifest builder accidentally serialises it the tests will catch it."""
+        ca.state.renewables_curve_data = {
+            "landbasedwind": {
+                "RegionA": {
+                    "cum_capacity": [0.0, 100.0, 200.0],
+                    "lcoe": [30.0, 35.0, 42.0],
+                    "lcoe_max": 42.0,
+                }
+            },
+            "utilitypv": {
+                "RegionB": {
+                    "cum_capacity": [0.0, 50.0],
+                    "lcoe": [25.0, 28.0],
+                    "lcoe_max": 28.0,
+                }
+            },
+        }
+        ca.state.settings_yamls = {"model_definition.yml": "x: 1\n"}
+        ca.state.emission_policies_df = None
+        ca.state.resource_group_files = {}
+
+    def test_build_manifest_state_has_no_renewables_curve_data(self, cluster_app):
+        """build_workflow_state_manifest must not include renewables_curve_data
+        in the 'state' section even when state holds populated curve data."""
+        self._setup_state_with_curve_data(cluster_app)
+        manifest = cluster_app.build_workflow_state_manifest()
+        assert "renewables_curve_data" not in manifest["state"], (
+            "manifest['state'] must not contain 'renewables_curve_data'; "
+            "curve data is always recalculated on import."
+        )
+
+    def test_build_manifest_tables_has_no_renewables_curve_data(self, cluster_app):
+        """build_workflow_state_manifest must not include renewables_curve_data
+        in the 'tables' section even when state holds populated curve data."""
+        self._setup_state_with_curve_data(cluster_app)
+        manifest = cluster_app.build_workflow_state_manifest()
+        assert (
+            "renewables_curve_data" not in manifest["tables"]
+        ), "manifest['tables'] must not contain 'renewables_curve_data'."
+
+    def test_exported_zip_manifest_state_has_no_renewables_curve_data(
+        self, cluster_app
+    ):
+        """The workflow_state.yml embedded in the exported ZIP must not carry
+        renewables_curve_data in its 'state' mapping."""
+        self._setup_state_with_curve_data(cluster_app)
+        calls = _capture_zip_download(cluster_app)
+        cluster_app.on_download_all_settings(None)
+
+        buf = BytesIO(calls[0]["payload_bytes"])
+        with zipfile.ZipFile(buf) as zf:
+            manifest = yaml.safe_load(zf.read("workflow_state.yml"))
+
+        assert (
+            "renewables_curve_data" not in manifest["state"]
+        ), "Exported ZIP manifest must omit renewables_curve_data from 'state'."
+
+    def test_exported_zip_manifest_tables_has_no_renewables_curve_data(
+        self, cluster_app
+    ):
+        """The workflow_state.yml embedded in the exported ZIP must not carry
+        renewables_curve_data in its 'tables' mapping."""
+        self._setup_state_with_curve_data(cluster_app)
+        calls = _capture_zip_download(cluster_app)
+        cluster_app.on_download_all_settings(None)
+
+        buf = BytesIO(calls[0]["payload_bytes"])
+        with zipfile.ZipFile(buf) as zf:
+            manifest = yaml.safe_load(zf.read("workflow_state.yml"))
+
+        assert (
+            "renewables_curve_data" not in manifest["tables"]
+        ), "Exported ZIP manifest must omit renewables_curve_data from 'tables'."
+
+    def test_uploaded_lcoe_onshorewind_is_persisted_in_tables(self, cluster_app):
+        """Uploaded LCOE data (the source from which curves are derived) IS
+        serialised under tables so it survives the round-trip."""
+        import pandas as pd
+
+        self._setup_state_with_curve_data(cluster_app)
+        cluster_app.state.uploaded_lcoe_onshorewind = pd.DataFrame(
+            {
+                "region": ["RegionA", "RegionA"],
+                "cpa_mw": [100.0, 150.0],
+                "cf": [0.35, 0.38],
+                "lcoe": [30.0, 35.0],
+            }
+        )
+        manifest = cluster_app.build_workflow_state_manifest()
+        tables = manifest["tables"]
+        assert (
+            "uploaded_lcoe_onshorewind" in tables
+        ), "uploaded_lcoe_onshorewind source table must appear in manifest tables."
+        assert tables["uploaded_lcoe_onshorewind"] is not None
+        cluster_app.state.uploaded_lcoe_onshorewind = None  # clean up
+
+    def test_resource_group_assignments_is_persisted_in_tables(self, cluster_app):
+        """resource_group_assignments (the other LCOE source) IS serialised
+        under tables so that curves can be recomputed on import."""
+        import pandas as pd
+
+        self._setup_state_with_curve_data(cluster_app)
+        cluster_app.state.resource_group_assignments = pd.DataFrame(
+            {
+                "tech": ["landbasedwind"],
+                "model_region": ["RegionA"],
+                "cpa_mw": [100.0],
+                "cf": [0.35],
+                "lcoe": [30.0],
+            }
+        )
+        manifest = cluster_app.build_workflow_state_manifest()
+        tables = manifest["tables"]
+        assert (
+            "resource_group_assignments" in tables
+        ), "resource_group_assignments source table must appear in manifest tables."
+        assert tables["resource_group_assignments"] is not None
+        cluster_app.state.resource_group_assignments = None  # clean up
+
+
+# ---------------------------------------------------------------------------
+# Import resets renewables_curve_data and triggers recompute
+# ---------------------------------------------------------------------------
+
+
+class TestImportResetsAndRecomputesCurveData:
+    """After _restore_workflow_state the runtime cache renewables_curve_data
+    must be cleared to {}, and the async recompute must be scheduled whenever
+    the source data (resource_group_assignments) is available.
+
+    We do not test the async coroutine itself because asyncio.create_task
+    requires a running event loop; instead we verify:
+      1. renewables_curve_data is reset to {} immediately after restore.
+      2. uploaded LCOE DataFrames are attached to state so the recompute
+         path has the data it needs.
+    """
+
+    _COLORS = ["#111111", "#222222", "#333333", "#444444"]
+
+    def _make_manifest_with_lcoe_table(self, ca):
+        """Return a minimal manifest that carries an uploaded_lcoe_onshorewind
+        table payload, simulating a workflow that had LCOE data before export."""
+        import pandas as pd
+
+        df = pd.DataFrame(
+            {
+                "region": ["RegionA", "RegionA"],
+                "cpa_mw": [100.0, 200.0],
+                "cf": [0.30, 0.35],
+                "lcoe": [30.0, 36.0],
+            }
+        )
+        # Use the app's own helper to produce the payload dict
+        payload = ca._workflow_dataframe_payload(df)
+        return _minimal_manifest(
+            tables={
+                "uploaded_lcoe_onshorewind": payload,
+                "uploaded_lcoe_solar": None,
+                "emission_policies": None,
+                "network_costs": None,
+                "resource_group_assignments": None,
+            }
+        )
+
+    def test_restore_clears_renewables_curve_data(self, cluster_app):
+        """renewables_curve_data must be reset to {} when a workflow is restored,
+        regardless of what was in state before the import."""
+        cluster_app.CLUSTER_COLORS = self._COLORS
+        # Pre-populate curve data to simulate a session that had already computed curves
+        cluster_app.state.renewables_curve_data = {
+            "landbasedwind": {"OldRegion": {"cum_capacity": [0, 100], "lcoe": [30, 40]}}
+        }
+        m = _minimal_manifest()
+        cluster_app._restore_workflow_state(m)
+        assert cluster_app.state.renewables_curve_data == {}, (
+            "renewables_curve_data must be cleared to {} on restore so the "
+            "recompute path runs clean."
+        )
+
+    def test_restore_from_zip_clears_renewables_curve_data(self, cluster_app):
+        """ZIP import must also reset renewables_curve_data to {}."""
+        cluster_app.CLUSTER_COLORS = self._COLORS
+        cluster_app.state.renewables_curve_data = {"utilitypv": {"R": {}}}
+        m = _minimal_manifest()
+        data = _build_zip({"workflow_state.yml": _manifest_bytes(m)})
+        cluster_app._import_workflow_bytes(data, "export.zip")
+        assert cluster_app.state.renewables_curve_data == {}
+
+    def test_restore_attaches_uploaded_lcoe_onshorewind_for_recompute(
+        self, cluster_app
+    ):
+        """After restoring a manifest that carries uploaded_lcoe_onshorewind,
+        state.uploaded_lcoe_onshorewind must be a non-None DataFrame so the
+        subsequent async recompute has access to the LCOE source data."""
+        cluster_app.CLUSTER_COLORS = self._COLORS
+        m = self._make_manifest_with_lcoe_table(cluster_app)
+        cluster_app._restore_workflow_state(m)
+        result = cluster_app.state.uploaded_lcoe_onshorewind
+        assert result is not None, (
+            "uploaded_lcoe_onshorewind must be restored from manifest tables "
+            "so that _compute_renewables_clusters can recompute curve data."
+        )
+        assert list(result.columns) == ["region", "cpa_mw", "cf", "lcoe"] or set(
+            result.columns
+        ) >= {
+            "region",
+            "cpa_mw",
+            "cf",
+            "lcoe",
+        }, "Restored LCOE DataFrame must include 'region', 'cpa_mw', 'cf', 'lcoe' columns."
+
+    def test_restore_attaches_resource_group_assignments_for_recompute(
+        self, cluster_app
+    ):
+        """If the manifest tables carry resource_group_assignments, the restored
+        state must make it available for the async recompute."""
+        import pandas as pd
+
+        cluster_app.CLUSTER_COLORS = self._COLORS
+        df = pd.DataFrame(
+            {
+                "tech": ["landbasedwind", "landbasedwind"],
+                "model_region": ["RegionA", "RegionA"],
+                "cpa_mw": [80.0, 120.0],
+                "cf": [0.32, 0.36],
+                "lcoe": [28.0, 33.0],
+            }
+        )
+        payload = cluster_app._workflow_dataframe_payload(df)
+        m = _minimal_manifest(
+            tables={
+                "resource_group_assignments": payload,
+                "uploaded_lcoe_onshorewind": None,
+                "uploaded_lcoe_solar": None,
+                "emission_policies": None,
+                "network_costs": None,
+            }
+        )
+        cluster_app._restore_workflow_state(m)
+        result = cluster_app.state.resource_group_assignments
+        assert result is not None, (
+            "resource_group_assignments must be restored from manifest tables "
+            "so that _compute_renewables_clusters can recompute curve data."
+        )
+        assert {"tech", "model_region", "lcoe"} <= set(
+            result.columns
+        ), "Restored resource_group_assignments must include tech, model_region, lcoe."
+
+    def test_manifest_state_section_does_not_carry_stale_curve_data_after_roundtrip(
+        self, cluster_app
+    ):
+        """Full export → parse manifest → re-examine: stale curves must not
+        appear in the manifest's 'state' section even after state held them."""
+        import pandas as pd
+
+        cluster_app.CLUSTER_COLORS = self._COLORS
+        cluster_app.state.renewables_curve_data = {
+            "landbasedwind": {"RegionX": {"cum_capacity": [0], "lcoe": [50]}}
+        }
+        cluster_app.state.settings_yamls = {"m.yml": "x: 1\n"}
+        cluster_app.state.emission_policies_df = None
+        cluster_app.state.resource_group_files = {}
+        cluster_app.state.uploaded_lcoe_onshorewind = pd.DataFrame(
+            {"region": ["RegionX"], "cpa_mw": [100.0], "cf": [0.3], "lcoe": [50.0]}
+        )
+        calls = _capture_zip_download(cluster_app)
+        cluster_app.on_download_all_settings(None)
+        cluster_app.state.uploaded_lcoe_onshorewind = None
+
+        # Parse the exported manifest
+        buf = BytesIO(calls[0]["payload_bytes"])
+        with zipfile.ZipFile(buf) as zf:
+            manifest = yaml.safe_load(zf.read("workflow_state.yml"))
+
+        # Restore from the parsed manifest into a clean state
+        cluster_app.state.renewables_curve_data = {}
+        cluster_app._restore_workflow_state(manifest)
+
+        # Curve data must not come back through the manifest; only {} is valid here
+        assert cluster_app.state.renewables_curve_data == {}, (
+            "After round-trip import the curve data must be {} because the manifest "
+            "omits it; the recompute path fills it later asynchronously."
+        )
