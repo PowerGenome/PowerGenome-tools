@@ -972,12 +972,39 @@ class TestImportResetsAndRecomputesCurveData:
 
         assert list(restored["onshorewind"].columns) == [
             "tech",
-            "region",
+            "model_region",
             "cpa_mw",
             "cf",
             "lcoe",
         ]
         assert restored["onshorewind"].iloc[0]["tech"] == "onshorewind"
+
+    def test_rebuilt_assignments_feed_lcoe_loader(self, cluster_app):
+        """The reconstructed assignments table must satisfy the column contract
+        that _load_resource_group_lcoe_df enforces (tech/model_region/...)."""
+        import pandas as pd
+
+        source = pd.DataFrame(
+            {
+                "model_region": ["RegionA"],
+                "capacity_mw": [100.0],
+                "cf": [0.35],
+                "lcoe": [30.0],
+            }
+        )
+        cluster_app.pd.read_parquet = lambda _: source.copy()
+        restored = cluster_app._load_resource_group_lcoe_tables(
+            {"onshorewind_lcoe_RegionA.parquet": b"ignored"}
+        )
+        cluster_app.state.resource_group_assignments = pd.concat(
+            list(restored.values()), ignore_index=True
+        )
+
+        df = cluster_app._load_resource_group_lcoe_df("onshorewind")
+
+        assert df is not None
+        assert list(df.columns) == ["region", "capacity_mw", "cf", "lcoe"]
+        assert df.iloc[0]["region"] == "RegionA"
 
     def test_manifest_state_section_does_not_carry_stale_curve_data_after_roundtrip(
         self, cluster_app

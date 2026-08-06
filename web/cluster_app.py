@@ -9218,7 +9218,8 @@ def _load_resource_group_lcoe_tables(resource_group_files):
         if not required <= set(df.columns):
             continue
         table = df[[region_column, capacity_column, "cf", "lcoe"]].copy()
-        table.columns = ["region", "cpa_mw", "cf", "lcoe"]
+        # _load_resource_group_lcoe_df expects model_region/cpa_mw column names.
+        table.columns = ["model_region", "cpa_mw", "cf", "lcoe"]
         table.insert(0, "tech", tech)
         tables.setdefault(tech, []).append(table)
     return {
@@ -9290,7 +9291,8 @@ async def _load_resource_group_lcoe_tables_async(resource_group_files):
         if not required <= set(df.columns):
             continue
         table = df[[region_column, capacity_column, "cf", "lcoe"]].copy()
-        table.columns = ["region", "cpa_mw", "cf", "lcoe"]
+        # _load_resource_group_lcoe_df expects model_region/cpa_mw column names.
+        table.columns = ["model_region", "cpa_mw", "cf", "lcoe"]
         table.insert(0, "tech", tech)
         normalized.setdefault(tech, []).append(table)
     return {
