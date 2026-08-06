@@ -202,4 +202,19 @@ test.describe('Workflow import — standalone workflow_state.yml', () => {
         await page.locator('#welcomeOverlay').getByLabel('Close welcome dialog').click();
         await expect(page.locator('#welcomeOverlay')).toHaveClass(/hidden/);
     });
+
+    test('welcome dialog presents workflow import as the primary entry point with loading feedback', async ({ page }) => {
+        await loadApp(page, 60_000);
+
+        await page.evaluate(() => {
+            document.getElementById('welcomeOverlay')?.classList.remove('hidden');
+        });
+        const card = page.locator('.workflow-import-card');
+        await expect(card).toBeVisible();
+        await expect(card).toContainText('Continue an Existing Workflow');
+        await expect(page.locator('.development-warning')).toBeVisible();
+        await expect(page.locator('#workflowImportProgress')).toHaveAttribute('role', 'status');
+        await expect(page.locator('#workflowImportProgressMessage')).toHaveText('Loading workflow state...');
+        await expect(page.locator('#workflowImportProgress')).not.toHaveClass(/visible/);
+    });
 });

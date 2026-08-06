@@ -9365,6 +9365,13 @@ async def _read_uploaded_workflow_file(event):
         return
     file_obj = files.item(0)
     filename = file_obj.name
+    progress = document.getElementById("workflowImportProgress")
+    progress_message = document.getElementById("workflowImportProgressMessage")
+    if progress:
+        progress.classList.add("visible")
+        progress.setAttribute("aria-hidden", "false")
+    if progress_message:
+        progress_message.textContent = f"Loading workflow state from {filename}..."
     set_status(f"Importing workflow defaults from {filename}...", "info")
     try:
         array_buffer = await file_obj.arrayBuffer()
@@ -9379,6 +9386,10 @@ async def _read_uploaded_workflow_file(event):
         set_status(f"Workflow import error: {exc}", "error")
     except Exception as exc:
         set_status(f"Workflow import error: {exc}", "error")
+    finally:
+        if progress:
+            progress.classList.remove("visible")
+            progress.setAttribute("aria-hidden", "true")
 
 
 def on_upload_workflow_file(event):
