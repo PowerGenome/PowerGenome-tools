@@ -81,11 +81,9 @@ async function uploadWorkflowYml(page: Page, content: Buffer): Promise<string> {
     // PyScript runs the import asynchronously.  Wait until the transient
     // "Importing…" banner disappears (or was never shown) before reading
     // the final status.
-    await expect(page.locator('#statusBox')).not.toContainText('Importing workflow', {
-        timeout: 30_000,
-    });
-
-    return (await page.locator('#statusBox').textContent()) ?? '';
+    const statusBox = page.locator('#statusBox');
+    await expect(statusBox).toHaveClass(/status (success|error)/, { timeout: 30_000 });
+    return (await statusBox.textContent()) ?? '';
 }
 
 // ---------------------------------------------------------------------------

@@ -9575,6 +9575,10 @@ async def _read_uploaded_workflow_file(event):
         if progress:
             progress.classList.remove("visible")
             progress.setAttribute("aria-hidden", "true")
+        try:
+            event.target.value = ""
+        except Exception:
+            pass
 
 
 def on_upload_workflow_file(event):
