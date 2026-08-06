@@ -1116,6 +1116,11 @@ import** from the available renewable LCOE/resource data and are not stored in
 capacity selections needed to restore the workflow, then the app rebuilds the
 curve arrays when the corresponding data is available.
 
+When generated wind or solar LCOE Parquet files are included under
+`resource_groups/`, the manifest also omits the matching source tables and
+restores them directly from those Parquet files. This avoids storing the same
+resource data twice.
+
 You do not need to take any extra steps to produce this manifest; it is always written into **Download All**.
 
 #### The `workflow_state.yml` Manifest Format

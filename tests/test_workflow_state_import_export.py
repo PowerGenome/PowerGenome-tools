@@ -796,6 +796,33 @@ class TestManifestOmitsDerivedRenewablesCurveData:
         assert tables["resource_group_assignments"] is not None
         cluster_app.state.resource_group_assignments = None  # clean up
 
+    def test_resource_group_lcoe_sources_are_not_duplicated_in_manifest(
+        self, cluster_app
+    ):
+        """Generated LCOE Parquet files are the source of truth in a ZIP."""
+        import pandas as pd
+
+        self._setup_state_with_curve_data(cluster_app)
+        cluster_app.state.resource_group_files = {
+            "onshorewind_lcoe_RegionA.parquet": b"parquet",
+            "solar_lcoe_RegionA.parquet": b"parquet",
+        }
+        cluster_app.state.resource_group_assignments = pd.DataFrame(
+            {"tech": ["onshorewind"], "model_region": ["RegionA"]}
+        )
+        cluster_app.state.uploaded_lcoe_onshorewind = pd.DataFrame(
+            {"region": ["RegionA"], "cpa_mw": [1], "cf": [0.3], "lcoe": [20]}
+        )
+        cluster_app.state.uploaded_lcoe_solar = pd.DataFrame(
+            {"region": ["RegionA"], "cpa_mw": [1], "cf": [0.2], "lcoe": [25]}
+        )
+
+        tables = cluster_app.build_workflow_state_manifest()["tables"]
+
+        assert "resource_group_assignments" not in tables
+        assert "uploaded_lcoe_onshorewind" not in tables
+        assert "uploaded_lcoe_solar" not in tables
+
 
 # ---------------------------------------------------------------------------
 # Import resets renewables_curve_data and triggers recompute
@@ -924,6 +951,33 @@ class TestImportResetsAndRecomputesCurveData:
         assert {"tech", "model_region", "lcoe"} <= set(
             result.columns
         ), "Restored resource_group_assignments must include tech, model_region, lcoe."
+
+    def test_resource_group_parquet_rebuilds_lcoe_source_table(self, cluster_app):
+        """ZIP LCOE Parquet data is normalized for renewables recomputation."""
+        import pandas as pd
+
+        source = pd.DataFrame(
+            {
+                "model_region": ["RegionA"],
+                "capacity_mw": [100.0],
+                "cf": [0.35],
+                "lcoe": [30.0],
+            }
+        )
+        cluster_app.pd.read_parquet = lambda _: source.copy()
+
+        restored = cluster_app._load_resource_group_lcoe_tables(
+            {"onshorewind_lcoe_RegionA.parquet": b"ignored"}
+        )
+
+        assert list(restored["onshorewind"].columns) == [
+            "tech",
+            "region",
+            "cpa_mw",
+            "cf",
+            "lcoe",
+        ]
+        assert restored["onshorewind"].iloc[0]["tech"] == "onshorewind"
 
     def test_manifest_state_section_does_not_carry_stale_curve_data_after_roundtrip(
         self, cluster_app

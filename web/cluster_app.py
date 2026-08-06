@@ -9068,17 +9068,31 @@ def build_workflow_state_manifest():
         "settings_yamls": state.settings_yamls,
     }
 
+    has_resource_group_lcoe = {
+        tech: any(
+            str(filename).lower().startswith(prefix)
+            and str(filename).lower().endswith(".parquet")
+            for filename in state.resource_group_files
+        )
+        for tech, prefix in [
+            ("onshorewind", "onshorewind_lcoe_"),
+            ("solar", "solar_lcoe_"),
+        ]
+    }
     tables = {
         "emission_policies": _workflow_dataframe_payload(state.emission_policies_df),
         "network_costs": _workflow_dataframe_payload(state.network_costs_df),
-        "resource_group_assignments": _workflow_dataframe_payload(
-            state.resource_group_assignments
-        ),
-        "uploaded_lcoe_onshorewind": _workflow_dataframe_payload(
-            state.uploaded_lcoe_onshorewind
-        ),
-        "uploaded_lcoe_solar": _workflow_dataframe_payload(state.uploaded_lcoe_solar),
     }
+    if not any(has_resource_group_lcoe.values()):
+        tables["resource_group_assignments"] = _workflow_dataframe_payload(
+            state.resource_group_assignments
+        )
+    for tech, key in [
+        ("onshorewind", "uploaded_lcoe_onshorewind"),
+        ("solar", "uploaded_lcoe_solar"),
+    ]:
+        if not has_resource_group_lcoe[tech]:
+            tables[key] = _workflow_dataframe_payload(getattr(state, key))
     supplemental_files = []
     for filename in sorted(state.resource_group_files):
         if "/" not in filename and "\\" not in filename and ".." not in filename:
@@ -9169,6 +9183,49 @@ def _read_workflow_zip(data):
             if name.startswith("resource_groups/"):
                 resource_group_files[name[len("resource_groups/") :]] = zipf.read(name)
         return manifest, settings_yamls, resource_group_files
+
+
+def _load_resource_group_lcoe_tables(resource_group_files):
+    """Rebuild renewable source tables from ZIP-contained LCOE Parquet files."""
+    tables = {}
+    for filename, payload in (resource_group_files or {}).items():
+        lower = str(filename).lower()
+        if not lower.endswith(".parquet"):
+            continue
+        tech = next(
+            (
+                value
+                for value, prefix in [
+                    ("onshorewind", "onshorewind_lcoe_"),
+                    ("solar", "solar_lcoe_"),
+                ]
+                if lower.startswith(prefix)
+            ),
+            None,
+        )
+        if tech is None:
+            continue
+        try:
+            df = pd.read_parquet(BytesIO(payload))
+        except Exception as exc:
+            window.console.log(
+                f"Renewables: could not read {filename} from workflow ZIP: {exc}"
+            )
+            continue
+        region_column = "model_region" if "model_region" in df.columns else "region"
+        capacity_column = "capacity_mw" if "capacity_mw" in df.columns else "cpa_mw"
+        required = {region_column, capacity_column, "cf", "lcoe"}
+        if not required <= set(df.columns):
+            continue
+        table = df[[region_column, capacity_column, "cf", "lcoe"]].copy()
+        table.columns = ["region", "cpa_mw", "cf", "lcoe"]
+        table.insert(0, "tech", tech)
+        tables.setdefault(tech, []).append(table)
+    return {
+        tech: pd.concat(parts, ignore_index=True)
+        for tech, parts in tables.items()
+        if parts
+    }
 
 
 def _set_workflow_form_value(element_id, value):
@@ -9287,6 +9344,20 @@ def _restore_workflow_state(manifest, settings_yamls=None, resource_group_files=
     state.uploaded_lcoe_solar = _workflow_dataframe_from_payload(
         tables.get("uploaded_lcoe_solar"), "uploaded_lcoe_solar"
     )
+    restored_lcoe = _load_resource_group_lcoe_tables(resource_group_files)
+    if restored_lcoe:
+        assignments = [
+            table
+            for table in restored_lcoe.values()
+            if table is not None and not table.empty
+        ]
+        state.resource_group_assignments = (
+            pd.concat(assignments, ignore_index=True) if assignments else None
+        )
+        if "onshorewind" in restored_lcoe:
+            state.uploaded_lcoe_onshorewind = None
+        if "solar" in restored_lcoe:
+            state.uploaded_lcoe_solar = None
 
     # Rebuild dynamic controls and previews without invoking reset handlers.
     # Force grouping colors to be rebuilt for the imported grouping column.
