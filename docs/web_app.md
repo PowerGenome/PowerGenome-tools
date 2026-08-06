@@ -520,7 +520,7 @@ The New Resources step allows you to select new-build technologies from NREL's A
 When the app loads, Step 4 comes pre-populated with **6 ATB 2024 new-build resources** so you have a realistic starting point without needing to configure everything from scratch. All 6 defaults use the **"All (default)"** planning year, meaning they apply to every model year.
 
 | Technology | Tech Detail | Cost Case |
-|---|---|---|
+| --- | --- | --- |
 | NaturalGas | 2-on-1 Combined Cycle (H-Frame) | Moderate |
 | NaturalGas | Combustion Turbine (F-Frame) | Moderate |
 | LandbasedWind | Class3 | Moderate |
@@ -1097,6 +1097,95 @@ The app intentionally **does not generate** these files (configure separately):
 !!! note
     `model_definition.yml` and several downstream defaults require region aggregations from Step 1.
     If you haven't clustered regions yet, the Export step will prompt you to complete Step 1 first.
+
+### Saving and Restoring Workflow Defaults
+
+The app lets you save all of your current settings choices to a file and reload them in a later session—so you can pause work, share a configuration, or create a reusable starting point without re-entering every option by hand.
+
+#### Exporting Workflow Defaults
+
+Every time you click **Download All**, the resulting ZIP archive automatically includes a `workflow_state.yml` file at its root. This file is a **versioned manifest** that captures:
+
+* All form control values (grouping column, clustering algorithm, planning periods, fuel scenarios, no-cluster selections, etc.)
+* The full application state (selected BAs, region assignments, new resources, plant cluster settings, renewables clusters, ESR policies, network costs, resource group assignments, and pre-generated settings YAMLs)
+* References to any supplemental files—such as resource group files—that are stored in the ZIP alongside the manifest
+
+Renewable supply-curve arrays are an exception: they are **derived during workflow
+import** from the available renewable LCOE/resource data and are not stored in
+`workflow_state.yml`. The manifest stores the renewable cluster settings and
+capacity selections needed to restore the workflow, then the app rebuilds the
+curve arrays when the corresponding data is available.
+
+The Existing Plants (Step 3) clustering outputs are similarly **rebuilt during
+import**: the manifest stores the plant cluster settings and any per-candidate
+cluster-count overrides, and the app re-runs the clustering with the restored
+inputs to regenerate the YAML preview and split-candidate list, then re-applies
+the imported overrides.
+
+When generated wind or solar LCOE Parquet files are included under
+`resource_groups/`, the manifest also omits the matching source tables and
+restores them directly from those Parquet files. This avoids storing the same
+resource data twice.
+
+You do not need to take any extra steps to produce this manifest; it is always written into **Download All**.
+
+#### The `workflow_state.yml` Manifest Format
+
+The manifest is a YAML file that begins with two required header fields:
+
+```yaml
+schema: powergenome-tools-workflow-state
+version: 1
+required_supplemental_files:
+  - resource_groups/my_region_groups.json   # listed only when supplemental files exist
+forms: { ... }
+state: { ... }
+tables: { ... }
+```
+
+* `schema` must be `powergenome-tools-workflow-state`.
+* `version` must be `1` (the current format version).
+* `required_supplemental_files` lists every supplemental file path (relative to the ZIP root) that must be present for a successful import. This list is empty when no supplemental files exist.
+
+The app rejects any manifest whose `schema` or `version` does not match. **Do not edit these header fields manually.**
+
+#### Importing Workflow Defaults
+
+A "Continue an Existing Workflow" upload control appears on the app's main page. It accepts either a full settings ZIP or a standalone `workflow_state.yml` file.
+
+##### When a standalone `workflow_state.yml` is enough
+
+If `required_supplemental_files` is empty in the manifest—meaning the workflow did not generate any resource group files—you can upload just the `workflow_state.yml` file on its own. The app will restore all form values and state without needing anything else.
+
+Because curve arrays are recalculated from source data, the imported curves are
+only reproducible when the available LCOE/resource files are consistent with
+those used when the workflow was exported. Changed resource-group inputs,
+different LCOE files, or changed region assignments can produce different
+curves and capacity limits. If the required source data is unavailable, the
+workflow settings can still be restored, but supply-curve arrays are not
+available until the data is supplied and renewables clusters are recomputed.
+
+##### When you must upload the full ZIP
+
+If `required_supplemental_files` lists one or more paths, the workflow depends on supplemental files (for example, resource group JSON files generated in Step 7). In this case, **uploading just the `workflow_state.yml` will be rejected** with the error:
+
+> *This workflow state requires supplemental files. Upload the complete settings ZIP.*
+
+Upload the complete `powergenome_settings.zip` instead. The app verifies that every path listed in `required_supplemental_files` is actually present inside the ZIP before restoring state.
+
+##### What the app accepts and rejects
+
+| Upload | Accepted? | Condition |
+| -------- | ----------- | ----------- |
+| `powergenome_settings.zip` | ✅ Always | Must be a valid ZIP containing `workflow_state.yml` at its root |
+| `workflow_state.yml` (standalone) | ✅ Only when `required_supplemental_files` is empty | — |
+| Any other filename (e.g. `my_config.yml`) | ❌ Rejected | Must be named exactly `workflow_state.yml` or `workflow_state.yaml` |
+| ZIP missing `workflow_state.yml` | ❌ Rejected | The manifest must be at the ZIP root |
+| ZIP missing a listed supplemental file | ❌ Rejected | All paths in `required_supplemental_files` must exist in the ZIP |
+| Manifest with wrong `schema` or `version` | ❌ Rejected | Incompatible format |
+
+!!! tip
+    The easiest way to resume a session is to keep the **Download All** ZIP. It always contains both the settings files and a complete, importable `workflow_state.yml` with all supplemental files bundled together.
 
 ---
 

@@ -154,12 +154,13 @@ class TestOnDownloadAllSettings:
         assert "extra_inputs/emission_policies.csv" in names
 
     def test_yaml_only_no_emissions_csv(self, cluster_app):
-        """ZIP contains only YAML files when emission_policies_df is None."""
+        """ZIP contains YAML files and workflow_state.yml but no emission_policies.csv when emission_policies_df is None."""
         cluster_app.state.settings_yamls = {
             "model_definition.yml": "regions: []\n",
             "fuels.yml": "fuels: {}\n",
         }
         cluster_app.state.emission_policies_df = None
+        cluster_app.state.resource_group_files = {}
         calls = _capture_zip_download(cluster_app)
 
         cluster_app.on_download_all_settings(None)
@@ -168,7 +169,10 @@ class TestOnDownloadAllSettings:
         with _open_zip_from_calls(calls) as zf:
             names = set(zf.namelist())
         assert "extra_inputs/emission_policies.csv" not in names
-        assert names == {"settings/model_definition.yml", "settings/fuels.yml"}
+        assert "settings/model_definition.yml" in names
+        assert "settings/fuels.yml" in names
+        # workflow_state.yml is always included in the ZIP
+        assert "workflow_state.yml" in names
 
     def test_error_when_settings_yamls_empty(self, cluster_app):
         """No download is triggered when settings_yamls is empty; error status shown."""
@@ -198,7 +202,7 @@ class TestOnDownloadAllSettings:
         assert status_calls[0][1] == "error"
 
     def test_all_yaml_files_present_in_zip(self, cluster_app):
-        """All seven standard YAML filenames appear in the ZIP."""
+        """All seven standard YAML filenames appear in the ZIP under settings/."""
         filenames = [
             "model_definition.yml",
             "resources.yml",
@@ -210,13 +214,16 @@ class TestOnDownloadAllSettings:
         ]
         cluster_app.state.settings_yamls = {f: f"# {f}\n" for f in filenames}
         cluster_app.state.emission_policies_df = None
+        cluster_app.state.resource_group_files = {}
         calls = _capture_zip_download(cluster_app)
 
         cluster_app.on_download_all_settings(None)
 
-        expected = {f"settings/{name}" for name in filenames}
+        expected_settings = {f"settings/{name}" for name in filenames}
         with _open_zip_from_calls(calls) as zf:
-            assert set(zf.namelist()) == expected
+            names = set(zf.namelist())
+        assert expected_settings <= names
+        assert "workflow_state.yml" in names
 
     def test_yaml_file_contents_preserved(self, cluster_app):
         """The content of each YAML file is exactly preserved in the ZIP."""
@@ -339,7 +346,8 @@ class TestOnDownloadAllSettings:
         assert "extra_inputs/emission_policies.csv" in names
 
     def test_exact_zip_layout_for_yaml_files(self, cluster_app):
-        """All YAML files go under settings/; emission_policies.csv goes under extra_inputs/."""
+        """All YAML files go under settings/; emission_policies.csv goes under extra_inputs/;
+        workflow_state.yml is always present at the root."""
         cluster_app.state.settings_yamls = {
             "model_definition.yml": "x: 1\n",
             "extra_inputs.yaml": "note: still_a_yaml\n",
@@ -347,6 +355,7 @@ class TestOnDownloadAllSettings:
         cluster_app.state.emission_policies_df = pd.DataFrame(
             {"zone": ["z1"], "rps_fraction": [0.5]}
         )
+        cluster_app.state.resource_group_files = {}
         calls = _capture_zip_download(cluster_app)
 
         cluster_app.on_download_all_settings(None)
@@ -358,6 +367,7 @@ class TestOnDownloadAllSettings:
             "settings/model_definition.yml",
             "settings/extra_inputs.yaml",
             "extra_inputs/emission_policies.csv",
+            "workflow_state.yml",
         }
 
     def test_data_yaml_is_included_with_required_placeholders(self, cluster_app):
@@ -372,6 +382,7 @@ class TestOnDownloadAllSettings:
             "data.yml": cluster_app.generate_data_settings()
         }
         cluster_app.state.emission_policies_df = None
+        cluster_app.state.resource_group_files = {}
         calls = _capture_zip_download(cluster_app)
 
         cluster_app.on_download_all_settings(None)
@@ -380,6 +391,7 @@ class TestOnDownloadAllSettings:
             assert set(zf.namelist()) == {
                 "settings/data.yml",
                 f"data/{network_costs_filename}",
+                "workflow_state.yml",
             }
             exported_data = yaml.safe_load(zf.read("settings/data.yml"))
 
@@ -403,17 +415,20 @@ class TestOnDownloadAllSettings:
         [(1, False), (1, True), (3, False), (3, True), (7, True)],
     )
     def test_file_count_in_zip(self, cluster_app, n_yamls, has_emissions):
-        """ZIP contains exactly n_yamls + (1 if has_emissions) files."""
+        """ZIP contains exactly n_yamls + (1 if has_emissions) + 1 (workflow_state.yml) files."""
         yamls = {f"file_{i}.yml": f"val: {i}\n" for i in range(n_yamls)}
         cluster_app.state.settings_yamls = yamls
         cluster_app.state.emission_policies_df = (
             pd.DataFrame({"zone": ["z1"], "val": [1.0]}) if has_emissions else None
         )
+        cluster_app.state.resource_group_files = {}
         calls = _capture_zip_download(cluster_app)
 
         cluster_app.on_download_all_settings(None)
 
         with _open_zip_from_calls(calls) as zf:
             actual_count = len(zf.namelist())
-        expected = n_yamls + (1 if has_emissions else 0)
+        expected = (
+            n_yamls + (1 if has_emissions else 0) + 1
+        )  # +1 for workflow_state.yml always present
         assert actual_count == expected

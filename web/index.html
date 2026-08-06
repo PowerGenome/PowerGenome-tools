@@ -1053,6 +1053,75 @@
             margin-top: 18px;
         }
 
+        .workflow-import-card {
+            position: relative;
+            margin: 0 0 28px;
+            padding: 20px 22px 18px;
+            border: 1px solid rgba(223, 109, 0, 0.45);
+            border-left: 6px solid var(--accent);
+            border-radius: var(--radius-md);
+            background: linear-gradient(135deg, #fff8ee 0%, #fff 100%);
+            box-shadow: 0 6px 18px rgba(95, 65, 0, 0.12);
+        }
+
+        .workflow-import-card h3 {
+            margin-bottom: 8px;
+            color: #8a4100;
+        }
+
+        .workflow-import-card p {
+            margin-bottom: 12px;
+        }
+
+        .workflow-import-card input[type="file"] {
+            display: block;
+            width: 100%;
+            margin-top: 8px;
+        }
+
+        .workflow-import-hint {
+            margin-top: 8px;
+            color: #6c6258;
+            font-size: 11px;
+            line-height: 1.5;
+        }
+
+        .workflow-import-progress {
+            display: none;
+            margin-top: 14px;
+            color: #8a4100;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .workflow-import-progress.visible {
+            display: block;
+        }
+
+        .workflow-import-progress-bar {
+            position: relative;
+            height: 5px;
+            margin-top: 7px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: #f1d9bd;
+        }
+
+        .workflow-import-progress-bar::after {
+            position: absolute;
+            inset: 0 auto 0 -35%;
+            width: 35%;
+            border-radius: inherit;
+            background: var(--accent);
+            content: "";
+            animation: workflowProgress 1.15s ease-in-out infinite;
+        }
+
+        @keyframes workflowProgress {
+            from { transform: translateX(0); }
+            to { transform: translateX(385%); }
+        }
+
         .welcome-body p {
             margin: 0 0 18px 0;
             font-size: 14px;
@@ -1546,6 +1615,23 @@
                 <p>Create complete settings files for capacity expansion modeling</p>
             </div>
             <div class="welcome-body">
+                <div class="workflow-import-card" aria-labelledby="workflowImportTitle">
+                    <h3 id="workflowImportTitle">Continue an Existing Workflow</h3>
+                    <p>
+                        Upload the complete settings ZIP or its <code>workflow_state.yml</code> manifest
+                        to restore your editable defaults.
+                    </p>
+                    <input type="file" id="uploadWorkflowInput" accept=".zip,.yml,.yaml"
+                        aria-label="Upload workflow ZIP or workflow state manifest" />
+                    <div id="workflowImportHint" class="workflow-import-hint">
+                        A manifest that references supplemental files must be uploaded with the full ZIP.
+                    </div>
+                    <div id="workflowImportProgress" class="workflow-import-progress" role="status"
+                        aria-live="polite" aria-hidden="true">
+                        <span id="workflowImportProgressMessage">Loading workflow state...</span>
+                        <div class="workflow-import-progress-bar" aria-hidden="true"></div>
+                    </div>
+                </div>
                 <div class="development-warning" role="note" aria-label="Development status disclaimer">
                     <strong>Development status:</strong> This tool is still under active development. Algorithms and
                     generated outputs may contain errors and should be reviewed before use in analysis or decision
@@ -1590,6 +1676,7 @@
                         <div class="welcome-link-desc">Full documentation for PowerGenome data processing</div>
                     </a>
                 </div>
+
             </div>
         </div>
     </div>
@@ -3195,6 +3282,25 @@
 
         window.resetPlanningPeriodEditorForTests = function () {
             initializePlanningPeriodEditor();
+        };
+
+        window.restorePlanningPeriods = function (periods) {
+            const rowsContainer = document.getElementById('planningPeriodRows');
+            if (!rowsContainer) return;
+            rowsContainer.innerHTML = '';
+            const restored = Array.isArray(periods) ? periods : [];
+            restored.forEach(period => {
+                const start = period && period.period_start != null ? String(period.period_start) : '';
+                const year = period && period.planning_year != null ? String(period.planning_year) : '';
+                const row = addPlanningPeriodRow(start, year);
+                if (row && period && period.start_mode) {
+                    row.dataset.startMode = String(period.start_mode);
+                    row.dataset.autofillValue = String(period.autofill_value || '');
+                }
+            });
+            if (!restored.length) addPlanningPeriodRow('', '');
+            updatePlanningPeriodRowState();
+            syncPlanningPeriodInputs();
         };
 
         function validateModelYears() {
