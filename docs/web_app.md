@@ -520,7 +520,7 @@ The New Resources step allows you to select new-build technologies from NREL's A
 When the app loads, Step 4 comes pre-populated with **6 ATB 2024 new-build resources** so you have a realistic starting point without needing to configure everything from scratch. All 6 defaults use the **"All (default)"** planning year, meaning they apply to every model year.
 
 | Technology | Tech Detail | Cost Case |
-|---|---|---|
+| --- | --- | --- |
 | NaturalGas | 2-on-1 Combined Cycle (H-Frame) | Moderate |
 | NaturalGas | Combustion Turbine (F-Frame) | Moderate |
 | LandbasedWind | Class3 | Moderate |
@@ -1116,6 +1116,12 @@ import** from the available renewable LCOE/resource data and are not stored in
 capacity selections needed to restore the workflow, then the app rebuilds the
 curve arrays when the corresponding data is available.
 
+The Existing Plants (Step 3) clustering outputs are similarly **rebuilt during
+import**: the manifest stores the plant cluster settings and any per-candidate
+cluster-count overrides, and the app re-runs the clustering with the restored
+inputs to regenerate the YAML preview and split-candidate list, then re-applies
+the imported overrides.
+
 When generated wind or solar LCOE Parquet files are included under
 `resource_groups/`, the manifest also omits the matching source tables and
 restores them directly from those Parquet files. This avoids storing the same
@@ -1170,7 +1176,7 @@ Upload the complete `powergenome_settings.zip` instead. The app verifies that ev
 ##### What the app accepts and rejects
 
 | Upload | Accepted? | Condition |
-|--------|-----------|-----------|
+| -------- | ----------- | ----------- |
 | `powergenome_settings.zip` | ✅ Always | Must be a valid ZIP containing `workflow_state.yml` at its root |
 | `workflow_state.yml` (standalone) | ✅ Only when `required_supplemental_files` is empty | — |
 | Any other filename (e.g. `my_config.yml`) | ❌ Rejected | Must be named exactly `workflow_state.yml` or `workflow_state.yaml` |

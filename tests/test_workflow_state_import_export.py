@@ -1041,3 +1041,217 @@ class TestImportResetsAndRecomputesCurveData:
             "After round-trip import the curve data must be {} because the manifest "
             "omits it; the recompute path fills it later asynchronously."
         )
+
+
+# ---------------------------------------------------------------------------
+# _restore_plant_clustering_outputs: rebuild Step 3 outputs after import
+# ---------------------------------------------------------------------------
+
+
+class TestRestorePlantClusteringOutputs:
+    """Importing a workflow that carries plant_cluster_settings must rebuild
+    the Step 3 (Existing Plants) outputs (plant_groups, plant_candidates, the
+    plantYamlOut textarea) by re-running on_run_plant_clustering, and must
+    re-apply the imported plant_candidate_overrides.
+
+    Failure contract: if the re-run raises or produces no groups, the imported
+    plant_cluster_settings / plant_candidate_overrides are kept unchanged so
+    export still uses them.
+    """
+
+    _COLORS = ["#111111", "#222222", "#333333", "#444444"]
+    _TECH = "Natural Gas Fired Combined Cycle"
+
+    _STATE_ATTRS = [
+        "plants_df",
+        "plant_region_map",
+        "plant_cluster_settings",
+        "plant_candidate_overrides",
+        "plant_groups",
+        "plant_candidates",
+        "region_aggregations",
+        "ba_to_region",
+        "selected_bas",
+        "all_bas",
+        "is_clustered",
+        "omit_selected",
+    ]
+
+    @pytest.fixture
+    def plant_env(self, cluster_app, monkeypatch):
+        """Set up plant data + DOM stubs so on_run_plant_clustering can run
+        for real, then restore global state afterwards."""
+        import pandas as pd
+
+        ca = cluster_app
+        ca.CLUSTER_COLORS = self._COLORS  # prevent ZeroDivisionError
+        saved = {name: getattr(ca.state, name) for name in self._STATE_ATTRS}
+
+        # 3 plants in ba1 (RegA), 2 in ba2 (RegB); all one tech group.
+        ca.state.plants_df = pd.DataFrame(
+            {
+                "plant_id": [1, 2, 3, 4, 5],
+                "technology": [self._TECH] * 5,
+                "capacity_mw": [500.0, 600.0, 550.0, 400.0, 450.0],
+                "heat_rate_mmbtu_mwh": [6.0, 9.0, 7.0, 6.5, 8.5],
+                "fom_per_mwyr": [20.0, 25.0, 22.0, 18.0, 21.0],
+            }
+        )
+        ca.state.plant_region_map = pd.DataFrame(
+            {
+                "plant_id": [1, 2, 3, 4, 5],
+                "region": ["ba1", "ba1", "ba1", "ba2", "ba2"],
+            }
+        )
+
+        elements = {}
+
+        def _get_element(element_id):
+            el = elements.get(element_id)
+            if el is None:
+                el = MagicMock()
+                elements[element_id] = el
+            return el
+
+        _get_element("plantBudget").value = "10"
+        _get_element("capThreshold").value = "0"
+        _get_element("hrThreshold").value = "0.5"
+        _get_element("groupTechDefault").checked = True
+        monkeypatch.setattr(ca.document, "getElementById", _get_element)
+
+        yield ca, elements
+
+        for name, value in saved.items():
+            setattr(ca.state, name, value)
+
+    def _manifest(self, settings=None, overrides=None, include_settings=True):
+        state = {
+            "selected_bas": ["ba1", "ba2"],
+            "ba_to_region": {"ba1": "RegA", "ba2": "RegB"},
+            "is_clustered": True,
+            "region_aggregations": {"RegA": ["ba1"], "RegB": ["ba2"]},
+            "plant_candidate_overrides": overrides or [],
+        }
+        if include_settings:
+            state["plant_cluster_settings"] = (
+                settings
+                if settings is not None
+                else {
+                    "num_clusters": {self._TECH: 2},
+                    "group_technologies": True,
+                    "tech_groups": {},
+                    "alt_num_clusters": {},
+                }
+            )
+        return _minimal_manifest(state=state)
+
+    def test_import_with_plant_cluster_settings_triggers_rebuild(self, plant_env):
+        """The on_run_plant_clustering path runs on import and the Step 3
+        outputs (plant_groups + YAML textarea) are populated."""
+        ca, elements = plant_env
+        m = self._manifest()
+
+        ca._restore_workflow_state(m)
+
+        assert (
+            ca.state.plant_groups
+        ), "plant_groups must be rebuilt by the re-run during restore"
+        assert {g["model_region"] for g in ca.state.plant_groups} == {
+            "RegA",
+            "RegB",
+        }
+        assert ca.state.plant_cluster_settings is not None
+        yaml_out = elements["plantYamlOut"].value
+        assert (
+            isinstance(yaml_out, str) and "num_clusters" in yaml_out
+        ), "plantYamlOut textarea must contain the rebuilt clustering YAML"
+        result_text = elements["plantResultText"].textContent
+        assert "Plant clustering ready" in result_text
+
+    def test_imported_overrides_reapplied_and_stale_overrides_dropped(self, plant_env):
+        """Overrides matching a rebuilt group are kept and reflected in the
+        regenerated YAML; overrides with no matching group are dropped."""
+        ca, elements = plant_env
+        overrides = [
+            # Valid: RegB rebuilt with 2 clusters by default; overriding to 3
+            # lifts the tech default to 3 in the regenerated YAML.
+            {
+                "model_region": "RegB",
+                "tech_group": self._TECH,
+                "num_clusters": 3,
+            },
+            # Stale: no rebuilt group matches this key.
+            {
+                "model_region": "NoRegion",
+                "tech_group": "NoTech",
+                "num_clusters": 5,
+            },
+        ]
+        m = self._manifest(overrides=overrides)
+
+        ca._restore_workflow_state(m)
+
+        assert ca.state.plant_candidate_overrides == {
+            ("RegB", self._TECH): 3
+        }, "Only overrides matching a rebuilt group must survive the restore"
+        yaml_out = elements["plantYamlOut"].value
+        assert f"{self._TECH}: 3" in yaml_out, (
+            "Regenerated YAML must reflect the re-applied override "
+            "(tech default lifted to 3 clusters)"
+        )
+
+    def test_rerun_exception_preserves_imported_settings(self, plant_env, monkeypatch):
+        """If on_run_plant_clustering raises, the imported settings and
+        overrides are restored unchanged."""
+        ca, _ = plant_env
+        settings = {"num_clusters": {self._TECH: 4}, "group_technologies": True}
+        overrides = [
+            {"model_region": "RegA", "tech_group": self._TECH, "num_clusters": 2}
+        ]
+        monkeypatch.setattr(
+            ca,
+            "on_run_plant_clustering",
+            MagicMock(side_effect=RuntimeError("boom")),
+        )
+
+        ca._restore_workflow_state(self._manifest(settings, overrides))
+
+        assert ca.state.plant_cluster_settings == settings
+        assert ca.state.plant_candidate_overrides == {("RegA", self._TECH): 2}
+        assert ca.state.plant_groups == []
+
+    def test_rerun_with_no_groups_preserves_imported_settings(
+        self, plant_env, monkeypatch
+    ):
+        """If the re-run returns without populating plant_groups, the imported
+        settings and overrides are preserved unchanged."""
+        ca, _ = plant_env
+        settings = {"num_clusters": {self._TECH: 4}, "group_technologies": True}
+        overrides = [
+            {"model_region": "RegA", "tech_group": self._TECH, "num_clusters": 2}
+        ]
+        monkeypatch.setattr(ca, "on_run_plant_clustering", MagicMock())
+        # The mocked run must not populate groups itself.
+        ca.state.plant_groups = []
+
+        ca._restore_workflow_state(self._manifest(settings, overrides))
+
+        assert ca.state.plant_cluster_settings == settings
+        assert ca.state.plant_candidate_overrides == {("RegA", self._TECH): 2}
+
+    def test_no_plant_cluster_settings_in_manifest_is_noop(
+        self, plant_env, monkeypatch
+    ):
+        """A manifest without plant_cluster_settings must not trigger a
+        clustering re-run (early return, no error)."""
+        ca, _ = plant_env
+        runner = MagicMock()
+        monkeypatch.setattr(ca, "on_run_plant_clustering", runner)
+        ca.state.plant_groups = []
+        m = self._manifest(include_settings=False)
+
+        ca._restore_workflow_state(m)
+
+        runner.assert_not_called()
+        assert ca.state.plant_cluster_settings is None
+        assert ca.state.plant_groups == []

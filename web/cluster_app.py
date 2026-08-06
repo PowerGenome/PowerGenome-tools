@@ -9328,6 +9328,46 @@ def _set_workflow_form_value(element_id, value):
         element.value = str(value)
 
 
+def _restore_plant_clustering_outputs():
+    """Rebuild Step 3 (Existing Plants) clustering outputs after a workflow import.
+
+    The manifest stores the resulting ``plant_cluster_settings`` and
+    ``plant_candidate_overrides`` but not the intermediate plant groups or
+    split candidates. Re-run the clustering with the restored form inputs to
+    rebuild them, then re-apply the imported overrides.
+    """
+    if not state.plant_cluster_settings:
+        return
+    if state.plants_df is None or not state.ba_to_region:
+        return
+
+    saved_settings = state.plant_cluster_settings
+    saved_overrides = dict(state.plant_candidate_overrides)
+    try:
+        on_run_plant_clustering(None)
+    except Exception:
+        state.plant_groups = []
+        state.plant_candidates = []
+    if not state.plant_groups:
+        # Re-run failed; keep the imported settings so export still uses them.
+        state.plant_cluster_settings = saved_settings
+        state.plant_candidate_overrides = saved_overrides
+        return
+
+    if saved_overrides:
+        # Only keep overrides that still match a rebuilt plant group.
+        state.plant_candidate_overrides = {
+            key: value
+            for key, value in saved_overrides.items()
+            if any(
+                g["model_region"] == key[0] and g["tech_group"] == key[1]
+                for g in state.plant_groups
+            )
+        }
+        regenerate_plant_yaml_with_overrides()
+        render_plant_candidates()
+
+
 def _restore_workflow_state(manifest, settings_yamls=None, resource_group_files=None):
     """Apply a validated manifest after static app data and controls are ready."""
     forms = manifest["forms"]
@@ -9472,6 +9512,7 @@ def _restore_workflow_state(manifest, settings_yamls=None, resource_group_files=
             on_box_mode(None)
         else:
             on_click_mode(None)
+    _restore_plant_clustering_outputs()
     render_esr_results()
     _render_renewables_preview()
     _render_renewables_advanced_panel()
