@@ -439,6 +439,7 @@ The Model Setup step allows you to configure the temporal and financial paramete
 * **Planning Periods**: A row-based editor with one planning period per row
 * **Planning Year**: The end year for each planning period (the first row defaults to 2030)
 * **Period Start**: The first investment year for each planning period (the first row defaults to the current calendar year)
+* **Value of Lost Load (VOLL)**: The cost of non-served energy in $/MWh (default 5000), with a demand segments table for tiered curtailment penalties
 
 ### Understanding These Parameters
 
@@ -490,6 +491,30 @@ Multiple planning periods (e.g., 2030, 2035, 2040) allow the model to make seque
 
 !!! note
     Each planning period row must include both a Period Start and a Planning Year. The app exports these as a `model_periods` list of `[period_start, planning_year]` pairs for PowerGenome.
+
+#### Value of Lost Load (VOLL) and Demand Segments
+
+The Value of Lost Load (VOLL) section, below Planning Periods, controls how the model prices non-served energy (demand curtailment).
+
+* **VOLL ($/MWh)**: The value of lost load in USD/MWh. Defaults to 5000.
+* **Demand segments table**: A row-based editor, like Planning Periods, where you can add or remove segments with the **+** and remove buttons. Segments are numbered automatically starting at 1. Each row has:
+    * **Cost (fraction of VOLL)** - The cost of non-served energy for that segment, as a fraction of VOLL
+    * **Max Curtailment (fraction of demand)** - The maximum fraction of demand in each zone and period that can be curtailed in that segment
+    * **$/MWh** - A read-only computed column (VOLL × cost fraction) showing the implied curtailment price
+
+The table defaults to four segments:
+
+| Cost (fraction of VOLL) | Max Curtailment (fraction of demand) |
+| --- | --- |
+| 1.0 | 1.0 |
+| 0.9 | 0.04 |
+| 0.55 | 0.024 |
+| 0.2 | 0.003 |
+
+Using multiple segments lets the model curtail a small amount of demand at a lower penalty before allowing deeper, more expensive curtailment—approximating a demand response curve instead of a single flat penalty.
+
+!!! note
+    On export (Download All Settings ZIP), the VOLL value and segment rows are written to `extra_inputs/demand_segments_voll.csv` with the columns `Voll`, `Demand_Segment`, `Cost_of_Demand_Curtailment_per_MW`, `Max_Demand_Curtailment`, and `$/MWh` (the `Voll` column is populated only on the first row), matching PowerGenome's `Demand_data.csv` structure. The exported `settings/data.yml` already references this file via `demand_segments_fn: demand_segments_voll.csv`, and both the VOLL value and segment rows are saved and restored in the workflow state (`workflow_state.yml`) on export and import.
 
 ## Step 3: Existing Plants
 

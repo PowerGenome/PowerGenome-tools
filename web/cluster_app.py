@@ -308,6 +308,7 @@ _WORKFLOW_FORM_IDS = (
     "demandWeightMethod",
     "targetUsdYear",
     "utcOffset",
+    "vollValue",
     "modelYears",
     "planningYears",
     "groupTechDefault",
@@ -8311,6 +8312,67 @@ def generate_emission_policies_settings():
     return state.emission_policies_df.to_csv(index=False)
 
 
+DEMAND_SEGMENTS_FILENAME = "demand_segments_voll.csv"
+
+
+def generate_demand_segments_csv():
+    """Generate the demand segments / VOLL CSV as a string.
+
+    Columns match the PowerGenome Demand_data.csv structure: ``Voll`` (first
+    row only), ``Demand_Segment``, ``Cost_of_Demand_Curtailment_per_MW``
+    (fraction of VOLL), ``Max_Demand_Curtailment`` (fraction of demand), and
+    ``$/MWh`` (VOLL * cost fraction).
+    """
+    voll_el = document.getElementById("vollValue")
+    try:
+        voll = float(str(getattr(voll_el, "value", "") or "").strip())
+    except ValueError:
+        voll = 5000.0
+
+    container = document.getElementById("demandSegmentRows")
+    segments = []
+    if container:
+        for row in container.querySelectorAll(".demand-segment-row"):
+            cost_el = row.querySelector(".demand-segment-cost")
+            max_el = row.querySelector(".demand-segment-max-curtailment")
+            cost_text = str(getattr(cost_el, "value", "") or "").strip()
+            max_text = str(getattr(max_el, "value", "") or "").strip()
+            if not cost_text and not max_text:
+                continue
+            try:
+                cost_fraction = float(cost_text)
+                max_curtailment = float(max_text)
+            except ValueError:
+                raise Exception(
+                    "Demand segment rows must have numeric cost and max curtailment values."
+                )
+            segments.append((cost_fraction, max_curtailment))
+
+    if not segments:
+        return None
+
+    def _fmt(value):
+        return f"{value:g}"
+
+    lines = [
+        "Voll,Demand_Segment,Cost_of_Demand_Curtailment_per_MW,Max_Demand_Curtailment,$/MWh"
+    ]
+    for index, (cost_fraction, max_curtailment) in enumerate(segments, start=1):
+        voll_value = _fmt(voll) if index == 1 else ""
+        lines.append(
+            ",".join(
+                [
+                    voll_value,
+                    str(index),
+                    _fmt(cost_fraction),
+                    _fmt(max_curtailment),
+                    _fmt(voll * cost_fraction),
+                ]
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
 def generate_model_definition_settings():
     region_aggs = _get_region_aggregations_or_raise()
     model_regions = sorted(region_aggs.keys())
@@ -8372,7 +8434,9 @@ def generate_data_settings():
         "fuel_price_table": "fuel_prices.parquet",
         "dollar_year_table": "dollar_year_adjustment.csv",
         "transmission_cost_table": (
-            _build_network_costs_filename() if state.network_costs_df is not None else "network_costs.csv"
+            _build_network_costs_filename()
+            if state.network_costs_df is not None
+            else "network_costs.csv"
         ),
         "demand_table": "reeds_load_transformed.parquet",
         "regional_cost_factor_table": "regional_cost_multipliers.csv",
@@ -8989,6 +9053,23 @@ def _workflow_planning_periods():
     return periods
 
 
+def _workflow_demand_segments():
+    container = document.getElementById("demandSegmentRows")
+    if not container:
+        return []
+    segments = []
+    for row in container.querySelectorAll(".demand-segment-row"):
+        cost = row.querySelector(".demand-segment-cost")
+        max_curtailment = row.querySelector(".demand-segment-max-curtailment")
+        segments.append(
+            {
+                "cost": str(getattr(cost, "value", "")),
+                "max_curtailment": str(getattr(max_curtailment, "value", "")),
+            }
+        )
+    return segments
+
+
 def _workflow_checked_no_cluster_values():
     container = document.getElementById("noClusterContainer")
     if not container:
@@ -9020,6 +9101,7 @@ def build_workflow_state_manifest():
         if document.getElementById(element_id) is not None
     }
     forms["planning_periods"] = _workflow_planning_periods()
+    forms["demand_segments"] = _workflow_demand_segments()
     forms["no_cluster_selected"] = _workflow_checked_no_cluster_values()
     forms["fuel_scenarios"] = _workflow_fuel_scenarios()
 
@@ -9388,6 +9470,10 @@ def _restore_workflow_state(manifest, settings_yamls=None, resource_group_files=
         _set_workflow_form_value("modelYears", forms.get("modelYears", ""))
         _set_workflow_form_value("planningYears", forms.get("planningYears", ""))
 
+    restore_segments = getattr(window, "restoreDemandSegments", None)
+    if callable(restore_segments) and forms.get("demand_segments"):
+        restore_segments(to_js(forms["demand_segments"]), forms.get("vollValue"))
+
     # Let the existing UI switch visibility, then replace the reset state with
     # the imported values below.
     toggle_region_mode = getattr(window, "toggleRegionMode", None)
@@ -9618,6 +9704,13 @@ def on_download_all_settings(event):
         if state.emission_policies_df is not None:
             csv_content = state.emission_policies_df.to_csv(index=False)
             zipf.writestr("extra_inputs/emission_policies.csv", csv_content)
+
+        # Write the demand segments / VOLL CSV under extra_inputs/.
+        demand_segments_csv = generate_demand_segments_csv()
+        if demand_segments_csv is not None:
+            zipf.writestr(
+                f"extra_inputs/{DEMAND_SEGMENTS_FILENAME}", demand_segments_csv
+            )
 
         # Write network_costs.csv under data/ if it has been computed.
         if state.network_costs_df is not None:
