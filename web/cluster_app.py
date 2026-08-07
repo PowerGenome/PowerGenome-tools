@@ -268,6 +268,8 @@ class AppState:
         self.esr_map = None  # ESR constraint name -> regions mapping
         self.esr_type_map = None  # ESR constraint name -> "RPS" or "CES"
         self.esr_policy_states = None  # ESR constraint name -> set of policy states
+        self.esr_rps_techs = set()
+        self.esr_ces_techs = set()
         self.emission_policies_df = None  # Generated emission_policies.csv
 
         # Network cost calculation
@@ -279,6 +281,7 @@ state = AppState()
 
 
 SETTINGS_FILENAMES = [
+    "data.yml",
     "model_definition.yml",
     "resources.yml",
     "fuels.yml",
@@ -287,6 +290,81 @@ SETTINGS_FILENAMES = [
     "resource_tags.yml",
     "startup_costs.yml",
 ]
+
+WORKFLOW_STATE_FILENAME = "workflow_state.yml"
+WORKFLOW_STATE_SCHEMA = "powergenome-tools-workflow-state"
+WORKFLOW_STATE_VERSION = 1
+
+# These are the editable controls whose values are not fully represented in the
+# generated PowerGenome settings files.
+_WORKFLOW_FORM_IDS = (
+    "groupingColumn",
+    "esrCompatibleClustering",
+    "autoOptimize",
+    "targetRegions",
+    "minRegions",
+    "maxRegions",
+    "clusteringMethod",
+    "demandWeightMethod",
+    "targetUsdYear",
+    "utcOffset",
+    "vollValue",
+    "modelYears",
+    "planningYears",
+    "groupTechDefault",
+    "plantBudget",
+    "capThreshold",
+    "hrThreshold",
+    "atbYearSelect",
+    "atbTechSelect",
+    "atbTechDetailSelect",
+    "atbCostCaseSelect",
+    "atbSizeMw",
+    "atbCcsDisposalCost",
+    "atbOverrideCapex",
+    "atbOverrideCapexMwh",
+    "atbOverrideHeatRate",
+    "atbOverrideFixedOM",
+    "atbOverrideVarOM",
+    "atbOverrideVarOMIn",
+    "atbOverrideWacc",
+    "modBaseTech",
+    "modBaseTechDetail",
+    "modBaseCostCase",
+    "modNewTech",
+    "modNewTechDetail",
+    "modSizeMw",
+    "modOverrideCapexMw",
+    "modOverrideCapexMwh",
+    "modOverrideHeatRate",
+    "modOverrideFixedOM",
+    "modOverrideVarOM",
+    "modOverrideVarOMIn",
+    "modOverrideWacc",
+    "modFuelType",
+    "modStandardFuel",
+    "modNewFuelName",
+    "modNewFuelPrice",
+    "modNewFuelEf",
+    "modTagClass",
+    "modIsCommit",
+    "newResourceYearSelect",
+    "modResourceYearSelect",
+    "fuelDataYear",
+    "esrIncludeCheckbox",
+    "esrIncludeRPS",
+    "esrIncludeCES",
+    "interconnectCapexMw",
+    "resourceGroupName",
+    "resourceGroupPenalty",
+    "renewablesWindShare",
+    "renewablesSolarShare",
+    "renewablesWindAvgResourceMw",
+    "renewablesSolarAvgResourceMw",
+    "renewablesWindBudgetCount",
+    "renewablesSolarBudgetCount",
+    "showTransmissionLines",
+)
 
 
 FUEL_PRICES_URLS = [
@@ -1972,9 +2050,9 @@ def reset_region_dependent_state():
     state.esr_map = None
     state.esr_type_map = None
     state.esr_policy_states = None
+    state.esr_rps_techs = set()
+    state.esr_ces_techs = set()
     state.emission_policies_df = None
-    # Note: esr_rps_techs and esr_ces_techs are set during ESR generation
-    # and don't persist in AppState, so no reset needed
 
     # Network costs depend on region aggregations; cache of raw data files is kept
     state.network_costs_df = None
@@ -8234,6 +8312,67 @@ def generate_emission_policies_settings():
     return state.emission_policies_df.to_csv(index=False)
 
 
+DEMAND_SEGMENTS_FILENAME = "demand_segments_voll.csv"
+
+
+def generate_demand_segments_csv():
+    """Generate the demand segments / VOLL CSV as a string.
+
+    Columns match the PowerGenome Demand_data.csv structure: ``Voll`` (first
+    row only), ``Demand_Segment``, ``Cost_of_Demand_Curtailment_per_MW``
+    (fraction of VOLL), ``Max_Demand_Curtailment`` (fraction of demand), and
+    ``$/MWh`` (VOLL * cost fraction).
+    """
+    voll_el = document.getElementById("vollValue")
+    try:
+        voll = float(str(getattr(voll_el, "value", "") or "").strip())
+    except ValueError:
+        voll = 5000.0
+
+    container = document.getElementById("demandSegmentRows")
+    segments = []
+    if container:
+        for row in container.querySelectorAll(".demand-segment-row"):
+            cost_el = row.querySelector(".demand-segment-cost")
+            max_el = row.querySelector(".demand-segment-max-curtailment")
+            cost_text = str(getattr(cost_el, "value", "") or "").strip()
+            max_text = str(getattr(max_el, "value", "") or "").strip()
+            if not cost_text and not max_text:
+                continue
+            try:
+                cost_fraction = float(cost_text)
+                max_curtailment = float(max_text)
+            except ValueError:
+                raise Exception(
+                    "Demand segment rows must have numeric cost and max curtailment values."
+                )
+            segments.append((cost_fraction, max_curtailment))
+
+    if not segments:
+        return None
+
+    def _fmt(value):
+        return f"{value:g}"
+
+    lines = [
+        "Voll,Demand_Segment,Cost_of_Demand_Curtailment_per_MW,Max_Demand_Curtailment,$/MWh"
+    ]
+    for index, (cost_fraction, max_curtailment) in enumerate(segments, start=1):
+        voll_value = _fmt(voll) if index == 1 else ""
+        lines.append(
+            ",".join(
+                [
+                    voll_value,
+                    str(index),
+                    _fmt(cost_fraction),
+                    _fmt(max_curtailment),
+                    _fmt(voll * cost_fraction),
+                ]
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
 def generate_model_definition_settings():
     region_aggs = _get_region_aggregations_or_raise()
     model_regions = sorted(region_aggs.keys())
@@ -8274,8 +8413,42 @@ def generate_model_definition_settings():
     return yaml.dump(out, default_flow_style=False, sort_keys=False)
 
 
+def generate_data_settings():
+    """Generate the data file path and table-name template for PowerGenome."""
+    out = {
+        "input_folder": "extra_inputs",
+        "demand_segments_fn": "demand_segments_voll.csv",
+        "emission_policies_fn": "emission_policies.csv",
+        "RESOURCE_GROUPS": "path/to/resource/groups/folder",
+        "RESOURCE_GROUP_PROFILES": "path/to/resource/profiles/folder",
+        "data_location": ["path/to/your/primary/data/folder"],
+        "generation_table": "reeds_generators_transformed.csv",
+        "plant_region_table": "plant_region_map.csv",
+        "resource_heat_rate_table": "technology_heat_rates_nrelatb.csv",
+        "resource_cost_table": "technology_costs_atb.parquet",
+        "operational_constraints_table": "operational_constraints_reeds.csv",
+        "transmission_constraints_table": "transmission_capacity_reeds.csv",
+        "fuel_price_table": "fuel_prices.parquet",
+        "dollar_year_table": "dollar_year_adjustment.csv",
+        "transmission_cost_table": (
+            _build_network_costs_filename()
+            if state.network_costs_df is not None
+            else "network_costs.csv"
+        ),
+        "demand_table": "reeds_load_transformed.parquet",
+        "regional_cost_factor_table": "regional_cost_multipliers.csv",
+        "distributed_capacity_table": "distributed_capacity.parquet",
+        "distributed_profile_table": "distributed_profiles.parquet",
+    }
+    return (
+        yaml.dump(out, default_flow_style=False, sort_keys=False)
+        + "\n# weather_year: 2012\n"
+    )
+
+
 def build_settings_yamls():
     result = {
+        "data.yml": generate_data_settings(),
         "model_definition.yml": generate_model_definition_settings(),
         "resources.yml": generate_resources_settings(),
         "fuels.yml": generate_fuels_settings(),
@@ -8797,10 +8970,710 @@ def on_download_resource_groups(event):
     set_resource_group_status(f"Downloaded {zip_name}", "success")
 
 
+def _workflow_yaml_safe(value):
+    """Convert state values to deterministic YAML-safe Python values."""
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if value is pd.NA or value is pd.NaT:
+        return None
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, (np.integer, np.floating)):
+        return _workflow_yaml_safe(value.item())
+    if isinstance(value, np.ndarray):
+        return [_workflow_yaml_safe(item) for item in value.tolist()]
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {
+            str(key): _workflow_yaml_safe(item)
+            for key, item in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+    if isinstance(value, (set, tuple, list)):
+        values = [_workflow_yaml_safe(item) for item in value]
+        return sorted(values, key=str) if isinstance(value, set) else values
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    raise TypeError(f"Unsupported workflow state value: {type(value).__name__}")
+
+
+def _workflow_dataframe_payload(df):
+    if df is None:
+        return None
+    return {
+        "columns": [str(column) for column in df.columns],
+        "records": _workflow_yaml_safe(df.to_dict(orient="records")),
+    }
+
+
+def _workflow_dataframe_from_payload(payload, name):
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise ValueError(f"Workflow state table '{name}' must be a mapping.")
+    columns = payload.get("columns")
+    records = payload.get("records")
+    if not isinstance(columns, list) or not all(isinstance(c, str) for c in columns):
+        raise ValueError(f"Workflow state table '{name}' has invalid columns.")
+    if not isinstance(records, list) or not all(isinstance(r, dict) for r in records):
+        raise ValueError(f"Workflow state table '{name}' has invalid records.")
+    return pd.DataFrame.from_records(records, columns=columns)
+
+
+def _workflow_form_value(element):
+    if element is None:
+        return None
+    element_type = str(getattr(element, "type", "")).lower()
+    if element_type == "checkbox":
+        return bool(element.checked)
+    return str(getattr(element, "value", ""))
+
+
+def _workflow_planning_periods():
+    container = document.getElementById("planningPeriodRows")
+    if not container:
+        return []
+    periods = []
+    for row in container.querySelectorAll(".planning-period-row"):
+        start = row.querySelector(".planning-period-start")
+        planning_year = row.querySelector(".planning-period-model-year")
+        periods.append(
+            {
+                "period_start": str(getattr(start, "value", "")),
+                "planning_year": str(getattr(planning_year, "value", "")),
+                "start_mode": str(getattr(row.dataset, "startMode", "manual")),
+                "autofill_value": str(getattr(row.dataset, "autofillValue", "")),
+            }
+        )
+    return periods
+
+
+def _workflow_demand_segments():
+    container = document.getElementById("demandSegmentRows")
+    if not container:
+        return []
+    segments = []
+    for row in container.querySelectorAll(".demand-segment-row"):
+        cost = row.querySelector(".demand-segment-cost")
+        max_curtailment = row.querySelector(".demand-segment-max-curtailment")
+        segments.append(
+            {
+                "cost": str(getattr(cost, "value", "")),
+                "max_curtailment": str(getattr(max_curtailment, "value", "")),
+            }
+        )
+    return segments
+
+
+def _workflow_checked_no_cluster_values():
+    container = document.getElementById("noClusterContainer")
+    if not container:
+        return []
+    values = []
+    for checkbox in container.querySelectorAll('input[name="noCluster"]'):
+        if checkbox.checked:
+            values.append(str(checkbox.value))
+    return sorted(values)
+
+
+def _workflow_fuel_scenarios():
+    container = document.getElementById("fuelScenariosContainer")
+    if not container:
+        return {}
+    selected = {}
+    for element in container.querySelectorAll("select"):
+        element_id = str(getattr(element, "id", ""))
+        if element_id.startswith("fuelScenario_"):
+            selected[element_id[len("fuelScenario_") :]] = str(element.value)
+    return selected
+
+
+def build_workflow_state_manifest():
+    """Build the required, versioned manifest used by workflow imports."""
+    forms = {
+        element_id: _workflow_form_value(document.getElementById(element_id))
+        for element_id in _WORKFLOW_FORM_IDS
+        if document.getElementById(element_id) is not None
+    }
+    forms["planning_periods"] = _workflow_planning_periods()
+    forms["demand_segments"] = _workflow_demand_segments()
+    forms["no_cluster_selected"] = _workflow_checked_no_cluster_values()
+    forms["fuel_scenarios"] = _workflow_fuel_scenarios()
+
+    plant_overrides = [
+        {
+            "model_region": key[0],
+            "tech_group": key[1],
+            "num_clusters": value,
+        }
+        for key, value in sorted(state.plant_candidate_overrides.items(), key=str)
+        if isinstance(key, tuple) and len(key) == 2
+    ]
+
+    state_payload = {
+        "selected_bas": sorted(state.selected_bas),
+        "current_grouping": state.current_grouping,
+        "is_clustered": state.is_clustered,
+        "is_manual_mode": state.is_manual_mode,
+        "ba_to_region": state.ba_to_region,
+        "region_aggregations": state.region_aggregations,
+        "manual_regions": state.manual_regions,
+        "selected_manual_region": state.selected_manual_region,
+        "cluster_colors": state.cluster_colors,
+        "custom_tech_groups": state.custom_tech_groups,
+        "available_techs": state.available_techs,
+        "current_group": state.current_group,
+        "omit_selected": state.omit_selected,
+        "omit_available": state.omit_available,
+        "new_resources": state.new_resources,
+        "modified_new_resources": state.modified_new_resources,
+        "plant_cluster_settings": state.plant_cluster_settings,
+        "plant_candidate_overrides": plant_overrides,
+        "ccs_disposal_cost": state.ccs_disposal_cost,
+        "ccs_disposal_cost_map": state.ccs_disposal_cost_map,
+        "esr_zones": state.esr_zones,
+        "esr_map": state.esr_map,
+        "esr_type_map": state.esr_type_map,
+        "esr_policy_states": state.esr_policy_states,
+        "esr_rps_techs": state.esr_rps_techs,
+        "esr_ces_techs": state.esr_ces_techs,
+        # Curves and their summaries are derived from the restored LCOE data,
+        # demand data, and the user-controlled renewable inputs below.
+        "renewables_capacity_overrides_mw": state.renewables_capacity_overrides_mw,
+        "renewables_selected_region": state.renewables_selected_region,
+        "renewables_selected_tech": state.renewables_selected_tech,
+        "show_transmission_lines": state.show_transmission_lines,
+        "box_select_mode": state.box_select_mode,
+        "settings_yamls": state.settings_yamls,
+    }
+
+    has_resource_group_lcoe = {
+        tech: any(
+            str(filename).lower().startswith(prefix)
+            and str(filename).lower().endswith(".parquet")
+            for filename in state.resource_group_files
+        )
+        for tech, prefix in [
+            ("onshorewind", "onshorewind_lcoe_"),
+            ("solar", "solar_lcoe_"),
+        ]
+    }
+    tables = {
+        "emission_policies": _workflow_dataframe_payload(state.emission_policies_df),
+        "network_costs": _workflow_dataframe_payload(state.network_costs_df),
+    }
+    if not any(has_resource_group_lcoe.values()):
+        tables["resource_group_assignments"] = _workflow_dataframe_payload(
+            state.resource_group_assignments
+        )
+    for tech, key in [
+        ("onshorewind", "uploaded_lcoe_onshorewind"),
+        ("solar", "uploaded_lcoe_solar"),
+    ]:
+        if not has_resource_group_lcoe[tech]:
+            tables[key] = _workflow_dataframe_payload(getattr(state, key))
+    supplemental_files = []
+    for filename in sorted(state.resource_group_files):
+        if "/" not in filename and "\\" not in filename and ".." not in filename:
+            supplemental_files.append(f"resource_groups/{filename}")
+
+    return {
+        "schema": WORKFLOW_STATE_SCHEMA,
+        "version": WORKFLOW_STATE_VERSION,
+        "required_supplemental_files": supplemental_files,
+        "forms": _workflow_yaml_safe(forms),
+        "state": _workflow_yaml_safe(state_payload),
+        "tables": _workflow_yaml_safe(tables),
+    }
+
+
+def _validate_workflow_manifest(manifest):
+    if not isinstance(manifest, dict):
+        raise ValueError("workflow_state.yml must contain a YAML mapping.")
+    if manifest.get("schema") != WORKFLOW_STATE_SCHEMA:
+        raise ValueError(
+            f"Unsupported workflow state schema: {manifest.get('schema')!r}."
+        )
+    if manifest.get("version") != WORKFLOW_STATE_VERSION:
+        raise ValueError(
+            f"Unsupported workflow state version: {manifest.get('version')!r}."
+        )
+    required = manifest.get("required_supplemental_files", [])
+    if not isinstance(required, list) or not all(
+        isinstance(path, str) and path and _is_safe_workflow_path(path)
+        for path in required
+    ):
+        raise ValueError("workflow_state.yml has invalid supplemental file paths.")
+    for section in ("forms", "state", "tables"):
+        if not isinstance(manifest.get(section), dict):
+            raise ValueError(f"workflow_state.yml is missing the '{section}' mapping.")
+    return manifest
+
+
+def _is_safe_workflow_path(path):
+    return (
+        path
+        and not path.startswith("/")
+        and not path.startswith("\\")
+        and "\\" not in path
+        and ".." not in path.split("/")
+    )
+
+
+def _parse_workflow_manifest(data):
+    try:
+        manifest = yaml.safe_load(data.decode("utf-8"))
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise ValueError(f"Could not parse workflow_state.yml: {exc}") from exc
+    return _validate_workflow_manifest(manifest)
+
+
+def _read_workflow_zip(data):
+    archive = BytesIO(data)
+    if not zipfile.is_zipfile(archive):
+        raise ValueError("The uploaded file is not a valid ZIP archive.")
+    archive.seek(0)
+    with zipfile.ZipFile(archive, "r") as zipf:
+        names = zipf.namelist()
+        for name in names:
+            if not _is_safe_workflow_path(name):
+                raise ValueError(f"ZIP contains an unsafe path: {name}")
+        if WORKFLOW_STATE_FILENAME not in names:
+            raise ValueError(
+                f"The ZIP must contain {WORKFLOW_STATE_FILENAME} at its root."
+            )
+        manifest = _parse_workflow_manifest(zipf.read(WORKFLOW_STATE_FILENAME))
+        required = set(manifest["required_supplemental_files"])
+        missing = sorted(required - set(names))
+        if missing:
+            raise ValueError(
+                "The ZIP is missing required workflow files: " + ", ".join(missing)
+            )
+        settings_yamls = {}
+        for name in names:
+            if name.startswith("settings/") and name.lower().endswith(
+                (".yml", ".yaml")
+            ):
+                settings_yamls[name[len("settings/") :]] = zipf.read(name).decode(
+                    "utf-8"
+                )
+        resource_group_files = {}
+        for name in required:
+            if name.startswith("resource_groups/"):
+                resource_group_files[name[len("resource_groups/") :]] = zipf.read(name)
+        return manifest, settings_yamls, resource_group_files
+
+
+def _load_resource_group_lcoe_tables(resource_group_files):
+    """Rebuild renewable source tables from ZIP-contained LCOE Parquet files."""
+    tables = {}
+    for filename, payload in (resource_group_files or {}).items():
+        lower = str(filename).lower()
+        if not lower.endswith(".parquet"):
+            continue
+        tech = next(
+            (
+                value
+                for value, prefix in [
+                    ("onshorewind", "onshorewind_lcoe_"),
+                    ("solar", "solar_lcoe_"),
+                ]
+                if lower.startswith(prefix)
+            ),
+            None,
+        )
+        if tech is None:
+            continue
+        try:
+            df = pd.read_parquet(BytesIO(payload))
+        except Exception as exc:
+            window.console.log(
+                f"Renewables: could not read {filename} from workflow ZIP: {exc}"
+            )
+            continue
+        region_column = "model_region" if "model_region" in df.columns else "region"
+        capacity_column = "capacity_mw" if "capacity_mw" in df.columns else "cpa_mw"
+        required = {region_column, capacity_column, "cf", "lcoe"}
+        if not required <= set(df.columns):
+            continue
+        table = df[[region_column, capacity_column, "cf", "lcoe"]].copy()
+        # _load_resource_group_lcoe_df expects model_region/cpa_mw column names.
+        table.columns = ["model_region", "cpa_mw", "cf", "lcoe"]
+        table.insert(0, "tech", tech)
+        tables.setdefault(tech, []).append(table)
+    return {
+        tech: pd.concat(parts, ignore_index=True)
+        for tech, parts in tables.items()
+        if parts
+    }
+
+
+async def _load_resource_group_lcoe_tables_async(resource_group_files):
+    """Read ZIP Parquet sources after loading a Pyodide parquet engine."""
+    parquet_files = [
+        (filename, payload)
+        for filename, payload in (resource_group_files or {}).items()
+        if str(filename).lower().endswith(".parquet")
+    ]
+    if not parquet_files:
+        return {}
+
+    parquet_ready = False
+    for package in ["pyarrow", "fastparquet"]:
+        try:
+            __import__(package)
+            parquet_ready = True
+            break
+        except ImportError:
+            try:
+                if await _load_pyodide_package(package):
+                    __import__(package)
+                    parquet_ready = True
+                    break
+            except Exception:
+                continue
+
+    if not parquet_ready:
+        set_renewables_status(
+            "Parquet LCOE files were found, but no parquet reader is available.",
+            "error",
+        )
+        return {}
+
+    parsed = {}
+    for filename, payload in parquet_files:
+        try:
+            parsed[filename] = pd.read_parquet(BytesIO(payload))
+        except Exception as exc:
+            set_renewables_status(
+                f"Could not read resource-group file {filename}: {exc}", "error"
+            )
+    normalized = {}
+    for filename, df in parsed.items():
+        lower = str(filename).lower()
+        tech = next(
+            (
+                value
+                for value, prefix in [
+                    ("onshorewind", "onshorewind_lcoe_"),
+                    ("solar", "solar_lcoe_"),
+                ]
+                if lower.startswith(prefix)
+            ),
+            None,
+        )
+        if tech is None:
+            continue
+        region_column = "model_region" if "model_region" in df.columns else "region"
+        capacity_column = "capacity_mw" if "capacity_mw" in df.columns else "cpa_mw"
+        required = {region_column, capacity_column, "cf", "lcoe"}
+        if not required <= set(df.columns):
+            continue
+        table = df[[region_column, capacity_column, "cf", "lcoe"]].copy()
+        # _load_resource_group_lcoe_df expects model_region/cpa_mw column names.
+        table.columns = ["model_region", "cpa_mw", "cf", "lcoe"]
+        table.insert(0, "tech", tech)
+        normalized.setdefault(tech, []).append(table)
+    return {
+        tech: pd.concat(parts, ignore_index=True)
+        for tech, parts in normalized.items()
+        if parts
+    }
+
+
+async def _rebuild_imported_renewables(resource_group_files):
+    """Load imported renewable sources, then rebuild derived curves."""
+    if resource_group_files:
+        restored_lcoe = await _load_resource_group_lcoe_tables_async(
+            resource_group_files
+        )
+        if restored_lcoe:
+            tables = [table for table in restored_lcoe.values() if not table.empty]
+            state.resource_group_assignments = pd.concat(tables, ignore_index=True)
+            state.uploaded_lcoe_onshorewind = None
+            state.uploaded_lcoe_solar = None
+
+    if state.resource_group_assignments is not None:
+        await _compute_renewables_clusters()
+
+
+def _set_workflow_form_value(element_id, value):
+    element = document.getElementById(element_id)
+    if element is None or value is None:
+        return
+    if str(getattr(element, "type", "")).lower() == "checkbox":
+        element.checked = bool(value)
+    else:
+        element.value = str(value)
+
+
+def _restore_plant_clustering_outputs():
+    """Rebuild Step 3 (Existing Plants) clustering outputs after a workflow import.
+
+    The manifest stores the resulting ``plant_cluster_settings`` and
+    ``plant_candidate_overrides`` but not the intermediate plant groups or
+    split candidates. Re-run the clustering with the restored form inputs to
+    rebuild them, then re-apply the imported overrides.
+    """
+    if not state.plant_cluster_settings:
+        return
+    if state.plants_df is None or not state.ba_to_region:
+        return
+
+    saved_settings = state.plant_cluster_settings
+    saved_overrides = dict(state.plant_candidate_overrides)
+    try:
+        on_run_plant_clustering(None)
+    except Exception:
+        state.plant_groups = []
+        state.plant_candidates = []
+    if not state.plant_groups:
+        # Re-run failed; keep the imported settings so export still uses them.
+        state.plant_cluster_settings = saved_settings
+        state.plant_candidate_overrides = saved_overrides
+        return
+
+    if saved_overrides:
+        # Only keep overrides that still match a rebuilt plant group.
+        state.plant_candidate_overrides = {
+            key: value
+            for key, value in saved_overrides.items()
+            if any(
+                g["model_region"] == key[0] and g["tech_group"] == key[1]
+                for g in state.plant_groups
+            )
+        }
+        regenerate_plant_yaml_with_overrides()
+        render_plant_candidates()
+
+
+def _restore_workflow_state(manifest, settings_yamls=None, resource_group_files=None):
+    """Apply a validated manifest after static app data and controls are ready."""
+    forms = manifest["forms"]
+    state_payload = manifest["state"]
+    tables = manifest["tables"]
+
+    for element_id, value in forms.items():
+        if element_id in _WORKFLOW_FORM_IDS:
+            _set_workflow_form_value(element_id, value)
+
+    periods = forms.get("planning_periods") or []
+    restore_periods = getattr(window, "restorePlanningPeriods", None)
+    if callable(restore_periods) and periods:
+        restore_periods(to_js(periods))
+    else:
+        _set_workflow_form_value("modelYears", forms.get("modelYears", ""))
+        _set_workflow_form_value("planningYears", forms.get("planningYears", ""))
+
+    restore_segments = getattr(window, "restoreDemandSegments", None)
+    if callable(restore_segments) and forms.get("demand_segments"):
+        restore_segments(to_js(forms["demand_segments"]), forms.get("vollValue"))
+
+    # Let the existing UI switch visibility, then replace the reset state with
+    # the imported values below.
+    toggle_region_mode = getattr(window, "toggleRegionMode", None)
+    if callable(toggle_region_mode):
+        toggle_region_mode(bool(state_payload.get("is_manual_mode", False)))
+
+    state.selected_bas = set(state_payload.get("selected_bas") or [])
+    state.current_grouping = state_payload.get("current_grouping")
+    state.is_manual_mode = bool(state_payload.get("is_manual_mode", False))
+    state.is_clustered = bool(state_payload.get("is_clustered", False))
+    state.ba_to_region = dict(state_payload.get("ba_to_region") or {})
+    state.region_aggregations = state_payload.get("region_aggregations")
+    state.manual_regions = {
+        str(name): list(values or [])
+        for name, values in (state_payload.get("manual_regions") or {}).items()
+    }
+    state.selected_manual_region = state_payload.get("selected_manual_region")
+    state.cluster_colors = dict(state_payload.get("cluster_colors") or {})
+    state.custom_tech_groups = {
+        str(name): set(values or [])
+        for name, values in (state_payload.get("custom_tech_groups") or {}).items()
+    }
+    state.available_techs = set(state_payload.get("available_techs") or [])
+    state.current_group = state_payload.get("current_group")
+    state.omit_selected = set(state_payload.get("omit_selected") or [])
+    state.omit_available = set(state_payload.get("omit_available") or [])
+    state.new_resources = list(state_payload.get("new_resources") or [])
+    state.modified_new_resources = dict(
+        state_payload.get("modified_new_resources") or {}
+    )
+    state.plant_cluster_settings = state_payload.get("plant_cluster_settings")
+    state.plant_candidate_overrides = {
+        (str(item["model_region"]), str(item["tech_group"])): int(item["num_clusters"])
+        for item in state_payload.get("plant_candidate_overrides") or []
+    }
+    state.ccs_disposal_cost = state_payload.get(
+        "ccs_disposal_cost", state.ccs_disposal_cost
+    )
+    state.ccs_disposal_cost_map = dict(state_payload.get("ccs_disposal_cost_map") or {})
+    state.esr_zones = state_payload.get("esr_zones")
+    state.esr_map = state_payload.get("esr_map")
+    state.esr_type_map = state_payload.get("esr_type_map")
+    policy_states = state_payload.get("esr_policy_states")
+    state.esr_policy_states = (
+        {str(name): set(values or []) for name, values in policy_states.items()}
+        if isinstance(policy_states, dict)
+        else policy_states
+    )
+    state.esr_rps_techs = set(state_payload.get("esr_rps_techs") or [])
+    state.esr_ces_techs = set(state_payload.get("esr_ces_techs") or [])
+    state.renewables_clusters = None
+    state.renewables_clusters_info = None
+    state.renewables_region_capacity_mw = {}
+    state.renewables_region_base_capacity_mw = {}
+    state.renewables_pending_region_capacity_mw = {}
+    state.renewables_region_available_mw = {}
+    state.renewables_curve_data = {}
+    state.renewables_capacity_overrides_mw = dict(
+        state_payload.get("renewables_capacity_overrides_mw") or {}
+    )
+    state.renewables_selected_region = state_payload.get("renewables_selected_region")
+    state.renewables_selected_tech = state_payload.get(
+        "renewables_selected_tech", "landbasedwind"
+    )
+    state.show_transmission_lines = bool(
+        state_payload.get("show_transmission_lines", False)
+    )
+    state.box_select_mode = bool(state_payload.get("box_select_mode", True))
+    state.settings_yamls = dict(state_payload.get("settings_yamls") or {})
+    if settings_yamls:
+        state.settings_yamls = settings_yamls
+    state.resource_group_files = dict(resource_group_files or {})
+
+    state.emission_policies_df = _workflow_dataframe_from_payload(
+        tables.get("emission_policies"), "emission_policies"
+    )
+    state.network_costs_df = _workflow_dataframe_from_payload(
+        tables.get("network_costs"), "network_costs"
+    )
+    state.resource_group_assignments = _workflow_dataframe_from_payload(
+        tables.get("resource_group_assignments"), "resource_group_assignments"
+    )
+    state.uploaded_lcoe_onshorewind = _workflow_dataframe_from_payload(
+        tables.get("uploaded_lcoe_onshorewind"), "uploaded_lcoe_onshorewind"
+    )
+    state.uploaded_lcoe_solar = _workflow_dataframe_from_payload(
+        tables.get("uploaded_lcoe_solar"), "uploaded_lcoe_solar"
+    )
+    # Rebuild dynamic controls and previews without invoking reset handlers.
+    # Force grouping colors to be rebuilt for the imported grouping column.
+    state.current_grouping = None
+    update_no_cluster_options()
+    selected_no_cluster = set(forms.get("no_cluster_selected") or [])
+    container = document.getElementById("noClusterContainer")
+    if container:
+        for checkbox in container.querySelectorAll('input[name="noCluster"]'):
+            checkbox.checked = str(checkbox.value) in selected_no_cluster
+    render_omit_editor()
+    render_group_editor()
+    populate_resource_year_selects()
+    populate_fuel_scenario_selects()
+    for fuel, scenario in (forms.get("fuel_scenarios") or {}).items():
+        element = document.getElementById(f"fuelScenario_{fuel}")
+        if element:
+            element.value = str(scenario)
+    render_fuel_price_charts()
+    render_new_resources_list()
+    render_modified_resources_list()
+    populate_settings_file_select()
+    update_settings_preview()
+    _update_resource_group_list()
+
+    if state.is_manual_mode:
+        update_manual_regions_display()
+        update_unassigned_display()
+        update_manual_region_colors()
+    elif state.region_aggregations:
+        update_map_cluster_colors(state.region_aggregations)
+    update_selected_display()
+    update_tooltips()
+    update_transmission_lines()
+    if state.map is not None:
+        if state.box_select_mode:
+            on_box_mode(None)
+        else:
+            on_click_mode(None)
+    _restore_plant_clustering_outputs()
+    render_esr_results()
+    _render_renewables_preview()
+    _render_renewables_advanced_panel()
+    set_status("Workflow defaults imported successfully.", "success")
+
+    # Renewable curves are derived from the restored source tables. Recompute
+    # them asynchronously so importing a ZIP does not serialize large arrays
+    # into the manifest or block the rest of the wizard from being restored.
+    if state.region_aggregations and (
+        state.resource_group_assignments is not None or resource_group_files
+    ):
+        asyncio.create_task(_rebuild_imported_renewables(resource_group_files))
+
+
+def _import_workflow_bytes(data, filename):
+    lower = filename.lower()
+    if lower.endswith(".zip"):
+        manifest, settings_yamls, resource_group_files = _read_workflow_zip(data)
+        _restore_workflow_state(manifest, settings_yamls, resource_group_files)
+        return
+    if lower not in {"workflow_state.yml", "workflow_state.yaml"}:
+        raise ValueError("Choose a workflow_state.yml file or a complete settings ZIP.")
+    manifest = _parse_workflow_manifest(data)
+    required = manifest["required_supplemental_files"]
+    if required:
+        raise ValueError(
+            "This workflow state requires supplemental files. Upload the complete settings ZIP."
+        )
+    _restore_workflow_state(manifest)
+
+
+async def _read_uploaded_workflow_file(event):
+    files = event.target.files
+    if not files or files.length == 0:
+        return
+    file_obj = files.item(0)
+    filename = file_obj.name
+    progress = document.getElementById("workflowImportProgress")
+    progress_message = document.getElementById("workflowImportProgressMessage")
+    if progress:
+        progress.classList.add("visible")
+        progress.setAttribute("aria-hidden", "false")
+    if progress_message:
+        progress_message.textContent = f"Loading workflow state from {filename}..."
+    set_status(f"Importing workflow defaults from {filename}...", "info")
+    try:
+        array_buffer = await file_obj.arrayBuffer()
+        data = bytes(Uint8Array.new(array_buffer).to_py())
+        _import_workflow_bytes(data, filename)
+    except (
+        ValueError,
+        UnicodeDecodeError,
+        zipfile.BadZipFile,
+        pd.errors.ParserError,
+    ) as exc:
+        set_status(f"Workflow import error: {exc}", "error")
+    except Exception as exc:
+        set_status(f"Workflow import error: {exc}", "error")
+    finally:
+        if progress:
+            progress.classList.remove("visible")
+            progress.setAttribute("aria-hidden", "true")
+        try:
+            event.target.value = ""
+        except Exception:
+            pass
+
+
+def on_upload_workflow_file(event):
+    asyncio.create_task(_read_uploaded_workflow_file(event))
+
+
 def on_download_all_settings(event):
     """
-    Download all generated settings files (everything in state.settings_yamls) plus
-    optional emission_policies.csv as a single ZIP.
+    Download all generated settings files and the required workflow state manifest
+    as a single ZIP.
     """
     if not state.settings_yamls:
         set_status(
@@ -8811,6 +9684,11 @@ def on_download_all_settings(event):
 
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+        manifest = build_workflow_state_manifest()
+        zipf.writestr(
+            WORKFLOW_STATE_FILENAME, yaml.safe_dump(manifest, sort_keys=False)
+        )
+
         # Write settings files in deterministic order, rejecting unsafe names.
         # All YAML files go to settings/.
         for filename in sorted(state.settings_yamls):
@@ -8824,13 +9702,28 @@ def on_download_all_settings(event):
             csv_content = state.emission_policies_df.to_csv(index=False)
             zipf.writestr("extra_inputs/emission_policies.csv", csv_content)
 
+        # Write the demand segments / VOLL CSV under extra_inputs/.
+        demand_segments_csv = generate_demand_segments_csv()
+        if demand_segments_csv is not None:
+            zipf.writestr(
+                f"extra_inputs/{DEMAND_SEGMENTS_FILENAME}", demand_segments_csv
+            )
+
         # Write network_costs.csv under data/ if it has been computed.
         if state.network_costs_df is not None:
             network_costs_filename = _build_network_costs_filename()
             zipf.writestr(
-                f"data/{network_costs_filename}",
+                f"extra_inputs/{network_costs_filename}",
                 state.network_costs_df.to_csv(index=False),
             )
+
+        for filename, payload in sorted(state.resource_group_files.items()):
+            if "/" in filename or "\\" in filename or ".." in filename:
+                continue
+            if isinstance(payload, (bytes, bytearray)):
+                zipf.writestr(f"resource_groups/{filename}", payload)
+            else:
+                zipf.writestr(f"resource_groups/{filename}", str(payload))
 
     zip_name = "powergenome_settings.zip"
     _download_binary_file(zip_name, buffer.getvalue(), "application/zip")
@@ -8840,7 +9733,7 @@ def on_download_all_settings(event):
     if state.network_costs_df is None:
         set_status(
             "Network cost calculation has not completed or was not run; "
-            "data/network_costs.csv is not included in the downloaded ZIP.",
+            "the generated network cost CSV is not included in the downloaded ZIP.",
             "warning",
         )
 
@@ -9332,6 +10225,9 @@ async def main():
         )
         document.getElementById("downloadAllSettingsZipBtn").addEventListener(
             "click", create_proxy(on_download_all_settings)
+        )
+        document.getElementById("uploadWorkflowInput").addEventListener(
+            "change", create_proxy(on_upload_workflow_file)
         )
 
         # Resource groups

@@ -439,6 +439,7 @@ The Model Setup step allows you to configure the temporal and financial paramete
 * **Planning Periods**: A row-based editor with one planning period per row
 * **Planning Year**: The end year for each planning period (the first row defaults to 2030)
 * **Period Start**: The first investment year for each planning period (the first row defaults to the current calendar year)
+* **Value of Lost Load (VOLL)**: The cost of non-served energy in $/MWh (default 5000), with a demand segments table for tiered curtailment penalties
 
 ### Understanding These Parameters
 
@@ -491,6 +492,30 @@ Multiple planning periods (e.g., 2030, 2035, 2040) allow the model to make seque
 !!! note
     Each planning period row must include both a Period Start and a Planning Year. The app exports these as a `model_periods` list of `[period_start, planning_year]` pairs for PowerGenome.
 
+#### Value of Lost Load (VOLL) and Demand Segments
+
+The Value of Lost Load (VOLL) section, below Planning Periods, controls how the model prices non-served energy (demand curtailment).
+
+* **VOLL ($/MWh)**: The value of lost load in USD/MWh. Defaults to 5000.
+* **Demand segments table**: A row-based editor, like Planning Periods, where you can add or remove segments with the **+** and remove buttons. Segments are numbered automatically starting at 1. Each row has:
+    * **Cost (fraction of VOLL)** - The cost of non-served energy for that segment, as a fraction of VOLL
+    * **Max Curtailment (fraction of demand)** - The maximum fraction of demand in each zone and period that can be curtailed in that segment
+    * **$/MWh** - A read-only computed column (VOLL × cost fraction) showing the implied curtailment price
+
+The table defaults to four segments:
+
+| Cost (fraction of VOLL) | Max Curtailment (fraction of demand) |
+| --- | --- |
+| 1.0 | 1.0 |
+| 0.9 | 0.04 |
+| 0.55 | 0.024 |
+| 0.2 | 0.003 |
+
+Using multiple segments lets the model curtail a small amount of demand at a lower penalty before allowing deeper, more expensive curtailment—approximating a demand response curve instead of a single flat penalty.
+
+!!! note
+    On export (Download All Settings ZIP), the VOLL value and segment rows are written to `extra_inputs/demand_segments_voll.csv` with the columns `Voll`, `Demand_Segment`, `Cost_of_Demand_Curtailment_per_MW`, `Max_Demand_Curtailment`, and `$/MWh` (the `Voll` column is populated only on the first row), matching PowerGenome's `Demand_data.csv` structure. The exported `settings/data.yml` already references this file via `demand_segments_fn: demand_segments_voll.csv`, and both the VOLL value and segment rows are saved and restored in the workflow state (`workflow_state.yml`) on export and import.
+
 ## Step 3: Existing Plants
 
 The Existing Plants step allows you to cluster existing generators within each model region. This reduces model complexity while preserving the operational diversity of the fleet.
@@ -520,7 +545,7 @@ The New Resources step allows you to select new-build technologies from NREL's A
 When the app loads, Step 4 comes pre-populated with **6 ATB 2024 new-build resources** so you have a realistic starting point without needing to configure everything from scratch. All 6 defaults use the **"All (default)"** planning year, meaning they apply to every model year.
 
 | Technology | Tech Detail | Cost Case |
-|---|---|---|
+| --- | --- | --- |
 | NaturalGas | 2-on-1 Combined Cycle (H-Frame) | Moderate |
 | NaturalGas | Combustion Turbine (F-Frame) | Moderate |
 | LandbasedWind | Class3 | Moderate |
@@ -1008,7 +1033,7 @@ The Export step generates complete PowerGenome settings files based on all previ
 
 ### Generated Files
 
-The app always generates these seven YAML files:
+The app generates these seven core YAML files:
 
 * `model_definition.yml` - Model regions, years, and financial settings
 * `resources.yml` - Existing plant clusters, new resources, resource attribute modifiers, and modified resources. Year-specific resources are embedded directly using year-keyed values (PowerGenome v0.8.0+ format).
@@ -1018,18 +1043,24 @@ The app always generates these seven YAML files:
 * `resource_tags.yml` - Resource classification tags
 * `startup_costs.yml` - Startup cost parameters
 
+The **Download All** ZIP also includes `settings/data.yml`. This file is a
+starter template for the resource and data locations used by PowerGenome.
+Replace its placeholder resource path and primary data path with locations that
+match your local data installation before running a model. The generated
+`data.yml` does not include `data` as a secondary `data_location`.
+
 #### Download All ZIP Structure
 
 When you click **Download All**, the ZIP archive contains:
 
 * `settings/` - All generated YAML files
-* `extra_inputs/` - Generated CSV inputs used by YAML settings (only when ESR policies exist)
+* `extra_inputs/` - Generated CSV inputs used by YAML settings (when applicable)
 
 This includes:
 
-* `settings/*.yml` (always for core settings)
+* `settings/*.yml` (core settings plus the `data.yml` path template)
 * `extra_inputs/emission_policies.csv` (only when ESR policies are generated)
-* `data/network_costs.csv` (only when network costs were computed successfully)
+* `extra_inputs/<generated network-cost filename>.csv` (only when network costs were computed successfully)
 
 #### Conditional ESR Policy File
 
@@ -1039,9 +1070,11 @@ If ESR policies are generated in Step 6, the export also includes:
 
 #### Conditional Network Cost File
 
-If network costs were computed after regions were finalized, the export also includes:
+If network costs were computed after regions were finalized, the export also includes
+a CSV whose descriptive filename is generated from the region count,
+interconnections, and grouping:
 
-* `network_costs.csv` - Region-to-region transmission proxy table (written to `data/` in **Download All**). See [Network Cost Calculation](network_costs.md).
+* `extra_inputs/network_costs_<regions>r_<interconnections>_<grouping>.csv` - Region-to-region transmission proxy table. The generated filename is inserted into the ZIP under `extra_inputs/`; use that filename when referencing the export. See [Network Cost Calculation](network_costs.md).
 
 ##### How Year-Specific Resources Work
 
@@ -1077,7 +1110,6 @@ resource_modifiers:
 
 The app intentionally **does not generate** these files (configure separately):
 
-* `data.yml`
 * `time_clustering.yml`
 * `demand.yml`
 
@@ -1091,6 +1123,95 @@ The app intentionally **does not generate** these files (configure separately):
 !!! note
     `model_definition.yml` and several downstream defaults require region aggregations from Step 1.
     If you haven't clustered regions yet, the Export step will prompt you to complete Step 1 first.
+
+### Saving and Restoring Workflow Defaults
+
+The app lets you save all of your current settings choices to a file and reload them in a later session—so you can pause work, share a configuration, or create a reusable starting point without re-entering every option by hand.
+
+#### Exporting Workflow Defaults
+
+Every time you click **Download All**, the resulting ZIP archive automatically includes a `workflow_state.yml` file at its root. This file is a **versioned manifest** that captures:
+
+* All form control values (grouping column, clustering algorithm, planning periods, fuel scenarios, no-cluster selections, etc.)
+* The full application state (selected BAs, region assignments, new resources, plant cluster settings, renewables clusters, ESR policies, network costs, resource group assignments, and pre-generated settings YAMLs)
+* References to any supplemental files—such as resource group files—that are stored in the ZIP alongside the manifest
+
+Renewable supply-curve arrays are an exception: they are **derived during workflow
+import** from the available renewable LCOE/resource data and are not stored in
+`workflow_state.yml`. The manifest stores the renewable cluster settings and
+capacity selections needed to restore the workflow, then the app rebuilds the
+curve arrays when the corresponding data is available.
+
+The Existing Plants (Step 3) clustering outputs are similarly **rebuilt during
+import**: the manifest stores the plant cluster settings and any per-candidate
+cluster-count overrides, and the app re-runs the clustering with the restored
+inputs to regenerate the YAML preview and split-candidate list, then re-applies
+the imported overrides.
+
+When generated wind or solar LCOE Parquet files are included under
+`resource_groups/`, the manifest also omits the matching source tables and
+restores them directly from those Parquet files. This avoids storing the same
+resource data twice.
+
+You do not need to take any extra steps to produce this manifest; it is always written into **Download All**.
+
+#### The `workflow_state.yml` Manifest Format
+
+The manifest is a YAML file that begins with two required header fields:
+
+```yaml
+schema: powergenome-tools-workflow-state
+version: 1
+required_supplemental_files:
+  - resource_groups/my_region_groups.json   # listed only when supplemental files exist
+forms: { ... }
+state: { ... }
+tables: { ... }
+```
+
+* `schema` must be `powergenome-tools-workflow-state`.
+* `version` must be `1` (the current format version).
+* `required_supplemental_files` lists every supplemental file path (relative to the ZIP root) that must be present for a successful import. This list is empty when no supplemental files exist.
+
+The app rejects any manifest whose `schema` or `version` does not match. **Do not edit these header fields manually.**
+
+#### Importing Workflow Defaults
+
+A "Continue an Existing Workflow" upload control appears on the app's main page. It accepts either a full settings ZIP or a standalone `workflow_state.yml` file.
+
+##### When a standalone `workflow_state.yml` is enough
+
+If `required_supplemental_files` is empty in the manifest—meaning the workflow did not generate any resource group files—you can upload just the `workflow_state.yml` file on its own. The app will restore all form values and state without needing anything else.
+
+Because curve arrays are recalculated from source data, the imported curves are
+only reproducible when the available LCOE/resource files are consistent with
+those used when the workflow was exported. Changed resource-group inputs,
+different LCOE files, or changed region assignments can produce different
+curves and capacity limits. If the required source data is unavailable, the
+workflow settings can still be restored, but supply-curve arrays are not
+available until the data is supplied and renewables clusters are recomputed.
+
+##### When you must upload the full ZIP
+
+If `required_supplemental_files` lists one or more paths, the workflow depends on supplemental files (for example, resource group JSON files generated in Step 7). In this case, **uploading just the `workflow_state.yml` will be rejected** with the error:
+
+> *This workflow state requires supplemental files. Upload the complete settings ZIP.*
+
+Upload the complete `powergenome_settings.zip` instead. The app verifies that every path listed in `required_supplemental_files` is actually present inside the ZIP before restoring state.
+
+##### What the app accepts and rejects
+
+| Upload | Accepted? | Condition |
+| -------- | ----------- | ----------- |
+| `powergenome_settings.zip` | ✅ Always | Must be a valid ZIP containing `workflow_state.yml` at its root |
+| `workflow_state.yml` (standalone) | ✅ Only when `required_supplemental_files` is empty | — |
+| Any other filename (e.g. `my_config.yml`) | ❌ Rejected | Must be named exactly `workflow_state.yml` or `workflow_state.yaml` |
+| ZIP missing `workflow_state.yml` | ❌ Rejected | The manifest must be at the ZIP root |
+| ZIP missing a listed supplemental file | ❌ Rejected | All paths in `required_supplemental_files` must exist in the ZIP |
+| Manifest with wrong `schema` or `version` | ❌ Rejected | Incompatible format |
+
+!!! tip
+    The easiest way to resume a session is to keep the **Download All** ZIP. It always contains both the settings files and a complete, importable `workflow_state.yml` with all supplemental files bundled together.
 
 ---
 
