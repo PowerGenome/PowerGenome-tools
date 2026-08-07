@@ -8371,7 +8371,9 @@ def generate_data_settings():
         "transmission_constraints_table": "transmission_capacity_reeds.csv",
         "fuel_price_table": "fuel_prices.parquet",
         "dollar_year_table": "dollar_year_adjustment.csv",
-        "transmission_cost_table": _build_network_costs_filename(),
+        "transmission_cost_table": (
+            _build_network_costs_filename() if state.network_costs_df is not None else "network_costs.csv"
+        ),
         "demand_table": "reeds_load_transformed.parquet",
         "regional_cost_factor_table": "regional_cost_multipliers.csv",
         "distributed_capacity_table": "distributed_capacity.parquet",
