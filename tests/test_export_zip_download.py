@@ -371,7 +371,7 @@ class TestOnDownloadAllSettings:
         }
 
     def test_data_yaml_is_included_with_required_placeholders(self, cluster_app):
-        """data.yml is exported under settings/ with the ZIP's network-cost filename."""
+        """data.yml and the network-cost CSV use their expected ZIP locations."""
         cluster_app.state.region_aggregations = {"Region1": ["BA1"]}
         cluster_app.state.current_grouping = "interconnect"
         cluster_app.state.network_costs_df = pd.DataFrame(
@@ -390,7 +390,7 @@ class TestOnDownloadAllSettings:
         with _open_zip_from_calls(calls) as zf:
             assert set(zf.namelist()) == {
                 "settings/data.yml",
-                f"data/{network_costs_filename}",
+                f"extra_inputs/{network_costs_filename}",
                 "workflow_state.yml",
             }
             exported_data = yaml.safe_load(zf.read("settings/data.yml"))
@@ -403,11 +403,7 @@ class TestOnDownloadAllSettings:
             exported_data["RESOURCE_GROUP_PROFILES"]
             == "path/to/resource/profiles/folder"
         )
-        assert exported_data["data_location"] == [
-            "path/to/your/primary/data/folder",
-            "data",
-        ]
-        assert exported_data["data_location"][-1] == "data"
+        assert exported_data["data_location"] == ["path/to/your/primary/data/folder"]
         assert exported_data["transmission_cost_table"] == network_costs_filename
 
     @pytest.mark.parametrize(

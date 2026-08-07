@@ -4,8 +4,9 @@ This page explains, in plain language, how the web app estimates network costs b
 
 The calculation runs automatically after model regions are finalized in Step 1
 (automatic clustering or manual finalization). If successful, results are stored
-in app state and exported in Step 9 under `data/` with a descriptive generated
-filename, such as `data/network_costs_10r_eastern-western_nercr.csv`.
+in app state and exported in Step 9 under `extra_inputs/` with a descriptive
+generated filename, such as
+`extra_inputs/network_costs_10r_eastern-western_nercr.csv`.
 
 For overall workflow context, see [Web Application](web_app.md).
 
@@ -110,9 +111,9 @@ When Step 9 Download All is used:
 
 * `settings/*.yml` are always included.
 * `extra_inputs/emission_policies.csv` is included only when ESR policies exist.
-* `data/network_costs_<regions>r_<interconnections>_<grouping>.csv` is included
+* `extra_inputs/network_costs_<regions>r_<interconnections>_<grouping>.csv` is included
   only when network costs were successfully computed and stored in state. The
-  generated filename is inserted into the ZIP under `data/`.
+  generated filename is inserted into the ZIP under `extra_inputs/`.
 
 ## Technical Reference
 

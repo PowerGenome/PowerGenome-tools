@@ -8359,10 +8359,7 @@ def generate_data_settings():
         "emission_policies_fn": "emission_policies.csv",
         "RESOURCE_GROUPS": "path/to/resource/groups/folder",
         "RESOURCE_GROUP_PROFILES": "path/to/resource/profiles/folder",
-        "data_location": [
-            "path/to/your/primary/data/folder",
-            "data",
-        ],
+        "data_location": ["path/to/your/primary/data/folder"],
         "generation_table": "reeds_generators_transformed.csv",
         "plant_region_table": "plant_region_map.csv",
         "resource_heat_rate_table": "technology_heat_rates_nrelatb.csv",
@@ -8372,7 +8369,9 @@ def generate_data_settings():
         "fuel_price_table": "fuel_prices.parquet",
         "dollar_year_table": "dollar_year_adjustment.csv",
         "transmission_cost_table": (
-            _build_network_costs_filename() if state.network_costs_df is not None else "network_costs.csv"
+            _build_network_costs_filename()
+            if state.network_costs_df is not None
+            else "network_costs.csv"
         ),
         "demand_table": "reeds_load_transformed.parquet",
         "regional_cost_factor_table": "regional_cost_multipliers.csv",
@@ -9619,11 +9618,11 @@ def on_download_all_settings(event):
             csv_content = state.emission_policies_df.to_csv(index=False)
             zipf.writestr("extra_inputs/emission_policies.csv", csv_content)
 
-        # Write network_costs.csv under data/ if it has been computed.
+        # Write network costs under extra_inputs/ if they have been computed.
         if state.network_costs_df is not None:
             network_costs_filename = _build_network_costs_filename()
             zipf.writestr(
-                f"data/{network_costs_filename}",
+                f"extra_inputs/{network_costs_filename}",
                 state.network_costs_df.to_csv(index=False),
             )
 
