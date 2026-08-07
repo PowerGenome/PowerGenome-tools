@@ -8421,10 +8421,7 @@ def generate_data_settings():
         "emission_policies_fn": "emission_policies.csv",
         "RESOURCE_GROUPS": "path/to/resource/groups/folder",
         "RESOURCE_GROUP_PROFILES": "path/to/resource/profiles/folder",
-        "data_location": [
-            "path/to/your/primary/data/folder",
-            "data",
-        ],
+        "data_location": ["path/to/your/primary/data/folder"],
         "generation_table": "reeds_generators_transformed.csv",
         "plant_region_table": "plant_region_map.csv",
         "resource_heat_rate_table": "technology_heat_rates_nrelatb.csv",
@@ -9716,7 +9713,7 @@ def on_download_all_settings(event):
         if state.network_costs_df is not None:
             network_costs_filename = _build_network_costs_filename()
             zipf.writestr(
-                f"data/{network_costs_filename}",
+                f"extra_inputs/{network_costs_filename}",
                 state.network_costs_df.to_csv(index=False),
             )
 

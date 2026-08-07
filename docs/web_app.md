@@ -1045,21 +1045,22 @@ The app generates these seven core YAML files:
 
 The **Download All** ZIP also includes `settings/data.yml`. This file is a
 starter template for the resource and data locations used by PowerGenome.
-Replace its placeholder resource/data paths with paths that match your local
-data installation before running a model.
+Replace its placeholder resource path and primary data path with locations that
+match your local data installation before running a model. The generated
+`data.yml` does not include `data` as a secondary `data_location`.
 
 #### Download All ZIP Structure
 
 When you click **Download All**, the ZIP archive contains:
 
 * `settings/` - All generated YAML files
-* `extra_inputs/` - Generated CSV inputs used by YAML settings (only when ESR policies exist)
+* `extra_inputs/` - Generated CSV inputs used by YAML settings (when applicable)
 
 This includes:
 
 * `settings/*.yml` (core settings plus the `data.yml` path template)
 * `extra_inputs/emission_policies.csv` (only when ESR policies are generated)
-* `data/<generated network-cost filename>.csv` (only when network costs were computed successfully)
+* `extra_inputs/<generated network-cost filename>.csv` (only when network costs were computed successfully)
 
 #### Conditional ESR Policy File
 
@@ -1073,7 +1074,7 @@ If network costs were computed after regions were finalized, the export also inc
 a CSV whose descriptive filename is generated from the region count,
 interconnections, and grouping:
 
-* `data/network_costs_<regions>r_<interconnections>_<grouping>.csv` - Region-to-region transmission proxy table. The generated filename is inserted into the ZIP under `data/`; use that filename when referencing the export. See [Network Cost Calculation](network_costs.md).
+* `extra_inputs/network_costs_<regions>r_<interconnections>_<grouping>.csv` - Region-to-region transmission proxy table. The generated filename is inserted into the ZIP under `extra_inputs/`; use that filename when referencing the export. See [Network Cost Calculation](network_costs.md).
 
 ##### How Year-Specific Resources Work
 
