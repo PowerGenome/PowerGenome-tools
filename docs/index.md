@@ -37,7 +37,7 @@ The web application guides you through a 9-step workflow to build complete Power
 
 * **Interactive Visualization**: Select regions on a map and see clustering results in real-time with multiple algorithms (Spectral, Louvain, Hierarchical).
 * **Comprehensive Configuration**: Define all major PowerGenome settings in one place, from regional boundaries to resource portfolios.
-* **Flexible Grouping**: Cluster regions based on various hierarchies like NERC regions, Transmission Groups, or States.
+* **Flexible Grouping**: Cluster regions based on hierarchies such as **NERC - latest** (the default), **NERC - legacy**, Transmission Groups, or States.
 * **Plant Aggregation**: Cluster power plants within regions based on technology and efficiency, allocating clusters based on a budget while minimizing variability.
 * **NREL ATB Integration**: Select new-build resources directly from NREL's Annual Technology Baseline with support for custom modified resources and cost/performance attribute overrides.
 * **Complete Settings Export**: Generate all seven major PowerGenome settings YAML files ready for use.

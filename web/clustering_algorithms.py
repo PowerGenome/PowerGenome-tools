@@ -907,6 +907,7 @@ def generate_cluster_names(clusters, hierarchy_df):
         "st",
         "cendiv",
         "transgrp",
+        "nercr-latest",
         "nercr",
         "transreg",
         "interconnect",

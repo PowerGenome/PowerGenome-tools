@@ -103,7 +103,7 @@ The Regions step offers two modes for defining model regions:
 
 ### Automatic Clustering
 
-Automatic clustering uses transmission capacity between BAs to create aggregated regions. BAs are first clustered within their selected grouping (e.g., NERC region), then groups are merged to reach the target number of regions.
+Automatic clustering uses transmission capacity between BAs to create aggregated regions. BAs are first clustered within their selected grouping (for example, **NERC - latest**), then groups are merged to reach the target number of regions.
 
 #### How to Use Region Clustering
 
@@ -115,7 +115,7 @@ Automatic clustering uses transmission capacity between BAs to create aggregated
 6. **Export**: Copy or download the YAML output to use in PowerGenome.
 
 !!! tip
-    The clustering uses transmission capacity between BAs to create aggregated regions. BAs are first clustered within their selected grouping (e.g., NERC region), then groups are merged to reach the target number of regions. The selected grouping affects the clustering results, so experiment with different options to see what works best for your case!
+    The clustering uses transmission capacity between BAs to create aggregated regions. BAs are first clustered within their selected grouping (for example, **NERC - latest**), then groups are merged to reach the target number of regions. The selected grouping affects the clustering results, so experiment with different options to see what works best for your case!
 
 ### Manual Definition
 
@@ -323,13 +323,15 @@ The **Grouping Column** determines how BAs are initially partitioned before clus
 
 | Option | Groups | Details | Strengths | Weaknesses | Best For |
 | -------- | -------- | --------- | ----------- | ----------- | ---------- |
+| **NERC - latest** (`nercr-latest`, Default) | NERC regions | Uses the latest NERC regional definitions in the hierarchy data | Current NERC boundaries; suitable default for new analyses | Results may differ from older studies that used previous definitions | New analyses and current planning studies |
+| **NERC - legacy** (`nercr`) | NERC regions | Uses legacy NERC regional definitions in the hierarchy data | Supports comparisons with older studies | Not the current default | Reproducing older analyses |
 | **Transmission Group** | 18 | ~7 BAs per group (median 6) | More balanced regions; aligns with ISOs/RTOs; better convergence | None significant | Most general analyses; grid-operational alignment |
 | **Transmission Region** | 11 | ~12 BAs per group (median 11) | Still grid-aligned; moderate flexibility | Large NorthernGrid group in WECC can lead to unbalanced regions in national studies | Broader transmission boundaries |
 | **Interconnect** | 3 | ~45 BAs per group (median 35) | None noted | Highly imbalanced regions; misses operational detail | Rarely used |
 | **Census Division** | 9 | ~15 BAs per group (median 17) | Regional policy rollups | Doesn't reflect grid ops; splits transmission clusters | High-level regional summaries |
 | **State** | 48 | ~3 BAs per group (median 2) | Aligns to state policy boundaries | Doesn't reflect grid ops; splits transmission clusters | State-level policy analysis |
 
-**Recommendation**: Use **Transmission Group** (default) or **Transmission Region** for grid-focused analyses. These options respect ISO/RTO boundaries that reflect how the grid is actually operated and studied.
+**Recommendation**: Use **NERC - latest** (default) for new analyses. Use **NERC - legacy** when reproducing results based on the previous NERC definitions; use **Transmission Group** or **Transmission Region** when ISO/RTO-aligned boundaries are more appropriate.
 
 ### Choosing a Clustering Algorithm and Target
 
@@ -369,14 +371,14 @@ Once you've selected a grouping column, you need to decide how many regions you 
 
 **For a new analysis**:
 
-1. Start with **Transmission Group** grouping.
+1. Start with **NERC - latest** grouping.
 2. Enable **Auto-Optimize** with a reasonable range (e.g., 15–40 regions).
 3. Try switching to a fixed number of regions. Select **Spectral** or **Louvain** algorithm.
 4. Review the resulting regions and modularity score. Experiment with different ranges to see how modularity changes.
 
 **For balanced, fixed-region models**:
 
-1. Use **Transmission Group** grouping.
+1. Use **NERC - latest** grouping.
 2. Set a **Fixed Target** (e.g., 20 regions).
 3. Select **Spectral**, **Louvain**, or **Hierarchical Clustering (Average Linkage)** to explore how region clustering varies.
 

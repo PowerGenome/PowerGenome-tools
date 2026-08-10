@@ -173,6 +173,19 @@ class TestColorUtilities:
 # ---------------------------------------------------------------------------
 
 
+class TestHierarchyData:
+    """Regression checks for the hierarchy data used by the web app."""
+
+    def test_hierarchy_has_latest_and_legacy_nerc_columns(self):
+        hierarchy = pd.read_csv(
+            Path(__file__).resolve().parents[1] / "data" / "hierarchy.csv"
+        )
+
+        assert {"nercr-latest", "nercr"} <= set(hierarchy.columns)
+        assert hierarchy["nercr-latest"].notna().all()
+        assert hierarchy["nercr-latest"].astype(str).str.strip().ne("").all()
+
+
 class TestGraphUtilities:
     """Tests for build_transmission_graph and get_regional_groups."""
 
@@ -192,6 +205,7 @@ class TestGraphUtilities:
             {
                 "ba": ["a", "b", "c", "d"],
                 "st": ["CA", "CA", "TX", "TX"],
+                "nercr-latest": ["WECC_NW", "WECC_NW", "TRE", "TRE"],
                 "nercr": ["WECC", "WECC", "TRE", "TRE"],
             }
         )
@@ -235,6 +249,13 @@ class TestGraphUtilities:
             hierarchy_df, "nercr", {"a", "b", "c", "d"}
         )
         assert groups["WECC"] == {"a", "b"}
+        assert groups["TRE"] == {"c", "d"}
+
+    def test_get_regional_groups_nercr_latest(self, cluster_app, hierarchy_df):
+        groups = cluster_app.get_regional_groups(
+            hierarchy_df, "nercr-latest", {"a", "b", "c", "d"}
+        )
+        assert groups["WECC_NW"] == {"a", "b"}
         assert groups["TRE"] == {"c", "d"}
 
 
@@ -631,6 +652,7 @@ class TestGenerateClusterNames:
                 "st": ["CA", "CA", "TX"],
                 "cendiv": ["WSC", "WSC", "WSC"],
                 "transgrp": ["WECC", "WECC", "SPP"],
+                "nercr-latest": ["WECC_NW", "WECC_NW", "TRE"],
                 "nercr": ["WECC", "WECC", "TRE"],
                 "transreg": ["West", "West", "Central"],
                 "interconnect": ["Western", "Western", "Western"],
@@ -661,6 +683,25 @@ class TestGenerateClusterNames:
         names = cluster_app.generate_cluster_names(clusters, hierarchy_df)
         # First occurrence gets suffix "1"
         assert names[0].endswith("1")
+
+    def test_generate_cluster_names_accepts_nercr_latest_column(self, cluster_app):
+        hierarchy_df = pd.DataFrame(
+            {
+                "ba": ["wa1", "mt1"],
+                "st": ["WA", "MT"],
+                "cendiv": ["Pacific", "Pacific"],
+                "transgrp": ["NorthernGrid_West", "NorthernGrid_West"],
+                "nercr-latest": ["WECC_NW", "WECC_SW"],
+                "nercr": ["WECC_A", "WECC_B"],
+                "transreg": ["NorthernGrid", "NorthernGrid"],
+                "interconnect": ["Western", "Western"],
+            }
+        )
+
+        names = cluster_app.generate_cluster_names({0: {"wa1", "mt1"}}, hierarchy_df)
+
+        # The new column is accepted, while existing cendiv precedence remains.
+        assert names[0].startswith("Pacific")
 
 
 # ---------------------------------------------------------------------------
