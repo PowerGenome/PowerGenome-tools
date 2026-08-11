@@ -2084,7 +2084,7 @@
                         <span class="info-icon"
                             data-tooltip="Value of lost load (non-served energy) in USD/MWh. Segment costs are computed as a fraction of this value.">?</span>
                     </label>
-                    <input id="vollValue" type="number" value="5000" min="0" step="100" />
+                    <input id="vollValue" type="number" value="10000" min="0" step="100" />
 
                     <label style="font-size: 12px; margin-top: 8px;">Demand Segments
                         <span class="info-icon"
@@ -3360,9 +3360,6 @@
 
         const DEFAULT_DEMAND_SEGMENTS = [
             { cost: '1', maxCurtailment: '1' },
-            { cost: '0.9', maxCurtailment: '0.04' },
-            { cost: '0.55', maxCurtailment: '0.024' },
-            { cost: '0.2', maxCurtailment: '0.003' },
         ];
 
         function getVollValue() {
