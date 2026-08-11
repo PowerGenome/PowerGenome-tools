@@ -832,6 +832,19 @@ async def load_data():
     transmission_text = await response.text()
     state.transmission_df = pd.read_csv(StringIO(transmission_text))
 
+    # Load dummy transmission capacity (used for clustering connectivity only;
+    # not included in network cost calculations or exports).
+    try:
+        response = await fetch("./data/dummy_transmission_capacity.csv")
+        if response.ok:
+            dummy_text = await response.text()
+            dummy_df = pd.read_csv(StringIO(dummy_text))
+            state.transmission_df = pd.concat(
+                [state.transmission_df, dummy_df], ignore_index=True
+            )
+    except Exception:
+        pass  # Dummy file is optional
+
     update_loading_text("Loading plant data...")
 
     response = await fetch("./data/reeds_generators_transformed.csv")
