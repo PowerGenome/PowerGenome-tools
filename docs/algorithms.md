@@ -7,7 +7,7 @@ For context on how these algorithms fit into the overall workflow, see the [Web 
 ## Core Concepts
 
 1. **Graph Construction**: A network graph is built where nodes are BAs and edges are weighted by the **firm transmission capacity** (MW) between them.
-2. **Grouping Constraints**: Clustering respects the boundaries of the selected Grouping Column (e.g., NERC Region, State). BAs in different groups are generally not merged unless the algorithm is specifically configured to merge entire groups.
+2. **Grouping Constraints**: Clustering respects the boundaries of the selected Grouping Column (e.g., **NERC - latest**, **NERC - legacy**, or State). BAs in different groups are generally not merged unless the algorithm is specifically configured to merge entire groups.
 
 ## Algorithms
 
@@ -93,7 +93,7 @@ ESR-compatible clustering modifies the graph construction phase:
 1. **State Trading Rules**: The algorithm uses data [from ReEDS](https://nrel.github.io/ReEDS-2.0/model_documentation.html#state-renewable-portfolio-standards) that defines state trading compatibility. This data is based historical observations from a [2016 report](https://www.cesa.org/wp-content/uploads/Potential-RPS-Markets-Report-Holt.pdf). It does not account for the difference betwen bundled and unbundled RECs or limits on how much of a states requirement can be imported.
 **Transitive Trading**: States are considered compatible if they can trade transitively (e.g., if State A trades with State C, and State B trades with State C, then A and B are compatible).
 2. **Graph Modification**: Edges are removed between BAs whose states cannot trade, even if they have transmission capacity.
-3. **Group Pre-splitting**: Before clustering, grouping column groups (e.g., NERC regions) are split into trading subgroups. BAs within non-compatible states are placed in separate subgroups even if they share the same grouping value.
+3. **Group Pre-splitting**: Before clustering, grouping column groups (e.g., **NERC - latest** or **NERC - legacy**) are split into trading subgroups. BAs within non-compatible states are placed in separate subgroups even if they share the same grouping value.
 
 ### Impact on All Algorithms
 
