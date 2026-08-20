@@ -276,6 +276,12 @@ class AppState:
         self.network_costs_df = None  # pd.DataFrame result from calc_network
         self.network_data_cache = None  # (nodes_df, edges_df, topo_df) loaded once
 
+        # Demand visualization (Step 9)
+        self.demand_summary_df = None  # multi-year demand summary from demand_summary.csv
+        self.demand_map = None  # Leaflet map for demand choropleth
+        self.demand_map_layer = None  # Leaflet GeoJSON layer on demand map
+        self.demand_map_initialized = False
+
 
 state = AppState()
 
@@ -880,6 +886,21 @@ async def load_data():
     except Exception:
         state.reeds_annual_demand_df = None
         state.reeds_annual_demand_avg = {}
+
+    update_loading_text("Loading demand summary data...")
+    try:
+        response = await fetch("./data/demand_summary.csv")
+        if response.ok:
+            demand_summary_text = await response.text()
+            demand_summary_df = pd.read_csv(StringIO(demand_summary_text))
+            required_cols = {"region", "year", "scenario", "weather_year", "annual_demand_mwh"}
+            if required_cols <= set(demand_summary_df.columns):
+                demand_summary_df["region"] = (
+                    demand_summary_df["region"].astype(str).str.lower()
+                )
+                state.demand_summary_df = demand_summary_df
+    except Exception:
+        state.demand_summary_df = None
 
     # Load rectable for ESR-compatible clustering (optional but needed if checkbox is checked)
     update_loading_text("Loading trading rules...")
@@ -10097,6 +10118,536 @@ def on_run_esr_analysis(event):
 
 
 # ============================================================================
+# Demand Visualization (Step 9)
+# ============================================================================
+
+# Color palette for demand regions (cycled)
+_DEMAND_REGION_COLORS = [
+    "#1a56c4", "#e85f5f", "#27a060", "#c47f00", "#7e3db5",
+    "#0090a0", "#c44a1a", "#5a6e00", "#b03070", "#006090",
+]
+
+
+def _get_model_years_for_demand():
+    """Return sorted list of planning years from Model Setup step."""
+    try:
+        years = _get_model_years_from_dom()
+        return sorted(years)
+    except Exception:
+        return []
+
+
+def _get_demand_display_df(scenario: str) -> pd.DataFrame | None:
+    """Return a DataFrame with columns region, year, avg_demand_twh for the
+    given scenario, averaging over weather years and limiting to model years
+    if configured.
+
+    Returns None if no data is available.
+    """
+    if state.demand_summary_df is None:
+        return None
+
+    df = state.demand_summary_df
+    df_scen = df[df["scenario"] == scenario]
+    if df_scen.empty:
+        return None
+
+    # Average across weather years
+    agg = (
+        df_scen.groupby(["region", "year"], as_index=False)["annual_demand_mwh"]
+        .mean()
+    )
+    agg["avg_demand_twh"] = agg["annual_demand_mwh"] / 1e6  # MWh -> TWh
+
+    # If regions are clustered, aggregate BAs to model regions
+    if state.ba_to_region:
+        ba_to_region = {k.lower(): v for k, v in state.ba_to_region.items()}
+        agg["model_region"] = agg["region"].map(ba_to_region)
+        agg = agg.dropna(subset=["model_region"])
+        if agg.empty:
+            return None
+        agg = (
+            agg.groupby(["model_region", "year"], as_index=False)["avg_demand_twh"]
+            .sum()
+        )
+        agg = agg.rename(columns={"model_region": "region"})
+    else:
+        # No clustering: use raw BA regions (limit to first 20 for readability)
+        pass
+
+    # Filter to model years if configured
+    model_years = _get_model_years_for_demand()
+    if model_years:
+        agg = agg[agg["year"].isin(model_years)]
+
+    return agg if not agg.empty else None
+
+
+def _render_demand_bar_chart(df: pd.DataFrame) -> str:
+    """Render a grouped bar chart SVG showing demand by region for each year.
+
+    Args:
+        df: DataFrame with columns region, year, avg_demand_twh (already
+            averaged across weather years).
+
+    Returns:
+        SVG markup string.
+    """
+    regions = sorted(df["region"].unique())
+    years = sorted(df["year"].unique())
+
+    if not regions or not years:
+        return "<em>No data to display.</em>"
+
+    # Limit displayed regions to avoid crowding
+    MAX_REGIONS = 20
+    if len(regions) > MAX_REGIONS:
+        regions = regions[:MAX_REGIONS]
+        df = df[df["region"].isin(regions)]
+
+    n_regions = len(regions)
+    n_years = len(years)
+
+    bar_w = 12
+    group_gap = 8
+    inner_gap = 2
+    group_w = n_years * bar_w + (n_years - 1) * inner_gap
+    total_groups_w = n_regions * group_w + (n_regions - 1) * group_gap
+
+    ml = 48  # left margin (y-axis)
+    mr = 20
+    mt = 16
+    mb = 80  # bottom margin (x-axis region labels)
+    chart_h = 220
+    plot_h = chart_h - mt - mb
+    width = total_groups_w + ml + mr
+
+    y_max = df["avg_demand_twh"].max()
+    if y_max <= 0:
+        y_max = 1.0
+    y_max *= 1.1
+
+    def to_y(val):
+        return mt + plot_h - (val / y_max) * plot_h
+
+    # Build color map per year
+    year_colors = {y: _DEMAND_REGION_COLORS[i % len(_DEMAND_REGION_COLORS)]
+                   for i, y in enumerate(years)}
+
+    svg = [
+        f'<svg viewBox="0 0 {width} {chart_h}" width="{width}" height="{chart_h}" '
+        f'role="img" aria-label="Annual demand by region" style="display:block;">',
+        # Y axis
+        f'<line x1="{ml}" y1="{mt}" x2="{ml}" y2="{mt + plot_h}" stroke="#ccc" stroke-width="1"/>',
+        # X baseline
+        f'<line x1="{ml}" y1="{mt + plot_h}" x2="{ml + total_groups_w}" y2="{mt + plot_h}" stroke="#ccc" stroke-width="1"/>',
+    ]
+
+    # Y axis labels (0 and max)
+    svg.append(
+        f'<text x="{ml - 4}" y="{mt + plot_h}" text-anchor="end" font-size="9" fill="#666">0</text>'
+    )
+    svg.append(
+        f'<text x="{ml - 4}" y="{mt + 6}" text-anchor="end" font-size="9" fill="#666">{y_max:.1f}</text>'
+    )
+    # Y axis title (rotated)
+    svg.append(
+        f'<text x="10" y="{mt + plot_h // 2}" text-anchor="middle" font-size="9" fill="#666" '
+        f'transform="rotate(-90 10 {mt + plot_h // 2})">TWh</text>'
+    )
+
+    # Draw bars
+    for gi, region in enumerate(regions):
+        gx = ml + gi * (group_w + group_gap)
+        region_df = df[df["region"] == region]
+        for ji, year in enumerate(years):
+            row = region_df[region_df["year"] == year]
+            val = float(row["avg_demand_twh"].iloc[0]) if not row.empty else 0.0
+            bx = gx + ji * (bar_w + inner_gap)
+            by = to_y(val)
+            bh = max(1.0, mt + plot_h - by)
+            color = year_colors[year]
+            title_txt = html.escape(f"{region}, {year}: {val:.2f} TWh")
+            svg.append(
+                f'<rect x="{bx:.1f}" y="{by:.1f}" width="{bar_w}" height="{bh:.1f}" '
+                f'fill="{color}" opacity="0.85"><title>{title_txt}</title></rect>'
+            )
+
+        # Region label (angled)
+        label_x = gx + group_w / 2
+        label_y = mt + plot_h + 6
+        svg.append(
+            f'<text x="{label_x:.1f}" y="{label_y}" '
+            f'text-anchor="end" font-size="9" fill="#444" '
+            f'transform="rotate(-45 {label_x:.1f} {label_y})">{html.escape(region)}</text>'
+        )
+
+    # Legend (years)
+    legend_x = ml
+    legend_y = mt + plot_h + 60
+    for ji, year in enumerate(years):
+        lx = legend_x + ji * 50
+        color = year_colors[year]
+        svg.append(
+            f'<rect x="{lx}" y="{legend_y}" width="10" height="10" fill="{color}" opacity="0.85"/>'
+        )
+        svg.append(
+            f'<text x="{lx + 13}" y="{legend_y + 9}" font-size="9" fill="#444">{year}</text>'
+        )
+
+    svg.append("</svg>")
+    return "".join(svg)
+
+
+def _render_demand_line_chart(df: pd.DataFrame) -> str:
+    """Render a line chart SVG showing demand trends by region across years.
+
+    Args:
+        df: DataFrame with columns region, year, avg_demand_twh.
+
+    Returns:
+        SVG markup string.
+    """
+    regions = sorted(df["region"].unique())
+    years = sorted(df["year"].unique())
+
+    if not regions or not years:
+        return "<em>No data to display.</em>"
+
+    MAX_REGIONS = 15
+    if len(regions) > MAX_REGIONS:
+        regions = regions[:MAX_REGIONS]
+        df = df[df["region"].isin(regions)]
+
+    width = 600
+    height = 260
+    ml = 52
+    mr = 20
+    mt = 16
+    mb = 50  # for x-axis and legend
+    plot_w = width - ml - mr
+    plot_h = height - mt - mb
+
+    x_min = min(years)
+    x_max = max(years)
+    x_range = max(1, x_max - x_min)
+    y_min = 0.0
+    y_max = df["avg_demand_twh"].max() * 1.1
+    if y_max <= 0:
+        y_max = 1.0
+    y_range = y_max - y_min
+
+    def to_x(yr):
+        return ml + (yr - x_min) / x_range * plot_w
+
+    def to_y(val):
+        return mt + plot_h - (val - y_min) / y_range * plot_h
+
+    svg = [
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="Demand trend by region" style="display:block;">',
+        f'<line x1="{ml}" y1="{mt}" x2="{ml}" y2="{mt + plot_h}" stroke="#ccc" stroke-width="1"/>',
+        f'<line x1="{ml}" y1="{mt + plot_h}" x2="{ml + plot_w}" y2="{mt + plot_h}" stroke="#ccc" stroke-width="1"/>',
+    ]
+
+    # Y labels
+    svg.append(
+        f'<text x="{ml - 4}" y="{mt + plot_h}" text-anchor="end" font-size="9" fill="#666">{y_min:.1f}</text>'
+    )
+    svg.append(
+        f'<text x="{ml - 4}" y="{mt + 6}" text-anchor="end" font-size="9" fill="#666">{y_max:.1f}</text>'
+    )
+    svg.append(
+        f'<text x="10" y="{mt + plot_h // 2}" text-anchor="middle" font-size="9" fill="#666" '
+        f'transform="rotate(-90 10 {mt + plot_h // 2})">TWh</text>'
+    )
+
+    # X labels (year ticks)
+    for yr in years:
+        if len(years) <= 12 or yr % 5 == 0 or yr == x_min or yr == x_max:
+            tx = to_x(yr)
+            svg.append(
+                f'<text x="{tx:.1f}" y="{mt + plot_h + 12}" text-anchor="middle" '
+                f'font-size="9" fill="#666">{yr}</text>'
+            )
+            svg.append(
+                f'<line x1="{tx:.1f}" y1="{mt + plot_h}" x2="{tx:.1f}" y2="{mt + plot_h + 4}" '
+                f'stroke="#ccc" stroke-width="1"/>'
+            )
+
+    # Draw lines per region
+    for ri, region in enumerate(regions):
+        color = _DEMAND_REGION_COLORS[ri % len(_DEMAND_REGION_COLORS)]
+        region_df = df[df["region"] == region].sort_values("year")
+        if region_df.empty:
+            continue
+        pts = [
+            (to_x(float(row["year"])), to_y(float(row["avg_demand_twh"])))
+            for _, row in region_df.iterrows()
+        ]
+        if len(pts) >= 2:
+            coords = " ".join(f"{x:.2f},{y:.2f}" for x, y in pts)
+            title_txt = html.escape(region)
+            svg.append(
+                f'<polyline points="{coords}" fill="none" stroke="{color}" '
+                f'stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round">'
+                f'<title>{title_txt}</title></polyline>'
+            )
+        elif pts:
+            cx, cy = pts[0]
+            svg.append(f'<circle cx="{cx:.2f}" cy="{cy:.2f}" r="3" fill="{color}"/>')
+
+    # Legend
+    n_legend_cols = min(len(regions), 4)
+    lx_start = ml
+    ly_start = height - 20
+    for ri, region in enumerate(regions):
+        col = ri % n_legend_cols
+        row_idx = ri // n_legend_cols
+        lx = lx_start + col * (plot_w // n_legend_cols)
+        ly = ly_start - row_idx * 14
+        color = _DEMAND_REGION_COLORS[ri % len(_DEMAND_REGION_COLORS)]
+        svg.append(f'<rect x="{lx}" y="{ly - 7}" width="8" height="8" fill="{color}" opacity="0.85"/>')
+        svg.append(
+            f'<text x="{lx + 11}" y="{ly}" font-size="9" fill="#444">{html.escape(region)}</text>'
+        )
+
+    svg.append("</svg>")
+    return "".join(svg)
+
+
+def _get_demand_region_avg(scenario: str) -> dict:
+    """Compute average annual demand per model region averaged over all years
+    and weather years for the given scenario.
+
+    Returns dict: model_region -> avg_demand_twh.
+    """
+    if state.demand_summary_df is None:
+        return {}
+
+    df = state.demand_summary_df
+    df_scen = df[df["scenario"] == scenario]
+    if df_scen.empty:
+        return {}
+
+    # Filter to model years if configured
+    model_years = _get_model_years_for_demand()
+    if model_years:
+        df_scen = df_scen[df_scen["year"].isin(model_years)]
+    if df_scen.empty:
+        return {}
+
+    # Average across weather years and years
+    agg = df_scen.groupby("region", as_index=False)["annual_demand_mwh"].mean()
+    agg["avg_demand_twh"] = agg["annual_demand_mwh"] / 1e6
+
+    # Aggregate to model regions if clustered
+    if state.ba_to_region:
+        ba_to_region = {k.lower(): v for k, v in state.ba_to_region.items()}
+        agg["model_region"] = agg["region"].map(ba_to_region)
+        agg = agg.dropna(subset=["model_region"])
+        if agg.empty:
+            return {}
+        agg = agg.groupby("model_region", as_index=False)["avg_demand_twh"].sum()
+        return dict(zip(agg["model_region"], agg["avg_demand_twh"]))
+    else:
+        return dict(zip(agg["region"], agg["avg_demand_twh"]))
+
+
+def _interpolate_color(val: float, vmin: float, vmax: float) -> str:
+    """Interpolate between light blue and dark blue based on val."""
+    if vmax <= vmin:
+        t = 0.5
+    else:
+        t = max(0.0, min(1.0, (val - vmin) / (vmax - vmin)))
+    # Light blue (#dbe9f7) to dark blue (#1a56c4)
+    r = int(219 + t * (26 - 219))
+    g = int(233 + t * (86 - 233))
+    b = int(247 + t * (196 - 247))
+    return f"rgb({r},{g},{b})"
+
+
+def _ensure_demand_map():
+    """Ensure the demand choropleth Leaflet map is initialized."""
+    if state.demand_map is not None:
+        return
+    map_el = document.getElementById("demandChoroplethMap")
+    if not map_el:
+        return
+    map_obj = L.map(
+        "demandChoroplethMap",
+        to_js({"zoomControl": True, "attributionControl": False}),
+    )
+    map_obj.setView(to_js([39.8, -98.5]), 4)
+    L.tileLayer(
+        "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        to_js({"maxZoom": 12}),
+    ).addTo(map_obj)
+    state.demand_map = map_obj
+    state.demand_map_initialized = True
+
+
+def _render_demand_map(region_avg: dict):
+    """Render the choropleth map layer using region average demand values.
+
+    Args:
+        region_avg: dict mapping model_region -> avg_demand_twh.
+    """
+    _ensure_demand_map()
+    if not state.demand_map_initialized:
+        return
+
+    geojson_data = _build_renewables_geojson_for_selected_bas()
+    if not geojson_data:
+        return
+
+    if not region_avg:
+        return
+
+    vals = list(region_avg.values())
+    v_min = min(vals) if vals else 0.0
+    v_max = max(vals) if vals else 1.0
+
+    def feature_style(feature):
+        region_name = feature.properties.model_region
+        val = region_avg.get(str(region_name), 0.0)
+        fill = _interpolate_color(float(val), v_min, v_max)
+        return to_js({
+            "fillColor": fill,
+            "fillOpacity": 0.75,
+            "color": "#555",
+            "weight": 1,
+        })
+
+    def on_each_feature(feature, layer):
+        region_name = str(feature.properties.model_region)
+        val = region_avg.get(region_name, 0.0)
+        tooltip_text = f"{region_name}: {val:.2f} TWh"
+        layer.bindTooltip(tooltip_text)
+
+    # Remove old layer if present
+    if state.demand_map_layer is not None:
+        state.demand_map.removeLayer(state.demand_map_layer)
+
+    layer = L.geoJSON(
+        to_js(geojson_data),
+        to_js({
+            "style": create_proxy(feature_style),
+            "onEachFeature": create_proxy(on_each_feature),
+        }),
+    ).addTo(state.demand_map)
+    state.demand_map_layer = layer
+
+    try:
+        state.demand_map.fitBounds(layer.getBounds())
+    except Exception:
+        pass
+
+    # Update legend
+    legend_el = document.getElementById("demandMapLegend")
+    if legend_el:
+        legend_el.innerHTML = (
+            f'<div class="demand-map-legend">'
+            f'<span>{v_min:.1f} TWh</span>'
+            f'<div class="demand-legend-ramp"></div>'
+            f'<span>{v_max:.1f} TWh</span>'
+            f'</div>'
+        )
+
+
+def _set_demand_status(message: str, status_type: str = "info"):
+    el = document.getElementById("demandStatus")
+    if el:
+        el.textContent = message
+        el.className = f"status {status_type}"
+        el.style.display = "block" if message else "none"
+
+
+def populate_demand_scenario_select(event=None):
+    """Populate the demand scenario dropdown from loaded demand_summary_df."""
+    sel = document.getElementById("demandScenarioSelect")
+    if not sel:
+        return
+
+    if state.demand_summary_df is None:
+        sel.innerHTML = '<option value="">No data loaded</option>'
+        return
+
+    scenarios = sorted(state.demand_summary_df["scenario"].unique())
+    opts = "".join(f'<option value="{html.escape(s)}">{html.escape(s)}</option>'
+                   for s in scenarios)
+    sel.innerHTML = opts if opts else '<option value="">No scenarios</option>'
+
+
+def on_render_demand(event=None):
+    """Render demand visualizations based on selected scenario."""
+    if state.demand_summary_df is None:
+        _set_demand_status(
+            "Demand summary data not loaded. Please refresh the page.", "error"
+        )
+        return
+
+    sel = document.getElementById("demandScenarioSelect")
+    scenario = sel.value if sel and sel.value else None
+
+    if not scenario:
+        _set_demand_status("Please select a demand scenario.", "error")
+        return
+
+    _set_demand_status("", "info")
+
+    df = _get_demand_display_df(scenario)
+
+    # Bar chart
+    bar_section = document.getElementById("demandBarSection")
+    bar_container = document.getElementById("demandBarChartContainer")
+    if bar_container:
+        if df is not None and not df.empty:
+            bar_section.style.display = "block"
+            bar_container.innerHTML = (
+                f'<div class="demand-chart-wrap">{_render_demand_bar_chart(df)}</div>'
+            )
+        else:
+            bar_section.style.display = "none"
+
+    # Line chart
+    line_section = document.getElementById("demandLineSection")
+    line_container = document.getElementById("demandLineChartContainer")
+    if line_container:
+        if df is not None and not df.empty:
+            line_section.style.display = "block"
+            line_container.innerHTML = (
+                f'<div class="demand-chart-wrap">{_render_demand_line_chart(df)}</div>'
+            )
+        else:
+            line_section.style.display = "none"
+
+    # Choropleth map
+    map_section = document.getElementById("demandMapSection")
+    if map_section:
+        region_avg = _get_demand_region_avg(scenario)
+        if region_avg:
+            map_section.style.display = "block"
+            _render_demand_map(region_avg)
+        else:
+            map_section.style.display = "none"
+
+    if df is None or df.empty:
+        _set_demand_status(
+            "No demand data for the selected scenario and model years.", "info"
+        )
+
+
+def invalidate_demand_map():
+    """Invalidate the demand map size (called when step becomes visible)."""
+    if state.demand_map is not None:
+        try:
+            state.demand_map.invalidateSize(False)
+        except Exception:
+            pass
+
+
+# ============================================================================
 # Initialization
 # ============================================================================
 
@@ -10358,6 +10909,18 @@ async def main():
             lambda: asyncio.ensure_future(load_esr_data_deferred())
         )
         window.invalidateRenewablesMaps = create_proxy(invalidate_renewables_maps)
+
+        # Demand step event handlers
+        document.getElementById("renderDemandBtn").addEventListener(
+            "click", create_proxy(on_render_demand)
+        )
+
+        # Expose demand helpers for JavaScript step navigation
+        window.invalidateDemandMap = create_proxy(invalidate_demand_map)
+        window.populateDemandScenarioSelect = create_proxy(populate_demand_scenario_select)
+
+        # Populate demand scenario dropdown on load
+        populate_demand_scenario_select()
 
         # Done loading
         hide_loading()
