@@ -368,6 +368,7 @@ class TestOnDownloadAllSettings:
             "settings/extra_inputs.yaml",
             "extra_inputs/emission_policies.csv",
             "workflow_state.yml",
+            "DATA_SOURCES.md",
         }
 
     def test_data_yaml_is_included_with_required_placeholders(self, cluster_app):
@@ -392,6 +393,7 @@ class TestOnDownloadAllSettings:
                 "settings/data.yml",
                 f"extra_inputs/{network_costs_filename}",
                 "workflow_state.yml",
+                "DATA_SOURCES.md",
             }
             exported_data = yaml.safe_load(zf.read("settings/data.yml"))
 
@@ -411,7 +413,11 @@ class TestOnDownloadAllSettings:
         [(1, False), (1, True), (3, False), (3, True), (7, True)],
     )
     def test_file_count_in_zip(self, cluster_app, n_yamls, has_emissions):
-        """ZIP contains exactly n_yamls + (1 if has_emissions) + 1 (workflow_state.yml) files."""
+        """ZIP contains exactly n_yamls + (1 if has_emissions) + 2 files.
+
+        The +2 covers the always-present root files: workflow_state.yml and
+        DATA_SOURCES.md.
+        """
         yamls = {f"file_{i}.yml": f"val: {i}\n" for i in range(n_yamls)}
         cluster_app.state.settings_yamls = yamls
         cluster_app.state.emission_policies_df = (
@@ -425,6 +431,6 @@ class TestOnDownloadAllSettings:
         with _open_zip_from_calls(calls) as zf:
             actual_count = len(zf.namelist())
         expected = (
-            n_yamls + (1 if has_emissions else 0) + 1
-        )  # +1 for workflow_state.yml always present
+            n_yamls + (1 if has_emissions else 0) + 2
+        )  # +2 for workflow_state.yml + DATA_SOURCES.md always present
         assert actual_count == expected
