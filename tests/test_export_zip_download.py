@@ -400,7 +400,10 @@ class TestOnDownloadAllSettings:
         assert exported_data["input_folder"] == "extra_inputs"
         assert exported_data["demand_segments_fn"] == "demand_segments_voll.csv"
         assert exported_data["emission_policies_fn"] == "emission_policies.csv"
-        assert exported_data["RESOURCE_GROUPS"] == "path/to/resource/groups/folder"
+        assert exported_data["RESOURCE_GROUPS"] == [
+            "path/to/resource/groups/folder",
+            "path/to/your/new/build/resource/groups",
+        ]
         assert (
             exported_data["RESOURCE_GROUP_PROFILES"]
             == "path/to/resource/profiles/folder"

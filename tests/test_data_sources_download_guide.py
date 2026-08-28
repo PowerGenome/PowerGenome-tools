@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import yaml
 
 # ---------------------------------------------------------------------------
 # Fixture: load cluster_app with mocked browser globals
@@ -232,6 +233,27 @@ class TestDataSourcesConfig:
 
 
 # ---------------------------------------------------------------------------
+# generate_data_settings
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateDataSettings:
+    def test_resource_groups_is_a_list_of_two_folders(self, cluster_app):
+        """generate_data_settings() emits RESOURCE_GROUPS as a list of exactly the
+        two placeholder folders (existing Zenodo deposit + web-app new-build groups)."""
+        data = yaml.safe_load(cluster_app.generate_data_settings())
+        assert data["RESOURCE_GROUPS"] == [
+            "path/to/resource/groups/folder",
+            "path/to/your/new/build/resource/groups",
+        ]
+
+    def test_resource_groups_deposit_description_mentions_list(self, cluster_app):
+        """The resource_groups deposit description explains the list form."""
+        by_id = {d["id"]: d for d in cluster_app.DATA_SOURCES}
+        assert "list" in by_id["resource_groups"]["description"].lower()
+
+
+# ---------------------------------------------------------------------------
 # build_data_yml_snippet
 # ---------------------------------------------------------------------------
 
@@ -241,9 +263,9 @@ class TestBuildDataYmlSnippet:
         snippet = cluster_app.build_data_yml_snippet()
 
         assert 'data_location: ["~/PowerGenome-data/data"]' in snippet
-        assert (
-            'RESOURCE_GROUPS: "~/PowerGenome-data/existing_resource_groups"' in snippet
-        )
+        assert '  - "~/PowerGenome-data/existing_resource_groups"' in snippet
+        assert '  - "~/PowerGenome-data/new_build_resource_groups"' in snippet
+        assert cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER in snippet
         assert (
             'RESOURCE_GROUP_PROFILES: "~/PowerGenome-data/resource_profiles"' in snippet
         )
@@ -263,6 +285,24 @@ class TestBuildDataYmlSnippet:
                 f"snippet must contain a path for {python_key} derived from the "
                 f"{deposit_id!r} deposit target_folder"
             )
+
+    def test_snippet_new_build_path_derived_from_web_app_resource_groups_folder(
+        self, cluster_app
+    ):
+        """The second RESOURCE_GROUPS entry comes from WEB_APP_RESOURCE_GROUPS_FOLDER,
+        not a hardcoded string."""
+        snippet = cluster_app.build_data_yml_snippet()
+        new_build_path = f"{cluster_app.DATA_ROOT_EXAMPLE}/{cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER}"
+        assert new_build_path in snippet
+
+    def test_snippet_parses_to_resource_groups_list_of_two(self, cluster_app):
+        """The snippet's RESOURCE_GROUPS is a yaml list of exactly two folder paths."""
+        snippet = cluster_app.build_data_yml_snippet()
+        parsed = yaml.safe_load(snippet)
+        assert parsed["RESOURCE_GROUPS"] == [
+            "~/PowerGenome-data/existing_resource_groups",
+            "~/PowerGenome-data/new_build_resource_groups",
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +326,8 @@ class TestRenderDataSourcesMd:
         assert (
             'RESOURCE_GROUP_PROFILES: "~/PowerGenome-data/resource_profiles"' in block
         )
-        assert 'RESOURCE_GROUPS: "~/PowerGenome-data/existing_resource_groups"' in block
+        assert '  - "~/PowerGenome-data/existing_resource_groups"' in block
+        assert '  - "~/PowerGenome-data/new_build_resource_groups"' in block
 
     def test_contains_data_versioning_section(self, cluster_app):
         md = cluster_app.render_data_sources_md()
