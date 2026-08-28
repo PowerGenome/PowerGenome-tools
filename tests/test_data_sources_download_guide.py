@@ -180,6 +180,33 @@ class TestDataSourcesConfig:
         assert "RESOURCE_GROUP_PROFILES" in by_id["profiles"]["settings_keys"]
         assert "RESOURCE_GROUPS" in by_id["resource_groups"]["settings_keys"]
 
+    def test_core_deposit_files_match_manifest(self, cluster_app):
+        """The core deposit lists exactly the 15 files in the current manifest.
+
+        nerc_reserve_margins_vintage.json was removed on PowerGenome-data main
+        (commit 258e681); the assertion is intentional and must be updated if the
+        manifest's file set changes.
+        """
+        by_id = {d["id"]: d for d in cluster_app.DATA_SOURCES}
+        core_files = set(by_id["core"]["files"])
+        assert core_files == {
+            "cpi_data.csv",
+            "distributed_capacity.parquet",
+            "distributed_profiles.parquet",
+            "dollar_year_adjustment.csv",
+            "fuel_prices.parquet",
+            "nerc_reserve_margins.csv",
+            "operational_constraints_reeds.csv",
+            "plant_region_map.csv",
+            "reeds_generators_transformed.csv",
+            "reeds_load_transformed.parquet",
+            "regional_cost_multipliers.csv",
+            "reserve_margins.csv",
+            "technology_costs_atb.parquet",
+            "technology_heat_rates_nrelatb.csv",
+            "transmission_capacity_reeds.csv",
+        }
+
     def test_placeholder_deposits_are_clearly_marked(self, cluster_app):
         """profiles/resource_groups are placeholders; core points at the sandbox record.
 

@@ -328,7 +328,6 @@ _CORE_DATA_FILES = [
     "reserve_margins.csv",
     "nerc_reserve_margins.csv",
     "cpi_data.csv",
-    "nerc_reserve_margins_vintage.json",
 ]
 
 DATA_SOURCES = [
