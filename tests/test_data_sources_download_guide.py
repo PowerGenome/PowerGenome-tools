@@ -8,6 +8,8 @@ Covers:
 - populate_data_sources_section(): wires the HTML fragment into #dataSourcesContent.
 - on_download_all_settings: DATA_SOURCES.md is included at the ZIP root.
 - web/index.html: Step 9 contains the "Download input data" section.
+- Step 7 new-build resource groups guidance: the new-build note appears in both
+  render_data_sources_md()/render_data_sources_html() and in the Step 7 pane.
 """
 
 import contextlib
@@ -252,6 +254,15 @@ class TestGenerateDataSettings:
         by_id = {d["id"]: d for d in cluster_app.DATA_SOURCES}
         assert "list" in by_id["resource_groups"]["description"].lower()
 
+    def test_resource_groups_deposit_description_mentions_step7(self, cluster_app):
+        """The resource_groups deposit description points at the web app's Step 7."""
+        by_id = {d["id"]: d for d in cluster_app.DATA_SOURCES}
+        description = by_id["resource_groups"]["description"]
+        assert "Step 7" in description, (
+            "resource_groups deposit description should mention the web app's "
+            "Step 7 (Interconnection) as the source of the new-build groups"
+        )
+
 
 # ---------------------------------------------------------------------------
 # build_data_yml_snippet
@@ -337,6 +348,26 @@ class TestRenderDataSourcesMd:
         assert "data_version" in versioning
         assert "release notes" in versioning
 
+    def test_contains_new_build_resource_groups_section_before_example_paths(
+        self, cluster_app
+    ):
+        """The Step 7 new-build note appears before the example data.yml paths."""
+        md = cluster_app.render_data_sources_md()
+
+        assert "## New-build resource groups (Step 7)" in md
+        # Stable, human-meaningful substring of NEW_BUILD_RESOURCE_GROUPS_NOTE
+        assert (
+            "The second RESOURCE_GROUPS entry is the local folder where you save "
+            "the" in md
+        )
+
+        new_build_idx = md.index("## New-build resource groups (Step 7)")
+        example_idx = md.index("## Example data.yml paths")
+        assert new_build_idx < example_idx, (
+            "the new-build resource groups section must precede the example "
+            "data.yml paths section"
+        )
+
 
 # ---------------------------------------------------------------------------
 # render_data_sources_html + populate_data_sources_section
@@ -373,6 +404,29 @@ class TestRenderDataSourcesHtml:
             "dataSourcesContent"
         )
         assert fake_el.innerHTML == cluster_app.render_data_sources_html()
+
+    def test_html_contains_new_build_resource_groups_section(self, cluster_app):
+        """The Step 7 new-build note appears before the example paths heading."""
+        html = cluster_app.render_data_sources_html()
+
+        assert "New-build resource groups (Step 7)" in html
+        # html.escape leaves RESOURCE_GROUPS and the em dash unchanged, so the
+        # same stable substring used for the Markdown note works here.
+        assert (
+            "The second RESOURCE_GROUPS entry is the local folder where you save "
+            "the" in html
+        )
+
+        new_build_idx = html.index("New-build resource groups (Step 7)")
+        example_idx = html.index("<h4>Example data.yml paths</h4>")
+        textarea_idx = html.index('id="dataYmlSnippet"')
+        assert new_build_idx < example_idx, (
+            "the new-build resource groups section must precede the example "
+            "data.yml paths heading"
+        )
+        assert (
+            new_build_idx < textarea_idx
+        ), "the new-build resource groups section must precede the snippet textarea"
 
 
 # ---------------------------------------------------------------------------
@@ -426,3 +480,29 @@ class TestIndexHtmlStep9:
         assert (
             div_idx > label_idx
         ), "dataSourcesContent div must come after the Download input data label"
+
+
+class TestIndexHtmlStep7:
+    def test_step7_has_output_files_hint_after_download_zip_button(self):
+        html = _read_index_html()
+        step7_start = html.find('<div id="step-7"')
+        assert step7_start != -1, "Could not find Step 7 pane"
+        step7 = html[step7_start:]
+
+        hint_text = "Save the downloaded files to a local folder"
+        zip_btn_idx = step7.find('id="downloadResourceGroupsBtn"')
+        hint_idx = step7.find(hint_text)
+        rg_mentions = step7.count("RESOURCE_GROUPS")
+
+        assert zip_btn_idx != -1, "Could not find the Download ZIP button"
+        assert hint_idx != -1, "Could not find the output-files save hint"
+        assert (
+            hint_idx > zip_btn_idx
+        ), "the save hint must come after the Download ZIP button"
+
+        # The hint should explain that the local folder maps to RESOURCE_GROUPS
+        # in the generated data.yml.
+        assert rg_mentions >= 1, (
+            "the Step 7 pane should mention RESOURCE_GROUPS (the setting used in "
+            "the generated data.yml)"
+        )
