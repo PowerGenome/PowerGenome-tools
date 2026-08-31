@@ -210,6 +210,53 @@ class TestDataSourcesConfig:
             "transmission_capacity_reeds.csv",
         }
 
+    def test_profiles_deposit_files_match_manifest(self, cluster_app):
+        """The profiles deposit lists exactly the 6 files in its manifest.
+
+        The profiles deposit ("PowerGenome Renewable Resource Profiles") gained
+        a real file list; the assertion is intentional and must be updated if
+        the manifest's file set changes.
+        """
+        by_id = {d["id"]: d for d in cluster_app.DATA_SOURCES}
+        profiles_files = set(by_id["profiles"]["files"])
+        assert len(profiles_files) == 6
+        assert profiles_files == {
+            "offshorewind_rev_profiles_20240801_tidy.parquet",
+            "offshorewind_site_mapping_20240801.parquet",
+            "onshorewind_rev_profiles_20240801_tidy.parquet",
+            "onshorewind_site_mapping_20240801.parquet",
+            "solar_rev_profiles_20240801_tidy.parquet",
+            "solar_site_mapping_20240801.parquet",
+        }
+
+    def test_resource_groups_deposit_files_match_manifest(self, cluster_app):
+        """The resource_groups deposit lists exactly the 15 files in its manifest.
+
+        The resource_groups deposit ("PowerGenome Existing Renewable Resource
+        Groups") gained a real file list; the assertion is intentional and must
+        be updated if the manifest's file set changes.
+        """
+        by_id = {d["id"]: d for d in cluster_app.DATA_SOURCES}
+        resource_groups_files = set(by_id["resource_groups"]["files"])
+        assert len(resource_groups_files) == 15
+        assert resource_groups_files == {
+            "existing_hydro_reeds_ba_metadata.csv",
+            "existing_offshorewind_reeds_ba_metadata.csv",
+            "existing_onshore_wind_reeds_ba_profiles_20250513_tidy.parquet",
+            "existing_onshorewind_reeds_ba_metadata.csv",
+            "existing_osw_profiles.csv",
+            "existing_osw_profiles_tidy.parquet",
+            "existing_solar_reeds_ba_metadata.csv",
+            "existing_solar_reeds_ba_profiles_20250513_tidy.parquet",
+            "hydro_conventional_2007_2013.parquet",
+            "hydro_run_of_river_2007_2013.parquet",
+            "regional_hydro_True.json",
+            "regional_offshorewind_True.json",
+            "regional_small_hydro_True.json",
+            "regional_solar_photovoltaic_True.json",
+            "regional_wind_True.json",
+        }
+
     def test_placeholder_deposits_are_clearly_marked(self, cluster_app):
         """profiles/resource_groups are placeholders; core points at the sandbox record.
 
@@ -455,20 +502,61 @@ class TestRenderDataSourcesMd:
         for f in core_files:
             assert f"  - `{f}`" in md
 
-    def test_deposit_with_no_files_omits_contains_files_line(self, cluster_app):
-        """Deposits with an empty ``files`` list get no 'Contains files' bullet."""
+    def test_md_and_html_include_file_members_from_every_deposit(self, cluster_app):
+        """Both renderers surface a representative file from each deposit.
+
+        A representative file from each of the three deposits (core, profiles,
+        resource_groups) must appear in the Markdown guide and in the HTML
+        fragment, and the Markdown must render them as nested list items (one
+        indented backticked bullet per file), matching the nested <ul> used by
+        render_data_sources_html().
+        """
+        representatives = {
+            "core": "reeds_generators_transformed.csv",
+            "profiles": "solar_rev_profiles_20240801_tidy.parquet",
+            "resource_groups": "regional_wind_True.json",
+        }
+        md = cluster_app.render_data_sources_md()
+        html = cluster_app.render_data_sources_html()
+
+        for deposit_id, filename in representatives.items():
+            assert filename in md, f"{deposit_id} manifest file missing from md"
+            assert filename in html, f"{deposit_id} manifest file missing from html"
+            assert (
+                f"  - `{filename}`" in md
+            ), f"{deposit_id} file should render as a nested Markdown bullet"
+
+    def test_all_deposits_render_contains_files_bullet(self, cluster_app):
+        """Every deposit now lists real files, so each section has a manifest.
+
+        All three DATA_SOURCES deposits (core, profiles, resource_groups) carry
+        non-empty ``files`` lists, so every deposit's section in the rendered
+        Markdown contains a "Contains files:" bullet with one nested bullet per
+        file. The manifest must not collapse back onto a single inline line
+        (``- Contains files: `file-a, file-b``).
+        """
         by_id = {d["id"]: d for d in cluster_app.DATA_SOURCES}
-        empty_file_deposits = [d for d in by_id.values() if not d["files"]]
-        assert empty_file_deposits, "expected at least one deposit with no files"
+        assert all(d["files"] for d in by_id.values()), (
+            "every deposit should list its files; if a deposit is emptied, "
+            "update this test and the rendering expectations"
+        )
 
         md = cluster_app.render_data_sources_md()
-        for deposit in empty_file_deposits:
+        # No single comma-joined line listing every file remains.
+        assert "- Contains files: `" not in md
+
+        for deposit in by_id.values():
             section_idx = md.index(f"## {deposit['title']}")
             next_heading_idx = md.find("\n## ", section_idx + 1)
             section = md[
                 section_idx : next_heading_idx if next_heading_idx != -1 else None
             ]
-            assert "Contains files" not in section
+            assert "Contains files:" in section
+            for f in deposit["files"]:
+                assert f"  - `{f}`" in section, (
+                    f"{deposit['id']} file {f!r} should render as a nested "
+                    "Markdown bullet"
+                )
 
 
 # ---------------------------------------------------------------------------
