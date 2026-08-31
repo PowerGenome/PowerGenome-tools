@@ -436,6 +436,40 @@ class TestRenderDataSourcesMd:
         assert '  - "custom_folder"' in md
         assert "# new-build groups, in the export ZIP" in md
 
+    def test_core_files_render_as_nested_bullet_list(self, cluster_app):
+        """The core deposit's file manifest renders as one bullet per file.
+
+        Previously all filenames were joined onto a single comma-separated
+        line, which was hard to read for the 15-file core manifest. Each
+        file should now get its own indented bullet, matching the nested
+        <ul> used by render_data_sources_html().
+        """
+        md = cluster_app.render_data_sources_md()
+        by_id = {d["id"]: d for d in cluster_app.DATA_SOURCES}
+        core_files = by_id["core"]["files"]
+        assert core_files, "expected the core deposit to list files"
+
+        assert "- Contains files:" in md
+        # No single comma-joined line listing every core file remains.
+        assert "- Contains files: `" not in md
+        for f in core_files:
+            assert f"  - `{f}`" in md
+
+    def test_deposit_with_no_files_omits_contains_files_line(self, cluster_app):
+        """Deposits with an empty ``files`` list get no 'Contains files' bullet."""
+        by_id = {d["id"]: d for d in cluster_app.DATA_SOURCES}
+        empty_file_deposits = [d for d in by_id.values() if not d["files"]]
+        assert empty_file_deposits, "expected at least one deposit with no files"
+
+        md = cluster_app.render_data_sources_md()
+        for deposit in empty_file_deposits:
+            section_idx = md.index(f"## {deposit['title']}")
+            next_heading_idx = md.find("\n## ", section_idx + 1)
+            section = md[
+                section_idx : next_heading_idx if next_heading_idx != -1 else None
+            ]
+            assert "Contains files" not in section
+
 
 # ---------------------------------------------------------------------------
 # render_data_sources_html + populate_data_sources_section

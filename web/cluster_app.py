@@ -480,7 +480,9 @@ def render_data_sources_md(resource_group_folder=None):
         keys = ", ".join(f"`{k}`" for k in d["settings_keys"])
         lines.append(f"- Feeds settings key(s): {keys}")
         if d["files"]:
-            lines.append("- Contains files: " + ", ".join(f"`{f}`" for f in d["files"]))
+            lines.append("- Contains files:")
+            for f in d["files"]:
+                lines.append(f"  - `{f}`")
         lines.append("")
     lines.extend(
         [
