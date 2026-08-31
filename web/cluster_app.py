@@ -433,7 +433,6 @@ def build_data_yml_snippet(resource_group_folder=None):
         resource_group_folder = _get_resource_group_name()
     paths = {d["id"]: d["target_folder"] for d in DATA_SOURCES}
     return (
-        "# data.yml path settings (example)\n"
         f'data_location: ["{DATA_ROOT_EXAMPLE}/{paths["core"]}"]\n'
         "RESOURCE_GROUPS:\n"
         f'  - "{resource_group_folder}"  # new-build groups, in the export ZIP\n'
