@@ -919,7 +919,7 @@ These parquet files, along with accompanying JSON files containing generation pr
 
 ### Inputs
 
-* **Region name**: Label used in the output filenames (for example, `solar_lcoe_<name>.parquet`)
+* **Region name**: Label used in the output filenames (for example, `solar_lcoe_<name>.parquet`). Defaults to the name derived for the network costs file, but with `resource_groups` instead of `network_costs` — for example, with 10 regions, eastern/western interconnects, and NERC-R grouping the default is `resource_groups_10r_eastern-western_nercr`. The suggested default refreshes whenever regions are re-clustered or changed, but a name you type is preserved. If left blank, resource-group generation falls back to that derived default.
 
 ### Generated Output
 

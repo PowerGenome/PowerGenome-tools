@@ -276,6 +276,10 @@ class AppState:
         self.network_costs_df = None  # pd.DataFrame result from calc_network
         self.network_data_cache = None  # (nodes_df, edges_df, topo_df) loaded once
 
+        # Last auto-derived default for the Step 7 "Region Name" input, used to
+        # refresh it when regions change while preserving custom user names.
+        self.resource_group_name_default = ""
+
 
 state = AppState()
 
@@ -2324,6 +2328,12 @@ def reset_region_dependent_state():
     _render_candidates = globals().get("render_plant_candidates")
     if callable(_render_candidates):
         _render_candidates()
+
+    # Refresh the Step 7 "Region Name" default when regions change (the derived
+    # name mirrors the network costs filename, e.g. resource_groups_10r_...).
+    _refresh_rg_name = globals().get("update_resource_group_name_default")
+    if callable(_refresh_rg_name):
+        _refresh_rg_name()
 
 
 def reset_planning_year_dependent_state():
@@ -8883,20 +8893,19 @@ async def _run_network_cost_calculation():
         set_status(f"Warning: network cost calculation failed: {exc}", "warning")
 
 
-def _build_network_costs_filename() -> str:
-    """Return a descriptive filename for the network costs CSV export.
+def _build_name_stem() -> str:
+    """Return the descriptive stem shared by derived file/region names.
 
-    The name encodes:
-    - the number of model regions (e.g. ``10r``)
+    The stem encodes:
+    - the number of model regions (e.g. ``_10r``)
     - the interconnects represented by the selected BAs, sorted and joined with
-      hyphens (e.g. ``eastern-western``); each name is sanitized to
+      hyphens (e.g. ``_eastern-western``); each name is sanitized to
       alphanumeric, underscore, and hyphen characters so the result is always a
       safe filesystem name
-    - the grouping column used for clustering (e.g. ``nercr``)
+    - the grouping column used for clustering (e.g. ``_nercr``)
 
     Falls back to descriptive placeholder values when the relevant state
-    attributes are unavailable.
-    Example: ``network_costs_10r_eastern-western_nercr.csv``.
+    attributes are unavailable.  Example: ``_10r_eastern-western_nercr``.
     """
 
     def _safe(s: str) -> str:
@@ -8924,7 +8933,44 @@ def _build_network_costs_filename() -> str:
         _safe(state.current_grouping) if state.current_grouping else "default"
     )
 
-    return f"network_costs{regions_part}_{interconnects_part}_{grouping_part}.csv"
+    return f"{regions_part}_{interconnects_part}_{grouping_part}"
+
+
+def _build_network_costs_filename() -> str:
+    """Return a descriptive filename for the network costs CSV export.
+
+    The name encodes the number of model regions, the interconnects
+    represented by the selected BAs, and the grouping column used for
+    clustering (see ``_build_name_stem()``).
+    Example: ``network_costs_10r_eastern-western_nercr.csv``.
+    """
+    return f"network_costs{_build_name_stem()}.csv"
+
+
+def build_resource_group_name_default() -> str:
+    """Return the default Step 7 region name for resource-group file names.
+
+    Uses the same derived stem as the network costs filename, but with
+    ``resource_groups`` instead of ``network_costs``.
+    Example: ``resource_groups_10r_eastern-western_nercr``.
+    """
+    return f"resource_groups{_build_name_stem()}"
+
+
+def update_resource_group_name_default():
+    """Refresh the Step 7 "Region Name" input to the derived default.
+
+    Only overwrites the field when it is empty or still holds the previous
+    auto-generated default, so custom names typed by the user are preserved.
+    """
+    el = document.getElementById("resourceGroupName")
+    if el is None:
+        return
+    new_default = build_resource_group_name_default()
+    current = el.value if el.value else ""
+    if current in ("", state.resource_group_name_default, "resource_groups"):
+        el.value = new_default
+    state.resource_group_name_default = new_default
 
 
 async def _load_pyodide_package(name: str) -> bool:
@@ -9038,7 +9084,7 @@ async def load_fast_interconnection_data():
 def _get_resource_group_name():
     el = document.getElementById("resourceGroupName")
     name = el.value.strip() if el and el.value else ""
-    return name or "resource_groups"
+    return name or build_resource_group_name_default()
 
 
 def _update_resource_group_list():
@@ -10590,6 +10636,7 @@ async def main():
         populate_settings_file_select()
         update_settings_preview()
         populate_data_sources_section()
+        update_resource_group_name_default()
         _update_resource_group_list()
         _render_renewables_advanced_panel()
 
