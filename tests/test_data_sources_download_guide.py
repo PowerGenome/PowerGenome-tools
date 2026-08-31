@@ -299,8 +299,9 @@ class TestBuildDataYmlSnippet:
 
     def test_snippet_new_build_folder_is_project_relative(self, cluster_app):
         """The second RESOURCE_GROUPS entry is WEB_APP_RESOURCE_GROUPS_FOLDER verbatim,
-        WITHOUT the DATA_ROOT_EXAMPLE prefix: the new-build groups go in the project
-        folder (e.g. a resource_groups folder beside data.yml), not ~/PowerGenome-data.
+        WITHOUT the DATA_ROOT_EXAMPLE prefix: the new-build groups go next to the
+        project's settings folder (e.g. resource_groups beside settings), not in
+        ~/PowerGenome-data.
         """
         snippet = cluster_app.build_data_yml_snippet()
         quoted_folder = f'"{cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER}"'
@@ -321,6 +322,31 @@ class TestBuildDataYmlSnippet:
             "~/PowerGenome-data/existing_resource_groups",
             "resource_groups",
         ]
+
+    def test_snippet_accepts_custom_resource_group_folder(self, cluster_app):
+        """A caller-supplied folder becomes the second RESOURCE_GROUPS entry.
+
+        The snippet stays yaml-parseable and the generated comment records that
+        this is the new-build groups folder, next to settings.
+        """
+        snippet = cluster_app.build_data_yml_snippet("custom_folder")
+        parsed = yaml.safe_load(snippet)
+        assert parsed["RESOURCE_GROUPS"][1] == "custom_folder"
+        assert "# new-build groups, next to settings" in snippet
+
+    def test_snippet_no_argument_uses_web_app_resource_groups_folder(self, cluster_app):
+        """No/None argument → WEB_APP_RESOURCE_GROUPS_FOLDER in the second entry."""
+        for snippet in (
+            cluster_app.build_data_yml_snippet(),
+            cluster_app.build_data_yml_snippet(None),
+        ):
+            parsed = yaml.safe_load(snippet)
+            assert (
+                parsed["RESOURCE_GROUPS"][1]
+                == cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER
+            )
+            assert parsed["RESOURCE_GROUPS"][1] == "resource_groups"
+            assert "# new-build groups, next to settings" in snippet
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +398,23 @@ class TestRenderDataSourcesMd:
             "data.yml paths section"
         )
 
+    def test_new_build_note_mentions_settings_folder_placement(self, cluster_app):
+        """The Step 7 note directs the folder next to the project's settings folder."""
+        note = cluster_app.NEW_BUILD_RESOURCE_GROUPS_NOTE
+        assert "next to the project's" in note
+        assert "`settings`" in note
+        assert "beside `settings`" in note
+        md = cluster_app.render_data_sources_md()
+        assert "next to the project's" in md
+        # The md bundles the snippet; its new-build comment records the placement.
+        assert "# new-build groups, next to settings" in md
+
+    def test_render_data_sources_md_accepts_custom_folder(self, cluster_app):
+        """A supplied folder flows into the bundled example data.yml snippet."""
+        md = cluster_app.render_data_sources_md("custom_folder")
+        assert '  - "custom_folder"' in md
+        assert "# new-build groups, next to settings" in md
+
 
 # ---------------------------------------------------------------------------
 # render_data_sources_html + populate_data_sources_section
@@ -404,10 +447,53 @@ class TestRenderDataSourcesHtml:
 
         cluster_app.populate_data_sources_section()
 
-        cluster_app.document.getElementById.assert_called_once_with(
-            "dataSourcesContent"
-        )
+        # populate now also probes #resourceGroupName for the live folder name,
+        # so only assert the container lookup happened (not call counts/order).
+        get_by_id_calls = [
+            call.args for call in cluster_app.document.getElementById.call_args_list
+        ]
+        assert ("dataSourcesContent",) in get_by_id_calls
+        assert ("resourceGroupName",) in get_by_id_calls
+        # The mocked input value is a non-str MagicMock, so the default constant
+        # folder is used and the rendered HTML matches render_data_sources_html().
         assert fake_el.innerHTML == cluster_app.render_data_sources_html()
+
+    def test_populate_uses_live_resource_group_folder(self, cluster_app):
+        """When #resourceGroupName holds a real str, the snippet uses that folder."""
+        name_el = MagicMock()
+        name_el.value = "my_region_abc"
+        content_el = MagicMock()
+        elements = {"resourceGroupName": name_el, "dataSourcesContent": content_el}
+        cluster_app.document.getElementById = MagicMock(
+            side_effect=lambda el_id: elements.get(el_id)
+        )
+
+        cluster_app.populate_data_sources_section()
+
+        assert 'id="dataYmlSnippet"' in content_el.innerHTML
+        # The escaped snippet's second RESOURCE_GROUPS entry is the live folder,
+        # NOT the static WEB_APP_RESOURCE_GROUPS_FOLDER fallback.
+        assert "  - &quot;my_region_abc&quot;" in content_el.innerHTML
+        assert "&quot;resource_groups&quot;  #" not in content_el.innerHTML
+        assert "# new-build groups, next to settings" in content_el.innerHTML
+
+    def test_render_data_sources_html_accepts_custom_folder(self, cluster_app):
+        """A supplied folder flows into the escaped snippet inside the HTML."""
+        html = cluster_app.render_data_sources_html("custom_folder")
+        assert "custom_folder" in html
+        # html.escape leaves '#' and plain alnum text untouched.
+        assert "# new-build groups, next to settings" in html
+
+    def test_html_new_build_note_mentions_settings_folder_placement(self, cluster_app):
+        """The HTML Step 7 note also directs the folder next to settings.
+
+        The note is html.escaped, so the apostrophe in "project's" becomes
+        ``&#x27;``; the backticks around ``settings`` survive unchanged.
+        """
+        html = cluster_app.render_data_sources_html()
+        assert "next to the project" in html
+        assert "`settings` folder" in html
+        assert "beside `settings`" in html
 
     def test_html_contains_new_build_resource_groups_section(self, cluster_app):
         """The Step 7 new-build note appears before the example paths heading."""
@@ -430,6 +516,64 @@ class TestRenderDataSourcesHtml:
         assert (
             new_build_idx < textarea_idx
         ), "the new-build resource groups section must precede the snippet textarea"
+
+
+# ---------------------------------------------------------------------------
+# _live_resource_group_folder()
+# ---------------------------------------------------------------------------
+
+
+class TestLiveResourceGroupFolder:
+    """_live_resource_group_folder() resolves the live Step 7 region name."""
+
+    def test_returns_input_value_when_real_string(self, cluster_app):
+        name_el = MagicMock()
+        name_el.value = "my_region_abc"
+        cluster_app.document.getElementById = MagicMock(return_value=name_el)
+
+        assert cluster_app._live_resource_group_folder() == "my_region_abc"
+
+    def test_strips_whitespace_around_input_value(self, cluster_app):
+        name_el = MagicMock()
+        name_el.value = "  my_region_abc  "
+        cluster_app.document.getElementById = MagicMock(return_value=name_el)
+
+        assert cluster_app._live_resource_group_folder() == "my_region_abc"
+
+    def test_falls_back_when_element_missing(self, cluster_app):
+        cluster_app.document.getElementById = MagicMock(return_value=None)
+
+        assert cluster_app._live_resource_group_folder() == (
+            cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER
+        )
+
+    def test_falls_back_when_value_empty(self, cluster_app):
+        name_el = MagicMock()
+        name_el.value = ""
+        cluster_app.document.getElementById = MagicMock(return_value=name_el)
+
+        assert cluster_app._live_resource_group_folder() == (
+            cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER
+        )
+
+    def test_falls_back_when_value_whitespace_only(self, cluster_app):
+        name_el = MagicMock()
+        name_el.value = "   "
+        cluster_app.document.getElementById = MagicMock(return_value=name_el)
+
+        assert cluster_app._live_resource_group_folder() == (
+            cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER
+        )
+
+    def test_falls_back_when_value_is_not_a_string(self, cluster_app):
+        """A non-str (e.g. MagicMock) input value falls back to the constant."""
+        name_el = MagicMock()
+        name_el.value = MagicMock()
+        cluster_app.document.getElementById = MagicMock(return_value=name_el)
+
+        assert cluster_app._live_resource_group_folder() == (
+            cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -492,7 +636,12 @@ class TestIndexHtmlStep7:
         assert step7_start != -1, "Could not find Step 7 pane"
         step7 = html[step7_start:]
 
-        hint_text = "Save the downloaded files to a folder in your project"
+        # The hint wraps across several source lines, but the leading phrase
+        # "Unzip the downloaded files into a folder" appears contiguously on a
+        # single line, so a plain substring search on the raw pane is safe.
+        # (The full guidance sentence about `settings` placement is wrapped, so
+        # don't search for the whole sentence here.)
+        hint_text = "Unzip the downloaded files into a folder"
         zip_btn_idx = step7.find('id="downloadResourceGroupsBtn"')
         hint_idx = step7.find(hint_text)
         rg_mentions = step7.count("RESOURCE_GROUPS")
@@ -509,3 +658,15 @@ class TestIndexHtmlStep7:
             "the Step 7 pane should mention RESOURCE_GROUPS (the setting used in "
             "the generated data.yml)"
         )
+
+        # The hint should direct the folder next to the project's settings folder
+        # (wrapped across source lines and styled with <code>, so normalize
+        # whitespace and match including the inline tag).
+        step7_norm = " ".join(step7.split())
+        assert (
+            "place it next to the <code>settings</code> folder in your project"
+            in step7_norm
+        ), "the Step 7 hint should mention placing the folder next to the settings folder"
+        assert (
+            "beside <code>settings</code>" in step7_norm
+        ), "the Step 7 hint should give the settings-beside example (resource_groups beside settings)"

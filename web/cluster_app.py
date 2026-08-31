@@ -314,8 +314,8 @@ WORKFLOW_STATE_VERSION = 1
 # Suggested local data root used by the example data.yml snippet.
 DATA_ROOT_EXAMPLE = "~/PowerGenome-data"
 
-# Project-relative folder (beside data.yml, in the project folder) where the
-# web app-generated new-build wind/solar resource group files (Step 7
+# Project-relative folder, placed next to the project's `settings` folder,
+# where the web app-generated new-build wind/solar resource group files (Step 7
 # downloads) are saved. Unlike the Zenodo deposits, these belong in the project
 # folder, not in ~/PowerGenome-data.
 WEB_APP_RESOURCE_GROUPS_FOLDER = "resource_groups"
@@ -377,7 +377,8 @@ DATA_SOURCES = [
             "The RESOURCE_GROUPS setting accepts a list of folders; include this "
             "deposit's folder as one entry and add a second entry for the "
             "new-build wind/solar resource groups generated in Step 7 "
-            "(Interconnection) of this web app, saved in your project folder."
+            "(Interconnection) of this web app, placed next to the settings "
+            "folder in your project."
         ),
         "url": "https://zenodo.org/",  # TODO: replace with deposit URL when published
         "doi": "DOI pending (first publish upcoming)",
@@ -408,29 +409,53 @@ DATA_VERSIONING_NOTES = (
 NEW_BUILD_RESOURCE_GROUPS_NOTE = (
     "The second RESOURCE_GROUPS entry is the folder where you save the resource "
     "group files you download in Step 7 (Interconnection) of this web app — "
-    "these are the new-build wind/solar resource groups. Unlike the data "
-    "deposits, keep this folder inside your project, for example a "
-    "`resource_groups` folder in the same directory as data.yml, rather than in "
+    "these are the new-build wind/solar resource groups. Unzip the downloaded "
+    "files into a folder and place that folder next to the project's `settings` "
+    "folder (for example `resource_groups` beside `settings`), rather than in "
     "~/PowerGenome-data. The first entry points to the existing resource groups "
     "deposit listed above."
 )
 
 
-def build_data_yml_snippet():
-    """Return a copy-paste-ready data.yml path snippet using the suggested root."""
+def build_data_yml_snippet(resource_group_folder=None):
+    """Return a copy-paste-ready data.yml path snippet using the suggested root.
+
+    ``resource_group_folder`` defaults to ``WEB_APP_RESOURCE_GROUPS_FOLDER``;
+    pass the live Step 7 region name to reflect a user-chosen folder.
+    """
+    if resource_group_folder is None:
+        resource_group_folder = WEB_APP_RESOURCE_GROUPS_FOLDER
     paths = {d["id"]: d["target_folder"] for d in DATA_SOURCES}
     return (
         "# data.yml path settings (example)\n"
         f'data_location: ["{DATA_ROOT_EXAMPLE}/{paths["core"]}"]\n'
         "RESOURCE_GROUPS:\n"
         f'  - "{DATA_ROOT_EXAMPLE}/{paths["resource_groups"]}"\n'
-        f'  - "{WEB_APP_RESOURCE_GROUPS_FOLDER}"  # new-build groups, in your project folder\n'
+        f'  - "{resource_group_folder}"  # new-build groups, next to settings\n'
         f'RESOURCE_GROUP_PROFILES: "{DATA_ROOT_EXAMPLE}/{paths["profiles"]}"\n'
     )
 
 
-def render_data_sources_md():
-    """Render the download instructions as Markdown (bundled into the ZIP)."""
+def _live_resource_group_folder() -> str:
+    """Return the current Step 7 region name for the example snippet.
+
+    Reads the ``resourceGroupName`` input when it holds a real string; falls
+    back to the default constant otherwise (including under test mocks).
+    """
+    el = document.getElementById("resourceGroupName")
+    if el is not None and isinstance(getattr(el, "value", None), str):
+        name = el.value.strip()
+        if name:
+            return name
+    return WEB_APP_RESOURCE_GROUPS_FOLDER
+
+
+def render_data_sources_md(resource_group_folder=None):
+    """Render the download instructions as Markdown (bundled into the ZIP).
+
+    ``resource_group_folder`` is passed through to the example snippet (see
+    ``build_data_yml_snippet``); defaults to the constant.
+    """
     lines = [
         "# PowerGenome input data downloads",
         "",
@@ -464,7 +489,7 @@ def render_data_sources_md():
             "## Example data.yml paths",
             "",
             "```yaml",
-            build_data_yml_snippet().rstrip("\n"),
+            build_data_yml_snippet(resource_group_folder).rstrip("\n"),
             "```",
             "",
             "## Data versioning",
@@ -476,8 +501,12 @@ def render_data_sources_md():
     return "\n".join(lines)
 
 
-def render_data_sources_html():
-    """Render the download instructions as an HTML fragment for Step 9."""
+def render_data_sources_html(resource_group_folder=None):
+    """Render the download instructions as an HTML fragment for Step 9.
+
+    ``resource_group_folder`` is passed through to the example snippet (see
+    ``build_data_yml_snippet``); defaults to the constant.
+    """
     parts = []
     parts.append(
         "<p>The generated <code>data.yml</code> references input data published "
@@ -518,7 +547,9 @@ def render_data_sources_html():
         '<textarea id="dataYmlSnippet" readonly title="Copy-paste example data.yml '
         'path settings" style="width: 100%; height: 90px; font-family: monospace; '
         "font-size: 11px; border: 1px solid #ddd; border-radius: 4px; padding: "
-        '8px;">' + html.escape(build_data_yml_snippet()) + "</textarea>"
+        '8px;">'
+        + html.escape(build_data_yml_snippet(resource_group_folder))
+        + "</textarea>"
     )
     parts.append("<h4>Data versioning</h4>")
     parts.append(f"<p>{html.escape(DATA_VERSIONING_NOTES)}</p>")
@@ -530,10 +561,14 @@ def render_data_sources_html():
 
 
 def populate_data_sources_section():
-    """Populate the Step 9 data-download guidance section from DATA_SOURCES."""
+    """Populate the Step 9 data-download guidance section from DATA_SOURCES.
+
+    Uses the live Step 7 region name so the example snippet's second
+    RESOURCE_GROUPS folder reflects the user's current setting.
+    """
     el = document.getElementById("dataSourcesContent")
     if el is not None:
-        el.innerHTML = render_data_sources_html()
+        el.innerHTML = render_data_sources_html(_live_resource_group_folder())
 
 
 # These are the editable controls whose values are not fully represented in the
@@ -8971,6 +9006,17 @@ def update_resource_group_name_default():
     if current in ("", state.resource_group_name_default, "resource_groups"):
         el.value = new_default
     state.resource_group_name_default = new_default
+    # Keep the Step 9 example snippet in sync with the (possibly refreshed) name.
+    _populate = globals().get("populate_data_sources_section")
+    if callable(_populate):
+        _populate()
+
+
+def on_resource_group_name_change(event):
+    """Refresh the Step 9 example snippet when the Step 7 region name changes."""
+    _populate = globals().get("populate_data_sources_section")
+    if callable(_populate):
+        _populate()
 
 
 async def _load_pyodide_package(name: str) -> bool:
@@ -10540,6 +10586,9 @@ async def main():
         )
         document.getElementById("downloadResourceGroupsBtn").addEventListener(
             "click", create_proxy(on_download_resource_groups)
+        )
+        document.getElementById("resourceGroupName").addEventListener(
+            "input", create_proxy(on_resource_group_name_change)
         )
         document.getElementById("uploadLcoeWindInput").addEventListener(
             "change", create_proxy(on_upload_lcoe_wind)

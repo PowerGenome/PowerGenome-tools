@@ -6,7 +6,11 @@ Covers:
   ``resource_groups`` prefix.
 - update_resource_group_name_default(): refreshes the #resourceGroupName input
   only when it holds the previous auto default / the static placeholder / is
-  empty, preserving custom user names; no-ops when the element is missing.
+  empty, preserving custom user names; no-ops when the element is missing; and
+  re-populates the Step 9 data-sources section so its example snippet reflects
+  the refreshed name.
+- on_resource_group_name_change(): re-populates the Step 9 data-sources section
+  when the Step 7 region name is edited.
 - _get_resource_group_name(): falls back to the derived default when the input
   is empty or whitespace.
 - reset_region_dependent_state(): wiring that refreshes the default whenever
@@ -326,6 +330,93 @@ class TestUpdateResourceGroupNameDefault:
             cluster_app.update_resource_group_name_default()
 
         assert cluster_app.state.resource_group_name_default == "previous_default"
+
+    def _fresh_name_and_content_elements(self):
+        """Return (name_el, content_el) plus a getElementById that routes by id.
+
+        The Step 9 data-sources section re-population reads both
+        ``resourceGroupName`` (for the live folder name) and
+        ``dataSourcesContent`` (the container to fill), so the mock must return
+        a different fake per id.
+        """
+        name_el = _fake_name_element("resource_groups")
+        content_el = MagicMock()
+        elements = {"resourceGroupName": name_el, "dataSourcesContent": content_el}
+        return (
+            name_el,
+            content_el,
+            MagicMock(side_effect=lambda el_id: elements.get(el_id)),
+        )
+
+    def test_repopulates_data_sources_section_with_new_default(self, cluster_app):
+        """After refreshing the default, the Step 9 snippet shows that folder."""
+        _setup_derived_state(cluster_app)
+        name_el, content_el, get_by_id = self._fresh_name_and_content_elements()
+        cluster_app.document.getElementById = get_by_id
+
+        cluster_app.update_resource_group_name_default()
+
+        assert name_el.value == HIGH_LEVEL_DEFAULT
+        assert HIGH_LEVEL_DEFAULT in content_el.innerHTML, (
+            "the Step 9 data-sources section should re-render using the "
+            "refreshed Step 7 region name"
+        )
+
+    def test_repopulates_data_sources_section_with_custom_name(self, cluster_app):
+        """A preserved custom name is reflected in the re-rendered snippet."""
+        _setup_derived_state(cluster_app)
+        name_el = _fake_name_element("my_custom_name")
+        content_el = MagicMock()
+        elements = {"resourceGroupName": name_el, "dataSourcesContent": content_el}
+        cluster_app.document.getElementById = MagicMock(
+            side_effect=lambda el_id: elements.get(el_id)
+        )
+
+        cluster_app.update_resource_group_name_default()
+
+        assert name_el.value == "my_custom_name"
+        assert "my_custom_name" in content_el.innerHTML
+
+    def test_repopulates_noop_when_data_sources_container_missing(self, cluster_app):
+        """A missing #dataSourcesContent element doesn't break the refresh."""
+        _setup_derived_state(cluster_app)
+        name_el = _fake_name_element("resource_groups")
+        elements = {"resourceGroupName": name_el}
+        cluster_app.document.getElementById = MagicMock(
+            side_effect=lambda el_id: elements.get(el_id)
+        )
+
+        cluster_app.update_resource_group_name_default()  # no exception
+
+        assert name_el.value == HIGH_LEVEL_DEFAULT
+
+
+# ---------------------------------------------------------------------------
+# on_resource_group_name_change()
+# ---------------------------------------------------------------------------
+
+
+class TestOnResourceGroupNameChange:
+    """Typing in the Step 7 region name refreshes the Step 9 method snippet."""
+
+    def test_repopulates_data_sources_section_with_live_name(self, cluster_app):
+        """The handler re-renders the snippet with the current input value."""
+        name_el = _fake_name_element("my_region_abc")
+        content_el = MagicMock()
+        elements = {"resourceGroupName": name_el, "dataSourcesContent": content_el}
+        cluster_app.document.getElementById = MagicMock(
+            side_effect=lambda el_id: elements.get(el_id)
+        )
+
+        cluster_app.on_resource_group_name_change(None)
+
+        assert "my_region_abc" in content_el.innerHTML
+
+    def test_tolerates_missing_elements(self, cluster_app):
+        """No elements wired up yet → handler is a silent no-op."""
+        cluster_app.document.getElementById = MagicMock(return_value=None)
+
+        cluster_app.on_resource_group_name_change(None)  # no exception
 
 
 # ---------------------------------------------------------------------------
