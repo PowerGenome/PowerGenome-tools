@@ -314,11 +314,16 @@ WORKFLOW_STATE_VERSION = 1
 # Suggested local data root used by the example data.yml snippet.
 DATA_ROOT_EXAMPLE = "~/PowerGenome-data"
 
-# Project-relative folder, placed next to the project's `settings` folder,
-# where the web app-generated new-build wind/solar resource group files (Step 7
-# downloads) are saved. Unlike the Zenodo deposits, these belong in the project
-# folder, not in ~/PowerGenome-data.
+# Prefix of the region-specific folder name used for the new-build wind/solar
+# resource groups generated in Step 7. The folder lives inside the final
+# Export (Step 9) ZIP next to `settings` and is named after the region setup
+# (e.g. resource_groups_10r_eastern-western_nercr). Unlike the Zenodo
+# deposits, it does not live under ~/PowerGenome-data.
 WEB_APP_RESOURCE_GROUPS_FOLDER = "resource_groups"
+
+# Sample placeholder in the generated data.yml for the existing resource
+# groups (Zenodo deposit); users replace it with their local folder.
+EXISTING_RESOURCE_GROUPS_SAMPLE_PATH = "path/to/existing/resource/groups"
 
 # Core input data deposit: files referenced by data_location + the per-table
 # *_table settings keys in data.yml.
@@ -374,11 +379,11 @@ DATA_SOURCES = [
         "title": "PowerGenome Existing Renewable Resource Groups",
         "description": (
             "Pre-built resource group metadata for existing renewable generators. "
-            "The RESOURCE_GROUPS setting accepts a list of folders; include this "
-            "deposit's folder as one entry and add a second entry for the "
-            "new-build wind/solar resource groups generated in Step 7 "
-            "(Interconnection) of this web app, placed next to the settings "
-            "folder in your project."
+            "The RESOURCE_GROUPS setting accepts a list of folders: one entry is "
+            "the region-specific folder for the new-build wind/solar resource "
+            "groups generated in Step 7 (Interconnection) of this web app (these "
+            "files are included in the final Export ZIP); the other entry points "
+            "to this deposit's folder (the existing resource groups)."
         ),
         "url": "https://zenodo.org/",  # TODO: replace with deposit URL when published
         "doi": "DOI pending (first publish upcoming)",
@@ -403,35 +408,36 @@ DATA_VERSIONING_NOTES = (
     "Zenodo for changed files before reusing it."
 )
 
-# Explains where the second RESOURCE_GROUPS entry (new-build wind/solar
-# resource groups) comes from. Shown in the Step 9 section and the bundled
-# DATA_SOURCES.md.
+# Explains where the RESOURCE_GROUPS entries come from. Shown in the Step 9
+# section and the bundled DATA_SOURCES.md.
 NEW_BUILD_RESOURCE_GROUPS_NOTE = (
-    "The second RESOURCE_GROUPS entry is the folder where you save the resource "
-    "group files you download in Step 7 (Interconnection) of this web app — "
-    "these are the new-build wind/solar resource groups. Unzip the downloaded "
-    "files into a folder and place that folder next to the project's `settings` "
-    "folder (for example `resource_groups` beside `settings`), rather than in "
-    "~/PowerGenome-data. The first entry points to the existing resource groups "
-    "deposit listed above."
+    "The new-build wind/solar resource groups are generated in Step 7 "
+    "(Interconnection) of this web app and are included automatically in the "
+    "final Export (Step 9) ZIP, inside a region-specific folder placed next to "
+    "the `settings` folder (for example `resource_groups_10r_eastern-western_"
+    "nercr`). That folder is the first RESOURCE_GROUPS entry in data.yml — no "
+    "manual download or extra folder setup is needed. The second entry points "
+    "to the existing resource groups deposit listed above; download it from "
+    "Zenodo and update the path to your local copy."
 )
 
 
 def build_data_yml_snippet(resource_group_folder=None):
     """Return a copy-paste-ready data.yml path snippet using the suggested root.
 
-    ``resource_group_folder`` defaults to ``WEB_APP_RESOURCE_GROUPS_FOLDER``;
-    pass the live Step 7 region name to reflect a user-chosen folder.
+    ``resource_group_folder`` defaults to the region-specific folder derived for
+    the current regions (the folder used inside the Export ZIP); pass the live
+    Step 7 region name to reflect a user-chosen folder.
     """
     if resource_group_folder is None:
-        resource_group_folder = WEB_APP_RESOURCE_GROUPS_FOLDER
+        resource_group_folder = _get_resource_group_name()
     paths = {d["id"]: d["target_folder"] for d in DATA_SOURCES}
     return (
         "# data.yml path settings (example)\n"
         f'data_location: ["{DATA_ROOT_EXAMPLE}/{paths["core"]}"]\n'
         "RESOURCE_GROUPS:\n"
-        f'  - "{DATA_ROOT_EXAMPLE}/{paths["resource_groups"]}"\n'
-        f'  - "{resource_group_folder}"  # new-build groups, next to settings\n'
+        f'  - "{resource_group_folder}"  # new-build groups, in the export ZIP\n'
+        f'  - "{DATA_ROOT_EXAMPLE}/{paths["resource_groups"]}"  # existing groups (Zenodo)\n'
         f'RESOURCE_GROUP_PROFILES: "{DATA_ROOT_EXAMPLE}/{paths["profiles"]}"\n'
     )
 
@@ -440,14 +446,10 @@ def _live_resource_group_folder() -> str:
     """Return the current Step 7 region name for the example snippet.
 
     Reads the ``resourceGroupName`` input when it holds a real string; falls
-    back to the default constant otherwise (including under test mocks).
+    back to the derived region-specific folder otherwise (including under test
+    mocks).
     """
-    el = document.getElementById("resourceGroupName")
-    if el is not None and isinstance(getattr(el, "value", None), str):
-        name = el.value.strip()
-        if name:
-            return name
-    return WEB_APP_RESOURCE_GROUPS_FOLDER
+    return _get_resource_group_name()
 
 
 def render_data_sources_md(resource_group_folder=None):
@@ -8715,10 +8717,12 @@ def generate_data_settings():
         "demand_segments_fn": "demand_segments_voll.csv",
         "emission_policies_fn": "emission_policies.csv",
         "RESOURCE_GROUPS": [
-            "path/to/resource/groups/folder",  # existing resource groups (Zenodo)
-            # new-build wind/solar resource groups from this web app (Step 7),
-            # stored relative to data.yml in the project folder
-            "resource_groups",
+            # Region-specific folder for new-build wind/solar resource groups,
+            # included in the export ZIP next to settings/.
+            _get_resource_group_name(),
+            # Sample path to the existing resource groups (Zenodo deposit) —
+            # replace with your local folder.
+            EXISTING_RESOURCE_GROUPS_SAMPLE_PATH,
         ],
         "RESOURCE_GROUP_PROFILES": "path/to/resource/profiles/folder",
         "data_location": ["path/to/your/primary/data/folder"],
@@ -8983,13 +8987,14 @@ def _build_network_costs_filename() -> str:
 
 
 def build_resource_group_name_default() -> str:
-    """Return the default Step 7 region name for resource-group file names.
+    """Return the default Step 7 region name for resource-group files.
 
     Uses the same derived stem as the network costs filename, but with
-    ``resource_groups`` instead of ``network_costs``.
+    ``resource_groups`` instead of ``network_costs``. This is also the
+    region-specific folder name used inside the final Export ZIP.
     Example: ``resource_groups_10r_eastern-western_nercr``.
     """
-    return f"resource_groups{_build_name_stem()}"
+    return f"{WEB_APP_RESOURCE_GROUPS_FOLDER}{_build_name_stem()}"
 
 
 def update_resource_group_name_default():
@@ -9128,9 +9133,18 @@ async def load_fast_interconnection_data():
 
 
 def _get_resource_group_name():
+    """Return the Step 7 region name, or the derived region-specific folder.
+
+    Reads the ``resourceGroupName`` input when it holds a real, non-empty
+    string; otherwise falls back to the derived default (the region-specific
+    folder used inside the Export ZIP).
+    """
     el = document.getElementById("resourceGroupName")
-    name = el.value.strip() if el and el.value else ""
-    return name or build_resource_group_name_default()
+    if el is not None and isinstance(getattr(el, "value", None), str):
+        name = el.value.strip()
+        if name:
+            return name
+    return build_resource_group_name_default()
 
 
 def _update_resource_group_list():
@@ -9522,9 +9536,10 @@ def build_workflow_state_manifest():
         if not has_resource_group_lcoe[tech]:
             tables[key] = _workflow_dataframe_payload(getattr(state, key))
     supplemental_files = []
+    resource_group_folder = _get_resource_group_name()
     for filename in sorted(state.resource_group_files):
         if "/" not in filename and "\\" not in filename and ".." not in filename:
-            supplemental_files.append(f"resource_groups/{filename}")
+            supplemental_files.append(f"{resource_group_folder}/{filename}")
 
     return {
         "schema": WORKFLOW_STATE_SCHEMA,
@@ -9608,8 +9623,14 @@ def _read_workflow_zip(data):
                 )
         resource_group_files = {}
         for name in required:
-            if name.startswith("resource_groups/"):
-                resource_group_files[name[len("resource_groups/") :]] = zipf.read(name)
+            # Supplemental files are resource-group files inside a single
+            # region-specific folder (e.g. resource_groups_2r_eastern-western_nercr/<file>).
+            if name.startswith("settings/") or name.startswith("extra_inputs/"):
+                continue
+            if "/" in name:
+                resource_group_files[name.split("/", 1)[1]] = zipf.read(name)
+            else:
+                resource_group_files[name] = zipf.read(name)
         return manifest, settings_yamls, resource_group_files
 
 
@@ -10067,13 +10088,14 @@ def on_download_all_settings(event):
                 state.network_costs_df.to_csv(index=False),
             )
 
+        resource_group_folder = _get_resource_group_name()
         for filename, payload in sorted(state.resource_group_files.items()):
             if "/" in filename or "\\" in filename or ".." in filename:
                 continue
             if isinstance(payload, (bytes, bytearray)):
-                zipf.writestr(f"resource_groups/{filename}", payload)
+                zipf.writestr(f"{resource_group_folder}/{filename}", payload)
             else:
-                zipf.writestr(f"resource_groups/{filename}", str(payload))
+                zipf.writestr(f"{resource_group_folder}/{filename}", str(payload))
 
     zip_name = "powergenome_settings.zip"
     _download_binary_file(zip_name, buffer.getvalue(), "application/zip")

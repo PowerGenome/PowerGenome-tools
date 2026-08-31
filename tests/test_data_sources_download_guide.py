@@ -242,12 +242,31 @@ class TestDataSourcesConfig:
 class TestGenerateDataSettings:
     def test_resource_groups_is_a_list_of_two_folders(self, cluster_app):
         """generate_data_settings() emits RESOURCE_GROUPS as a list of exactly the
-        two placeholder folders (existing Zenodo deposit + web-app new-build groups)."""
+        two folders: the derived region-specific new-build folder FIRST, the
+        sample existing-groups Zenodo path SECOND."""
         data = yaml.safe_load(cluster_app.generate_data_settings())
+        derived = cluster_app._get_resource_group_name()
         assert data["RESOURCE_GROUPS"] == [
-            "path/to/resource/groups/folder",
-            "resource_groups",
+            derived,
+            cluster_app.EXISTING_RESOURCE_GROUPS_SAMPLE_PATH,
         ]
+        # The first entry is the derived value (built from the app helper), not a
+        # hardcoded constant.
+        assert derived == cluster_app.build_resource_group_name_default()
+
+    def test_resource_groups_first_entry_tracks_live_input(self, cluster_app):
+        """The first RESOURCE_GROUPS entry follows #resourceGroupName when it
+        holds a real string."""
+        name_el = MagicMock()
+        name_el.value = "my_rg"
+        cluster_app.document.getElementById = MagicMock(return_value=name_el)
+
+        data = yaml.safe_load(cluster_app.generate_data_settings())
+
+        assert data["RESOURCE_GROUPS"][0] == "my_rg"
+        assert data["RESOURCE_GROUPS"][1] == (
+            cluster_app.EXISTING_RESOURCE_GROUPS_SAMPLE_PATH
+        )
 
     def test_resource_groups_deposit_description_mentions_list(self, cluster_app):
         """The resource_groups deposit description explains the list form."""
@@ -274,9 +293,13 @@ class TestBuildDataYmlSnippet:
         snippet = cluster_app.build_data_yml_snippet()
 
         assert 'data_location: ["~/PowerGenome-data/data"]' in snippet
+        # First RESOURCE_GROUPS entry is the derived region-specific folder.
+        derived = cluster_app.build_resource_group_name_default()
+        assert f'  - "{derived}"' in snippet
+        assert "# new-build groups, in the export ZIP" in snippet
+        # Second RESOURCE_GROUPS entry is the existing-groups (Zenodo) path.
         assert '  - "~/PowerGenome-data/existing_resource_groups"' in snippet
-        assert '  - "resource_groups"' in snippet
-        assert cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER in snippet
+        assert "# existing groups (Zenodo)" in snippet
         assert (
             'RESOURCE_GROUP_PROFILES: "~/PowerGenome-data/resource_profiles"' in snippet
         )
@@ -297,21 +320,17 @@ class TestBuildDataYmlSnippet:
                 f"{deposit_id!r} deposit target_folder"
             )
 
-    def test_snippet_new_build_folder_is_project_relative(self, cluster_app):
-        """The second RESOURCE_GROUPS entry is WEB_APP_RESOURCE_GROUPS_FOLDER verbatim,
-        WITHOUT the DATA_ROOT_EXAMPLE prefix: the new-build groups go next to the
-        project's settings folder (e.g. resource_groups beside settings), not in
-        ~/PowerGenome-data.
+    def test_snippet_new_build_folder_is_region_specific_derived(self, cluster_app):
+        """The new-build RESOURCE_GROUPS entry is the region-specific derived
+        folder (build_resource_group_name_default()), not a static constant, and
+        does NOT carry the DATA_ROOT_EXAMPLE (~/PowerGenome-data) prefix.
         """
         snippet = cluster_app.build_data_yml_snippet()
-        quoted_folder = f'"{cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER}"'
-        assert quoted_folder in snippet
-        assert (
-            f"{cluster_app.DATA_ROOT_EXAMPLE}/{cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER}"
-            not in snippet
-        ), (
-            "the new-build resource groups folder must be project-relative, not "
-            "under DATA_ROOT_EXAMPLE (~/PowerGenome-data)"
+        derived = cluster_app.build_resource_group_name_default()
+        assert f'"{derived}"' in snippet
+        assert f"{cluster_app.DATA_ROOT_EXAMPLE}/{derived}" not in snippet, (
+            "the new-build resource groups folder must be the region-specific "
+            "derived folder, not under DATA_ROOT_EXAMPLE (~/PowerGenome-data)"
         )
 
     def test_snippet_parses_to_resource_groups_list_of_two(self, cluster_app):
@@ -319,34 +338,32 @@ class TestBuildDataYmlSnippet:
         snippet = cluster_app.build_data_yml_snippet()
         parsed = yaml.safe_load(snippet)
         assert parsed["RESOURCE_GROUPS"] == [
+            cluster_app._get_resource_group_name(),
             "~/PowerGenome-data/existing_resource_groups",
-            "resource_groups",
         ]
 
     def test_snippet_accepts_custom_resource_group_folder(self, cluster_app):
-        """A caller-supplied folder becomes the second RESOURCE_GROUPS entry.
+        """A caller-supplied folder becomes the FIRST RESOURCE_GROUPS entry.
 
         The snippet stays yaml-parseable and the generated comment records that
-        this is the new-build groups folder, next to settings.
+        this is the new-build groups folder, in the export ZIP.
         """
         snippet = cluster_app.build_data_yml_snippet("custom_folder")
         parsed = yaml.safe_load(snippet)
-        assert parsed["RESOURCE_GROUPS"][1] == "custom_folder"
-        assert "# new-build groups, next to settings" in snippet
+        assert parsed["RESOURCE_GROUPS"][0] == "custom_folder"
+        assert "# new-build groups, in the export ZIP" in snippet
 
-    def test_snippet_no_argument_uses_web_app_resource_groups_folder(self, cluster_app):
-        """No/None argument → WEB_APP_RESOURCE_GROUPS_FOLDER in the second entry."""
+    def test_snippet_no_argument_uses_derived_resource_group_folder(self, cluster_app):
+        """No/None argument → the derived region-specific folder in the first entry."""
         for snippet in (
             cluster_app.build_data_yml_snippet(),
             cluster_app.build_data_yml_snippet(None),
         ):
             parsed = yaml.safe_load(snippet)
-            assert (
-                parsed["RESOURCE_GROUPS"][1]
-                == cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER
+            assert parsed["RESOURCE_GROUPS"][0] == (
+                cluster_app.build_resource_group_name_default()
             )
-            assert parsed["RESOURCE_GROUPS"][1] == "resource_groups"
-            assert "# new-build groups, next to settings" in snippet
+            assert "# new-build groups, in the export ZIP" in snippet
 
 
 # ---------------------------------------------------------------------------
@@ -370,8 +387,11 @@ class TestRenderDataSourcesMd:
         assert (
             'RESOURCE_GROUP_PROFILES: "~/PowerGenome-data/resource_profiles"' in block
         )
+        derived = cluster_app.build_resource_group_name_default()
+        assert f'  - "{derived}"' in block
+        assert "# new-build groups, in the export ZIP" in block
         assert '  - "~/PowerGenome-data/existing_resource_groups"' in block
-        assert '  - "resource_groups"' in block
+        assert "# existing groups (Zenodo)" in block
 
     def test_contains_data_versioning_section(self, cluster_app):
         md = cluster_app.render_data_sources_md()
@@ -389,7 +409,7 @@ class TestRenderDataSourcesMd:
 
         assert "## New-build resource groups (Step 7)" in md
         # Stable, human-meaningful substring of NEW_BUILD_RESOURCE_GROUPS_NOTE
-        assert "The second RESOURCE_GROUPS entry is the folder where you save the" in md
+        assert "included automatically in the final Export (Step 9) ZIP" in md
 
         new_build_idx = md.index("## New-build resource groups (Step 7)")
         example_idx = md.index("## Example data.yml paths")
@@ -399,21 +419,22 @@ class TestRenderDataSourcesMd:
         )
 
     def test_new_build_note_mentions_settings_folder_placement(self, cluster_app):
-        """The Step 7 note directs the folder next to the project's settings folder."""
+        """The Step 7 note places the new-build folder inside the export ZIP."""
         note = cluster_app.NEW_BUILD_RESOURCE_GROUPS_NOTE
-        assert "next to the project's" in note
+        assert "included automatically in the final Export (Step 9) ZIP" in note
+        assert "region-specific folder" in note
         assert "`settings`" in note
-        assert "beside `settings`" in note
+        assert "no manual download" in note
         md = cluster_app.render_data_sources_md()
-        assert "next to the project's" in md
+        assert "included automatically in the final Export (Step 9) ZIP" in md
         # The md bundles the snippet; its new-build comment records the placement.
-        assert "# new-build groups, next to settings" in md
+        assert "# new-build groups, in the export ZIP" in md
 
     def test_render_data_sources_md_accepts_custom_folder(self, cluster_app):
         """A supplied folder flows into the bundled example data.yml snippet."""
         md = cluster_app.render_data_sources_md("custom_folder")
         assert '  - "custom_folder"' in md
-        assert "# new-build groups, next to settings" in md
+        assert "# new-build groups, in the export ZIP" in md
 
 
 # ---------------------------------------------------------------------------
@@ -471,29 +492,32 @@ class TestRenderDataSourcesHtml:
         cluster_app.populate_data_sources_section()
 
         assert 'id="dataYmlSnippet"' in content_el.innerHTML
-        # The escaped snippet's second RESOURCE_GROUPS entry is the live folder,
-        # NOT the static WEB_APP_RESOURCE_GROUPS_FOLDER fallback.
+        # The escaped snippet's FIRST RESOURCE_GROUPS entry is the live folder,
+        # NOT the derived-default fallback.
         assert "  - &quot;my_region_abc&quot;" in content_el.innerHTML
-        assert "&quot;resource_groups&quot;  #" not in content_el.innerHTML
-        assert "# new-build groups, next to settings" in content_el.innerHTML
+        assert (
+            "&quot;resource_groups_unspecified_default&quot;"
+            not in content_el.innerHTML
+        )
+        assert "# new-build groups, in the export ZIP" in content_el.innerHTML
 
     def test_render_data_sources_html_accepts_custom_folder(self, cluster_app):
         """A supplied folder flows into the escaped snippet inside the HTML."""
         html = cluster_app.render_data_sources_html("custom_folder")
         assert "custom_folder" in html
         # html.escape leaves '#' and plain alnum text untouched.
-        assert "# new-build groups, next to settings" in html
+        assert "# new-build groups, in the export ZIP" in html
 
     def test_html_new_build_note_mentions_settings_folder_placement(self, cluster_app):
-        """The HTML Step 7 note also directs the folder next to settings.
+        """The HTML Step 7 note also places the new-build folder in the export ZIP.
 
-        The note is html.escaped, so the apostrophe in "project's" becomes
-        ``&#x27;``; the backticks around ``settings`` survive unchanged.
+        The note is html.escaped, but backticks, `settings`, and the em dash
+        survive unchanged.
         """
         html = cluster_app.render_data_sources_html()
-        assert "next to the project" in html
+        assert "included automatically in the final Export (Step 9) ZIP" in html
         assert "`settings` folder" in html
-        assert "beside `settings`" in html
+        assert "no manual download" in html
 
     def test_html_contains_new_build_resource_groups_section(self, cluster_app):
         """The Step 7 new-build note appears before the example paths heading."""
@@ -502,9 +526,7 @@ class TestRenderDataSourcesHtml:
         assert "New-build resource groups (Step 7)" in html
         # html.escape leaves RESOURCE_GROUPS and the em dash unchanged, so the
         # same stable substring used for the Markdown note works here.
-        assert (
-            "The second RESOURCE_GROUPS entry is the folder where you save the" in html
-        )
+        assert "included automatically in the final Export (Step 9) ZIP" in html
 
         new_build_idx = html.index("New-build resource groups (Step 7)")
         example_idx = html.index("<h4>Example data.yml paths</h4>")
@@ -544,7 +566,7 @@ class TestLiveResourceGroupFolder:
         cluster_app.document.getElementById = MagicMock(return_value=None)
 
         assert cluster_app._live_resource_group_folder() == (
-            cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER
+            cluster_app.build_resource_group_name_default()
         )
 
     def test_falls_back_when_value_empty(self, cluster_app):
@@ -553,7 +575,7 @@ class TestLiveResourceGroupFolder:
         cluster_app.document.getElementById = MagicMock(return_value=name_el)
 
         assert cluster_app._live_resource_group_folder() == (
-            cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER
+            cluster_app.build_resource_group_name_default()
         )
 
     def test_falls_back_when_value_whitespace_only(self, cluster_app):
@@ -562,17 +584,17 @@ class TestLiveResourceGroupFolder:
         cluster_app.document.getElementById = MagicMock(return_value=name_el)
 
         assert cluster_app._live_resource_group_folder() == (
-            cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER
+            cluster_app.build_resource_group_name_default()
         )
 
     def test_falls_back_when_value_is_not_a_string(self, cluster_app):
-        """A non-str (e.g. MagicMock) input value falls back to the constant."""
+        """A non-str (e.g. MagicMock) input value falls back to the derived default."""
         name_el = MagicMock()
         name_el.value = MagicMock()
         cluster_app.document.getElementById = MagicMock(return_value=name_el)
 
         assert cluster_app._live_resource_group_folder() == (
-            cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER
+            cluster_app.build_resource_group_name_default()
         )
 
 
@@ -637,36 +659,39 @@ class TestIndexHtmlStep7:
         step7 = html[step7_start:]
 
         # The hint wraps across several source lines, but the leading phrase
-        # "Unzip the downloaded files into a folder" appears contiguously on a
-        # single line, so a plain substring search on the raw pane is safe.
-        # (The full guidance sentence about `settings` placement is wrapped, so
-        # don't search for the whole sentence here.)
-        hint_text = "Unzip the downloaded files into a folder"
+        # "Downloading the ZIP here is optional" appears contiguously on a single
+        # line, so a plain substring search on the raw pane is safe. Multi-line
+        # phrases below are matched against a whitespace-normalized copy.
+        hint_text = "Downloading the ZIP here is optional"
         zip_btn_idx = step7.find('id="downloadResourceGroupsBtn"')
         hint_idx = step7.find(hint_text)
         rg_mentions = step7.count("RESOURCE_GROUPS")
 
         assert zip_btn_idx != -1, "Could not find the Download ZIP button"
+        # The button is now explicitly optional: the files ship in the export.
+        assert (
+            "Download ZIP (optional)" in step7
+        ), "the Step 7 button should be labeled 'Download ZIP (optional)'"
         assert hint_idx != -1, "Could not find the output-files save hint"
         assert (
             hint_idx > zip_btn_idx
         ), "the save hint must come after the Download ZIP button"
 
-        # The hint should explain that the project folder maps to RESOURCE_GROUPS
-        # in the generated data.yml.
+        # The hint should explain that the folder maps to RESOURCE_GROUPS in the
+        # generated data.yml.
         assert rg_mentions >= 1, (
             "the Step 7 pane should mention RESOURCE_GROUPS (the setting used in "
             "the generated data.yml)"
         )
 
-        # The hint should direct the folder next to the project's settings folder
+        # The hint explains the files are bundled into the final export ZIP under
+        # a region-specific folder, listed as the FIRST RESOURCE_GROUPS entry
         # (wrapped across source lines and styled with <code>, so normalize
         # whitespace and match including the inline tag).
         step7_norm = " ".join(step7.split())
         assert (
-            "place it next to the <code>settings</code> folder in your project"
-            in step7_norm
-        ), "the Step 7 hint should mention placing the folder next to the settings folder"
+            "automatically included in the final export" in step7_norm
+        ), "the Step 7 hint should say the files are included in the final export"
         assert (
-            "beside <code>settings</code>" in step7_norm
-        ), "the Step 7 hint should give the settings-beside example (resource_groups beside settings)"
+            "lists that folder as its first entry" in step7_norm
+        ), "the Step 7 hint should say RESOURCE_GROUPS lists the folder as its first entry"

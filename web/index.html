@@ -2789,15 +2789,14 @@
                         <em>No resource group files generated yet.</em>
                     </div>
                     <button class="btn btn-secondary" id="downloadResourceGroupsBtn" type="button"
-                        style="margin-top: 8px;">Download ZIP</button>
+                        style="margin-top: 8px;">Download ZIP (optional)</button>
                     <div style="font-size: 12px; color: var(--text-muted); line-height: 1.5; margin-top: 8px;">
-                        Unzip the downloaded files into a folder and place it next to the
-                        <code>settings</code> folder in your project (for example <code>resource_groups</code>
-                        beside <code>settings</code>), then reference that folder in the generated settings:
-                        the Export step's <code>data.yml</code> lists it as the second
-                        <code>RESOURCE_GROUPS</code> entry (new-build wind/solar), alongside the existing
-                        resource groups. See the "Download input data" section in Step 9 for the recommended
-                        layout.
+                        Downloading the ZIP here is optional — the generated resource-group files are
+                        automatically included in the final export: the Export step (Step 9) places them
+                        in a region-specific folder (for example <code>resource_groups_2r_eastern-western_nercr</code>)
+                        inside the downloaded settings ZIP, and <code>data.yml</code>'s
+                        <code>RESOURCE_GROUPS</code> lists that folder as its first entry. Download here only
+                        if you want the files on their own.
                     </div>
                 </div>
 

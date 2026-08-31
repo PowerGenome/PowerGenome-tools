@@ -10,7 +10,9 @@ Covers:
 - _import_workflow_bytes: dispatches correctly for .zip vs .yml filenames;
     rejects wrong extension; rejects standalone import when supplemental files are required
 - ZIP export always includes workflow_state.yml with valid manifest content
-- ZIP export includes resource_groups/ entries when state.resource_group_files is non-empty
+- ZIP export includes region-specific folder entries (e.g.
+    resource_groups_unspecified_default/<file>) when state.resource_group_files
+    is non-empty
 - State round-trip: selected_bas, ba_to_region, settings_yamls survive import via ZIP
 """
 
@@ -163,7 +165,7 @@ class TestIsSafeWorkflowPath:
         [
             "workflow_state.yml",
             "settings/model_definition.yml",
-            "resource_groups/groups.json",
+            "resource_groups_unspecified_default/groups.json",
             "data/network_costs.csv",
         ],
     )
@@ -246,9 +248,13 @@ class TestValidateWorkflowManifest:
             cluster_app._validate_workflow_manifest(m)
 
     def test_valid_supplemental_files_accepted(self, cluster_app):
-        m = _minimal_manifest(supplemental=["resource_groups/groups.json"])
+        m = _minimal_manifest(
+            supplemental=["resource_groups_unspecified_default/groups.json"]
+        )
         result = cluster_app._validate_workflow_manifest(m)
-        assert result["required_supplemental_files"] == ["resource_groups/groups.json"]
+        assert result["required_supplemental_files"] == [
+            "resource_groups_unspecified_default/groups.json"
+        ]
 
     def test_unsafe_supplemental_path_raises(self, cluster_app):
         m = _minimal_manifest(supplemental=["../evil.json"])
@@ -340,7 +346,9 @@ class TestReadWorkflowZip:
             cluster_app._read_workflow_zip(data)
 
     def test_missing_required_supplemental_file_raises(self, cluster_app):
-        m = _minimal_manifest(supplemental=["resource_groups/groups.json"])
+        m = _minimal_manifest(
+            supplemental=["resource_groups_unspecified_default/groups.json"]
+        )
         data = _build_zip({"workflow_state.yml": _manifest_bytes(m)})
         with pytest.raises(ValueError, match="missing"):
             cluster_app._read_workflow_zip(data)
@@ -360,26 +368,67 @@ class TestReadWorkflowZip:
         assert "fuels.yml" in settings_yamls
 
     def test_resource_group_files_extracted_when_required(self, cluster_app):
+        """Required supplemental paths are parsed generically: any path that is
+        not settings/ or extra_inputs/ is a resource-group file, keyed by the
+        basename after the first '/'."""
+        folder = cluster_app._get_resource_group_name()
         groups_content = b'{"groups": []}'
-        m = _minimal_manifest(supplemental=["resource_groups/groups.json"])
+        m = _minimal_manifest(supplemental=[f"{folder}/groups.json"])
         data = _build_zip(
             {
                 "workflow_state.yml": _manifest_bytes(m),
-                "resource_groups/groups.json": groups_content,
+                f"{folder}/groups.json": groups_content,
             }
         )
         _, _, resource_group_files = cluster_app._read_workflow_zip(data)
         assert "groups.json" in resource_group_files
         assert resource_group_files["groups.json"] == groups_content
 
+    def test_resource_group_files_roundtrip_region_specific_folder(self, cluster_app):
+        """A ZIP whose manifest references a region-specific resource-group folder
+        (e.g. resource_groups_2r_Eastern-Western_nercr/<file>) parses back into
+        plain basename keys — an export/import round trip."""
+        folder = "resource_groups_2r_Eastern-Western_nercr"
+        m = _minimal_manifest(
+            supplemental=[
+                f"{folder}/solar_lcoe_x.parquet",
+                f"{folder}/wind_lcoe_y.parquet",
+            ]
+        )
+        data = _build_zip(
+            {
+                "workflow_state.yml": _manifest_bytes(m),
+                f"{folder}/solar_lcoe_x.parquet": b"solar",
+                f"{folder}/wind_lcoe_y.parquet": b"wind",
+            }
+        )
+        _, _, resource_group_files = cluster_app._read_workflow_zip(data)
+        assert resource_group_files == {
+            "solar_lcoe_x.parquet": b"solar",
+            "wind_lcoe_y.parquet": b"wind",
+        }
+
+    def test_resource_group_file_without_folder_prefix_not_required(self, cluster_app):
+        """A required file path with no '/' is still read as a resource-group file."""
+        m = _minimal_manifest(supplemental=["groups.json"])
+        data = _build_zip(
+            {
+                "workflow_state.yml": _manifest_bytes(m),
+                "groups.json": b"{}",
+            }
+        )
+        _, _, resource_group_files = cluster_app._read_workflow_zip(data)
+        assert resource_group_files == {"groups.json": b"{}"}
+
     def test_non_required_resource_group_files_not_extracted(self, cluster_app):
-        """Files in resource_groups/ that are NOT in required_supplemental_files are
-        not extracted (only required files are returned)."""
+        """Files in the resource-group folder that are NOT in
+        required_supplemental_files are not extracted (only required files are
+        returned)."""
         m = _minimal_manifest(supplemental=[])  # nothing required
         data = _build_zip(
             {
                 "workflow_state.yml": _manifest_bytes(m),
-                "resource_groups/extra.json": b"{}",
+                "resource_groups_unspecified_default/extra.json": b"{}",
             }
         )
         _, _, resource_group_files = cluster_app._read_workflow_zip(data)
@@ -414,7 +463,9 @@ class TestImportWorkflowBytes:
     def test_standalone_yml_with_required_files_raises(self, cluster_app):
         """A standalone .yml with required supplemental files must reject and
         prompt the user to upload the full ZIP instead."""
-        m = _minimal_manifest(supplemental=["resource_groups/groups.json"])
+        m = _minimal_manifest(
+            supplemental=["resource_groups_unspecified_default/groups.json"]
+        )
         with pytest.raises(ValueError, match="supplemental"):
             cluster_app._import_workflow_bytes(_manifest_bytes(m), "workflow_state.yml")
 
@@ -450,12 +501,13 @@ class TestImportWorkflowBytes:
 
     def test_zip_import_restores_resource_group_files(self, cluster_app):
         """ZIP import populates state.resource_group_files for required entries."""
+        folder = cluster_app._get_resource_group_name()
         grp = b'{"resource_groups": []}'
-        m = _minimal_manifest(supplemental=["resource_groups/groups.json"])
+        m = _minimal_manifest(supplemental=[f"{folder}/groups.json"])
         data = _build_zip(
             {
                 "workflow_state.yml": _manifest_bytes(m),
-                "resource_groups/groups.json": grp,
+                f"{folder}/groups.json": grp,
             }
         )
         cluster_app._import_workflow_bytes(data, "export.zip")
@@ -499,7 +551,8 @@ class TestZipExportIncludesWorkflowState:
             assert isinstance(manifest[section], dict), f"'{section}' must be a dict"
 
     def test_resource_groups_included_in_zip_when_state_populated(self, cluster_app):
-        """resource_groups/ entries appear in the ZIP when state.resource_group_files is set."""
+        """Region-specific folder entries appear in the ZIP when state.resource_group_files is set."""
+        folder = cluster_app._get_resource_group_name()
         grp_bytes = b'{"resource_groups": []}'
         cluster_app.state.settings_yamls = {"model_definition.yml": "x: 1\n"}
         cluster_app.state.emission_policies_df = None
@@ -511,11 +564,13 @@ class TestZipExportIncludesWorkflowState:
         buf = BytesIO(calls[0]["payload_bytes"])
         with zipfile.ZipFile(buf) as zf:
             names = zf.namelist()
-            assert "resource_groups/groups.json" in names
-            assert zf.read("resource_groups/groups.json") == grp_bytes
+            assert f"{folder}/groups.json" in names
+            assert zf.read(f"{folder}/groups.json") == grp_bytes
 
     def test_resource_groups_listed_in_manifest_supplemental(self, cluster_app):
-        """resource_group_files filenames appear in required_supplemental_files."""
+        """resource_group_files filenames appear in required_supplemental_files under
+        the region-specific folder."""
+        folder = cluster_app._get_resource_group_name()
         cluster_app.state.settings_yamls = {"model_definition.yml": "x: 1\n"}
         cluster_app.state.emission_policies_df = None
         cluster_app.state.resource_group_files = {"assignments.csv": b"a,b\n1,2\n"}
@@ -526,12 +581,11 @@ class TestZipExportIncludesWorkflowState:
         buf = BytesIO(calls[0]["payload_bytes"])
         with zipfile.ZipFile(buf) as zf:
             manifest = yaml.safe_load(zf.read("workflow_state.yml"))
-        assert (
-            "resource_groups/assignments.csv" in manifest["required_supplemental_files"]
-        )
+        assert f"{folder}/assignments.csv" in manifest["required_supplemental_files"]
 
     def test_resource_group_with_unsafe_filename_excluded_from_zip(self, cluster_app):
         """Files with path-traversal names in resource_group_files are silently skipped."""
+        folder = cluster_app._get_resource_group_name()
         cluster_app.state.settings_yamls = {"model_definition.yml": "x: 1\n"}
         cluster_app.state.emission_policies_df = None
         cluster_app.state.resource_group_files = {
@@ -545,8 +599,8 @@ class TestZipExportIncludesWorkflowState:
         buf = BytesIO(calls[0]["payload_bytes"])
         with zipfile.ZipFile(buf) as zf:
             names = set(zf.namelist())
-        assert "resource_groups/safe.json" in names
-        assert "resource_groups/../evil.sh" not in names
+        assert f"{folder}/safe.json" in names
+        assert f"{folder}/../evil.sh" not in names
         assert "../evil.sh" not in names
 
 
