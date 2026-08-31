@@ -246,7 +246,7 @@ class TestGenerateDataSettings:
         data = yaml.safe_load(cluster_app.generate_data_settings())
         assert data["RESOURCE_GROUPS"] == [
             "path/to/resource/groups/folder",
-            "path/to/your/new/build/resource/groups",
+            "resource_groups",
         ]
 
     def test_resource_groups_deposit_description_mentions_list(self, cluster_app):
@@ -275,7 +275,7 @@ class TestBuildDataYmlSnippet:
 
         assert 'data_location: ["~/PowerGenome-data/data"]' in snippet
         assert '  - "~/PowerGenome-data/existing_resource_groups"' in snippet
-        assert '  - "~/PowerGenome-data/new_build_resource_groups"' in snippet
+        assert '  - "resource_groups"' in snippet
         assert cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER in snippet
         assert (
             'RESOURCE_GROUP_PROFILES: "~/PowerGenome-data/resource_profiles"' in snippet
@@ -297,14 +297,21 @@ class TestBuildDataYmlSnippet:
                 f"{deposit_id!r} deposit target_folder"
             )
 
-    def test_snippet_new_build_path_derived_from_web_app_resource_groups_folder(
-        self, cluster_app
-    ):
-        """The second RESOURCE_GROUPS entry comes from WEB_APP_RESOURCE_GROUPS_FOLDER,
-        not a hardcoded string."""
+    def test_snippet_new_build_folder_is_project_relative(self, cluster_app):
+        """The second RESOURCE_GROUPS entry is WEB_APP_RESOURCE_GROUPS_FOLDER verbatim,
+        WITHOUT the DATA_ROOT_EXAMPLE prefix: the new-build groups go in the project
+        folder (e.g. a resource_groups folder beside data.yml), not ~/PowerGenome-data.
+        """
         snippet = cluster_app.build_data_yml_snippet()
-        new_build_path = f"{cluster_app.DATA_ROOT_EXAMPLE}/{cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER}"
-        assert new_build_path in snippet
+        quoted_folder = f'"{cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER}"'
+        assert quoted_folder in snippet
+        assert (
+            f"{cluster_app.DATA_ROOT_EXAMPLE}/{cluster_app.WEB_APP_RESOURCE_GROUPS_FOLDER}"
+            not in snippet
+        ), (
+            "the new-build resource groups folder must be project-relative, not "
+            "under DATA_ROOT_EXAMPLE (~/PowerGenome-data)"
+        )
 
     def test_snippet_parses_to_resource_groups_list_of_two(self, cluster_app):
         """The snippet's RESOURCE_GROUPS is a yaml list of exactly two folder paths."""
@@ -312,7 +319,7 @@ class TestBuildDataYmlSnippet:
         parsed = yaml.safe_load(snippet)
         assert parsed["RESOURCE_GROUPS"] == [
             "~/PowerGenome-data/existing_resource_groups",
-            "~/PowerGenome-data/new_build_resource_groups",
+            "resource_groups",
         ]
 
 
@@ -338,7 +345,7 @@ class TestRenderDataSourcesMd:
             'RESOURCE_GROUP_PROFILES: "~/PowerGenome-data/resource_profiles"' in block
         )
         assert '  - "~/PowerGenome-data/existing_resource_groups"' in block
-        assert '  - "~/PowerGenome-data/new_build_resource_groups"' in block
+        assert '  - "resource_groups"' in block
 
     def test_contains_data_versioning_section(self, cluster_app):
         md = cluster_app.render_data_sources_md()
@@ -356,10 +363,7 @@ class TestRenderDataSourcesMd:
 
         assert "## New-build resource groups (Step 7)" in md
         # Stable, human-meaningful substring of NEW_BUILD_RESOURCE_GROUPS_NOTE
-        assert (
-            "The second RESOURCE_GROUPS entry is the local folder where you save "
-            "the" in md
-        )
+        assert "The second RESOURCE_GROUPS entry is the folder where you save the" in md
 
         new_build_idx = md.index("## New-build resource groups (Step 7)")
         example_idx = md.index("## Example data.yml paths")
@@ -413,8 +417,7 @@ class TestRenderDataSourcesHtml:
         # html.escape leaves RESOURCE_GROUPS and the em dash unchanged, so the
         # same stable substring used for the Markdown note works here.
         assert (
-            "The second RESOURCE_GROUPS entry is the local folder where you save "
-            "the" in html
+            "The second RESOURCE_GROUPS entry is the folder where you save the" in html
         )
 
         new_build_idx = html.index("New-build resource groups (Step 7)")
@@ -489,7 +492,7 @@ class TestIndexHtmlStep7:
         assert step7_start != -1, "Could not find Step 7 pane"
         step7 = html[step7_start:]
 
-        hint_text = "Save the downloaded files to a local folder"
+        hint_text = "Save the downloaded files to a folder in your project"
         zip_btn_idx = step7.find('id="downloadResourceGroupsBtn"')
         hint_idx = step7.find(hint_text)
         rg_mentions = step7.count("RESOURCE_GROUPS")
@@ -500,7 +503,7 @@ class TestIndexHtmlStep7:
             hint_idx > zip_btn_idx
         ), "the save hint must come after the Download ZIP button"
 
-        # The hint should explain that the local folder maps to RESOURCE_GROUPS
+        # The hint should explain that the project folder maps to RESOURCE_GROUPS
         # in the generated data.yml.
         assert rg_mentions >= 1, (
             "the Step 7 pane should mention RESOURCE_GROUPS (the setting used in "

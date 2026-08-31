@@ -402,7 +402,7 @@ class TestOnDownloadAllSettings:
         assert exported_data["emission_policies_fn"] == "emission_policies.csv"
         assert exported_data["RESOURCE_GROUPS"] == [
             "path/to/resource/groups/folder",
-            "path/to/your/new/build/resource/groups",
+            "resource_groups",
         ]
         assert (
             exported_data["RESOURCE_GROUP_PROFILES"]
