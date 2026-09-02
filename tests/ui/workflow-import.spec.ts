@@ -165,7 +165,7 @@ test.describe('Workflow import — standalone workflow_state.yml', () => {
         await loadApp(page, 60_000);
 
         const manifest = minimalManifest({
-            required_supplemental_files: ['resource_groups/groups.json'],
+            required_supplemental_files: ['resource_groups_unspecified_default/groups.json'],
         });
         const statusText = await uploadWorkflowYml(page, manifestBytes(manifest));
 

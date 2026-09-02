@@ -368,6 +368,7 @@ class TestOnDownloadAllSettings:
             "settings/extra_inputs.yaml",
             "extra_inputs/emission_policies.csv",
             "workflow_state.yml",
+            "DATA_SOURCES.md",
         }
 
     def test_data_yaml_is_included_with_required_placeholders(self, cluster_app):
@@ -383,6 +384,9 @@ class TestOnDownloadAllSettings:
         }
         cluster_app.state.emission_policies_df = None
         cluster_app.state.resource_group_files = {}
+        # Resource-group files are absent here, so no region-specific
+        # resource-group folder entry appears in the ZIP.
+        resource_group_folder = cluster_app._get_resource_group_name()
         calls = _capture_zip_download(cluster_app)
 
         cluster_app.on_download_all_settings(None)
@@ -392,13 +396,18 @@ class TestOnDownloadAllSettings:
                 "settings/data.yml",
                 f"extra_inputs/{network_costs_filename}",
                 "workflow_state.yml",
+                "DATA_SOURCES.md",
             }
             exported_data = yaml.safe_load(zf.read("settings/data.yml"))
 
         assert exported_data["input_folder"] == "extra_inputs"
         assert exported_data["demand_segments_fn"] == "demand_segments_voll.csv"
         assert exported_data["emission_policies_fn"] == "emission_policies.csv"
-        assert exported_data["RESOURCE_GROUPS"] == "path/to/resource/groups/folder"
+        # RESOURCE_GROUPS is [region-specific new-build folder, existing-groups path].
+        assert exported_data["RESOURCE_GROUPS"] == [
+            resource_group_folder,
+            cluster_app.EXISTING_RESOURCE_GROUPS_SAMPLE_PATH,
+        ]
         assert (
             exported_data["RESOURCE_GROUP_PROFILES"]
             == "path/to/resource/profiles/folder"
@@ -411,7 +420,11 @@ class TestOnDownloadAllSettings:
         [(1, False), (1, True), (3, False), (3, True), (7, True)],
     )
     def test_file_count_in_zip(self, cluster_app, n_yamls, has_emissions):
-        """ZIP contains exactly n_yamls + (1 if has_emissions) + 1 (workflow_state.yml) files."""
+        """ZIP contains exactly n_yamls + (1 if has_emissions) + 2 files.
+
+        The +2 covers the always-present root files: workflow_state.yml and
+        DATA_SOURCES.md.
+        """
         yamls = {f"file_{i}.yml": f"val: {i}\n" for i in range(n_yamls)}
         cluster_app.state.settings_yamls = yamls
         cluster_app.state.emission_policies_df = (
@@ -425,6 +438,45 @@ class TestOnDownloadAllSettings:
         with _open_zip_from_calls(calls) as zf:
             actual_count = len(zf.namelist())
         expected = (
-            n_yamls + (1 if has_emissions else 0) + 1
-        )  # +1 for workflow_state.yml always present
+            n_yamls + (1 if has_emissions else 0) + 2
+        )  # +2 for workflow_state.yml + DATA_SOURCES.md always present
         assert actual_count == expected
+
+    def test_custom_resource_group_name_used_consistently_across_export(
+        self, cluster_app
+    ):
+        """A real #resourceGroupName string is used for data.yml, the ZIP folder,
+        and the workflow manifest's required supplemental paths consistently."""
+        name_el = MagicMock()
+        name_el.value = "my_rg"
+        content_el = MagicMock()
+        elements = {"resourceGroupName": name_el, "dataSourcesContent": content_el}
+        cluster_app.document.getElementById = MagicMock(
+            side_effect=lambda el_id: elements.get(el_id)
+        )
+
+        grp_bytes = b'{"resource_groups": []}'
+        cluster_app.state.resource_group_files = {"solar_lcoe_x.parquet": grp_bytes}
+        cluster_app.state.emission_policies_df = None
+        cluster_app.state.settings_yamls = {
+            "model_definition.yml": "x: 1\n",
+            "data.yml": cluster_app.generate_data_settings(),
+        }
+        calls = _capture_zip_download(cluster_app)
+
+        cluster_app.on_download_all_settings(None)
+
+        # The live name wins everywhere: helper, snippet, data.yml, ZIP, manifest.
+        assert cluster_app._get_resource_group_name() == "my_rg"
+        parsed_snippet = yaml.safe_load(cluster_app.build_data_yml_snippet())
+        assert parsed_snippet["RESOURCE_GROUPS"][0] == "my_rg"
+
+        with _open_zip_from_calls(calls) as zf:
+            names = set(zf.namelist())
+            assert "my_rg/solar_lcoe_x.parquet" in names
+            assert zf.read("my_rg/solar_lcoe_x.parquet") == grp_bytes
+            exported_data = yaml.safe_load(zf.read("settings/data.yml"))
+            manifest = yaml.safe_load(zf.read("workflow_state.yml"))
+
+        assert exported_data["RESOURCE_GROUPS"][0] == "my_rg"
+        assert "my_rg/solar_lcoe_x.parquet" in manifest["required_supplemental_files"]

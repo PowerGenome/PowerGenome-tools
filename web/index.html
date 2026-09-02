@@ -2789,7 +2789,15 @@
                         <em>No resource group files generated yet.</em>
                     </div>
                     <button class="btn btn-secondary" id="downloadResourceGroupsBtn" type="button"
-                        style="margin-top: 8px;">Download ZIP</button>
+                        style="margin-top: 8px;">Download ZIP (optional)</button>
+                    <div style="font-size: 12px; color: var(--text-muted); line-height: 1.5; margin-top: 8px;">
+                        Downloading the ZIP here is optional — the generated resource-group files are
+                        automatically included in the final export: the Export step (Step 9) places them
+                        in a region-specific folder (for example <code>resource_groups_2r_eastern-western_nercr</code>)
+                        inside the downloaded settings ZIP, and <code>data.yml</code>'s
+                        <code>RESOURCE_GROUPS</code> lists that folder as its first entry. Download here only
+                        if you want the files on their own.
+                    </div>
                 </div>
 
                 <div class="section">
@@ -2990,6 +2998,13 @@
                 <div class="section">
                     <button class="btn btn-secondary" id="downloadAllSettingsZipBtn" type="button"
                         aria-label="Download all settings as ZIP">Download All as ZIP</button>
+                </div>
+
+                <div class="section">
+                    <label>Download input data</label>
+                    <div id="dataSourcesContent" style="font-size: 13px; line-height: 1.5;">
+                        <em>Loading data download instructions&hellip;</em>
+                    </div>
                 </div>
 
                 <div class="step-footer">

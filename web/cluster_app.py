@@ -276,6 +276,10 @@ class AppState:
         self.network_costs_df = None  # pd.DataFrame result from calc_network
         self.network_data_cache = None  # (nodes_df, edges_df, topo_df) loaded once
 
+        # Last auto-derived default for the Step 7 "Region Name" input, used to
+        # refresh it when regions change while preserving custom user names.
+        self.resource_group_name_default = ""
+
 
 state = AppState()
 
@@ -294,6 +298,303 @@ SETTINGS_FILENAMES = [
 WORKFLOW_STATE_FILENAME = "workflow_state.yml"
 WORKFLOW_STATE_SCHEMA = "powergenome-tools-workflow-state"
 WORKFLOW_STATE_VERSION = 1
+
+# ============================================================================
+# Input data download guidance (Zenodo deposits)
+# ============================================================================
+#
+# The generated data.yml references input data that is published on Zenodo from
+# the PowerGenome-data repo (https://github.com/gschivley/PowerGenome-data).
+# There are three Zenodo deposits. This block is the single place to update;
+# the Step 9 UI
+# section and the DATA_SOURCES.md bundled in the export ZIP are both rendered
+# from it.
+
+# Suggested local data root used by the example data.yml snippet.
+DATA_ROOT_EXAMPLE = "~/PowerGenome-data"
+
+# Prefix of the region-specific folder name used for the new-build wind/solar
+# resource groups generated in Step 7. The folder lives inside the final
+# Export (Step 9) ZIP next to `settings` and is named after the region setup
+# (e.g. resource_groups_10r_eastern-western_nercr). Unlike the Zenodo
+# deposits, it does not live under ~/PowerGenome-data.
+WEB_APP_RESOURCE_GROUPS_FOLDER = "resource_groups"
+
+# Sample placeholder in the generated data.yml for the existing resource
+# groups (Zenodo deposit); users replace it with their local folder.
+EXISTING_RESOURCE_GROUPS_SAMPLE_PATH = "path/to/existing/resource/groups"
+
+# Core input data deposit: files referenced by data_location + the per-table
+# *_table settings keys in data.yml.
+_CORE_DATA_FILES = [
+    "reeds_generators_transformed.csv",
+    "plant_region_map.csv",
+    "technology_costs_atb.parquet",
+    "technology_heat_rates_nrelatb.csv",
+    "operational_constraints_reeds.csv",
+    "transmission_capacity_reeds.csv",
+    "fuel_prices.parquet",
+    "dollar_year_adjustment.csv",
+    "reeds_load_transformed.parquet",
+    "regional_cost_multipliers.csv",
+    "distributed_capacity.parquet",
+    "distributed_profiles.parquet",
+    "reserve_margins.csv",
+    "nerc_reserve_margins.csv",
+    "cpi_data.csv",
+]
+
+DATA_SOURCES = [
+    {
+        "id": "core",
+        "title": "PowerGenome Input Data (core)",
+        "description": (
+            "Core tabular input data referenced by data.yml: generators, costs, "
+            "heat rates, operational/transmission constraints, fuel prices, load, "
+            "distributed generation, reserve margins, and dollar-year adjustment."
+        ),
+        "url": "https://zenodo.org/records/22233228",
+        "doi": "10.5281/zenodo.22233228",
+        "target_folder": "data",
+        "settings_keys": ["data_location"],
+        "files": _CORE_DATA_FILES,
+    },
+    {
+        "id": "profiles",
+        "title": "PowerGenome Renewable Resource Profiles",
+        "description": (
+            "Hourly capacity-factor profiles for new-build renewable resource "
+            "groups. Point RESOURCE_GROUP_PROFILES at the folder containing these "
+            "profile files."
+        ),
+        "url": "https://zenodo.org/records/22235855",
+        "doi": "10.5281/zenodo.22235855",
+        "target_folder": "resource_profiles",
+        "settings_keys": ["RESOURCE_GROUP_PROFILES"],
+        "files": [
+            "offshorewind_rev_profiles_20240801_tidy.parquet",
+            "offshorewind_site_mapping_20240801.parquet",
+            "onshorewind_rev_profiles_20240801_tidy.parquet",
+            "onshorewind_site_mapping_20240801.parquet",
+            "solar_rev_profiles_20240801_tidy.parquet",
+            "solar_site_mapping_20240801.parquet",
+        ],
+    },
+    {
+        "id": "resource_groups",
+        "title": "PowerGenome Existing Renewable Resource Groups",
+        "description": (
+            "Pre-built resource group metadata for existing renewable generators. "
+            "The RESOURCE_GROUPS setting accepts a list of folders: one entry is "
+            "the region-specific folder for the new-build wind/solar resource "
+            "groups generated in Step 7 (Interconnection) of this web app (these "
+            "files are included in the final Export ZIP); the other entry points "
+            "to this deposit's folder (the existing resource groups)."
+        ),
+        "url": "https://zenodo.org/records/22235662",
+        "doi": "10.5281/zenodo.22235662",
+        "target_folder": "existing_resource_groups",
+        "settings_keys": ["RESOURCE_GROUPS"],
+        "files": [
+            "existing_hydro_reeds_ba_metadata.csv",
+            "existing_offshorewind_reeds_ba_metadata.csv",
+            "existing_onshore_wind_reeds_ba_profiles_20250513_tidy.parquet",
+            "existing_onshorewind_reeds_ba_metadata.csv",
+            "existing_osw_profiles.csv",
+            "existing_osw_profiles_tidy.parquet",
+            "existing_solar_reeds_ba_metadata.csv",
+            "existing_solar_reeds_ba_profiles_20250513_tidy.parquet",
+            "hydro_conventional_2007_2013.parquet",
+            "hydro_run_of_river_2007_2013.parquet",
+            "regional_hydro_True.json",
+            "regional_offshorewind_True.json",
+            "regional_small_hydro_True.json",
+            "regional_solar_photovoltaic_True.json",
+            "regional_wind_True.json",
+        ],
+    },
+]
+
+# Name of the instructions file bundled into the export ZIP.
+DATA_SOURCES_FILENAME = "DATA_SOURCES.md"
+
+# Static explanation of data versioning, shared by the UI section and the
+# generated DATA_SOURCES.md.
+DATA_VERSIONING_NOTES = (
+    "Data releases are versioned by date (e.g. data_version 2026.08.14; "
+    "multiple releases on the same day get a suffix). Each file also carries its "
+    "own element version recording when that data was last updated. Zenodo keeps "
+    "every version of a deposit, and the release notes list files added, updated, "
+    "or removed. Settings generated by this tool target the latest release; if "
+    "you already have an older copy of the data, check the release notes on "
+    "Zenodo for changed files before reusing it."
+)
+
+# Explains where the RESOURCE_GROUPS entries come from. Shown in the Step 9
+# section and the bundled DATA_SOURCES.md.
+NEW_BUILD_RESOURCE_GROUPS_NOTE = (
+    "The new-build wind/solar resource groups are generated in Step 7 "
+    "(Interconnection) of this web app and are included automatically in the "
+    "final Export (Step 9) ZIP, inside a region-specific folder placed next to "
+    "the `settings` folder (for example `resource_groups_10r_eastern-western_"
+    "nercr`). That folder is the first RESOURCE_GROUPS entry in data.yml — no "
+    "manual download or extra folder setup is needed. The second entry points "
+    "to the existing resource groups deposit listed above; download it from "
+    "Zenodo and update the path to your local copy."
+)
+
+
+def build_data_yml_snippet(resource_group_folder=None):
+    """Return a copy-paste-ready data.yml path snippet using the suggested root.
+
+    ``resource_group_folder`` defaults to the region-specific folder derived for
+    the current regions (the folder used inside the Export ZIP); pass the live
+    Step 7 region name to reflect a user-chosen folder.
+    """
+    if resource_group_folder is None:
+        resource_group_folder = _get_resource_group_name()
+    paths = {d["id"]: d["target_folder"] for d in DATA_SOURCES}
+    return (
+        f'data_location: ["{DATA_ROOT_EXAMPLE}/{paths["core"]}"]\n'
+        "RESOURCE_GROUPS:\n"
+        f'  - "{resource_group_folder}"  # new-build groups, in the export ZIP\n'
+        f'  - "{DATA_ROOT_EXAMPLE}/{paths["resource_groups"]}"  # existing groups (Zenodo)\n'
+        f'RESOURCE_GROUP_PROFILES: "{DATA_ROOT_EXAMPLE}/{paths["profiles"]}"\n'
+    )
+
+
+def _live_resource_group_folder() -> str:
+    """Return the current Step 7 region name for the example snippet.
+
+    Reads the ``resourceGroupName`` input when it holds a real string; falls
+    back to the derived region-specific folder otherwise (including under test
+    mocks).
+    """
+    return _get_resource_group_name()
+
+
+def render_data_sources_md(resource_group_folder=None):
+    """Render the download instructions as Markdown (bundled into the ZIP).
+
+    ``resource_group_folder`` is passed through to the example snippet (see
+    ``build_data_yml_snippet``); defaults to the constant.
+    """
+    lines = [
+        "# PowerGenome input data downloads",
+        "",
+        "The generated `data.yml` references input data published on Zenodo from ",
+        "the [PowerGenome-data](https://github.com/gschivley/PowerGenome-data) "
+        "repo. Download the deposits below and place them in matching local "
+        "folders.",
+        "",
+    ]
+    for d in DATA_SOURCES:
+        lines.append(f"## {d['title']}")
+        lines.append("")
+        lines.append(d["description"])
+        lines.append("")
+        lines.append(f"- Zenodo: {d['url']}")
+        lines.append(f"- DOI: {d['doi']}")
+        lines.append(
+            f"- Suggested local folder: `{DATA_ROOT_EXAMPLE}/{d['target_folder']}`"
+        )
+        keys = ", ".join(f"`{k}`" for k in d["settings_keys"])
+        lines.append(f"- Feeds settings key(s): {keys}")
+        if d["files"]:
+            lines.append("- Contains files:")
+            for f in d["files"]:
+                lines.append(f"  - `{f}`")
+        lines.append("")
+    lines.extend(
+        [
+            "## New-build resource groups (Step 7)",
+            "",
+            NEW_BUILD_RESOURCE_GROUPS_NOTE,
+            "",
+            "## Example data.yml paths",
+            "",
+            "```yaml",
+            build_data_yml_snippet(resource_group_folder).rstrip("\n"),
+            "```",
+            "",
+            "## Data versioning",
+            "",
+            DATA_VERSIONING_NOTES,
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def render_data_sources_html(resource_group_folder=None):
+    """Render the download instructions as an HTML fragment for Step 9.
+
+    ``resource_group_folder`` is passed through to the example snippet (see
+    ``build_data_yml_snippet``); defaults to the constant.
+    """
+    parts = []
+    parts.append(
+        "<p>The generated <code>data.yml</code> references input data published "
+        "on Zenodo from the "
+        '<a href="https://github.com/gschivley/PowerGenome-data" target="_blank" '
+        'rel="noopener">PowerGenome-data</a> repo. Download each deposit below '
+        "and place it in a matching local folder.</p>"
+    )
+    for d in DATA_SOURCES:
+        title = html.escape(d["title"])
+        desc = html.escape(d["description"])
+        url = html.escape(d["url"])
+        doi = html.escape(d["doi"])
+        folder = html.escape(f"{DATA_ROOT_EXAMPLE}/{d['target_folder']}")
+        keys = ", ".join(f"<code>{html.escape(k)}</code>" for k in d["settings_keys"])
+        parts.append(f"<h4>{title}</h4>")
+        parts.append(f"<p>{desc}</p>")
+        parts.append("<ul>")
+        parts.append(
+            f'<li>Zenodo: <a href="{url}" target="_blank" rel="noopener">{url}</a> '
+            f"(DOI: {doi})</li>"
+        )
+        parts.append(f"<li>Suggested local folder: <code>{folder}</code></li>")
+        parts.append(f"<li>Feeds settings key(s): {keys}</li>")
+        if d["files"]:
+            file_items = "".join(
+                f"<li><code>{html.escape(f)}</code></li>" for f in d["files"]
+            )
+            parts.append(
+                '<li>Contains files:<ul style="margin-top:4px;">'
+                f"{file_items}</ul></li>"
+            )
+        parts.append("</ul>")
+    parts.append("<h4>New-build resource groups (Step 7)</h4>")
+    parts.append(f"<p>{html.escape(NEW_BUILD_RESOURCE_GROUPS_NOTE)}</p>")
+    parts.append("<h4>Example data.yml paths</h4>")
+    parts.append(
+        '<textarea id="dataYmlSnippet" readonly title="Copy-paste example data.yml '
+        'path settings" style="width: 100%; height: 90px; font-family: monospace; '
+        "font-size: 11px; border: 1px solid #ddd; border-radius: 4px; padding: "
+        '8px;">'
+        + html.escape(build_data_yml_snippet(resource_group_folder))
+        + "</textarea>"
+    )
+    parts.append("<h4>Data versioning</h4>")
+    parts.append(f"<p>{html.escape(DATA_VERSIONING_NOTES)}</p>")
+    parts.append(
+        "<p><em>These instructions are also included as "
+        f"{DATA_SOURCES_FILENAME} in the downloaded settings ZIP.</em></p>"
+    )
+    return "".join(parts)
+
+
+def populate_data_sources_section():
+    """Populate the Step 9 data-download guidance section from DATA_SOURCES.
+
+    Uses the live Step 7 region name so the example snippet's second
+    RESOURCE_GROUPS folder reflects the user's current setting.
+    """
+    el = document.getElementById("dataSourcesContent")
+    if el is not None:
+        el.innerHTML = render_data_sources_html(_live_resource_group_folder())
+
 
 # These are the editable controls whose values are not fully represented in the
 # generated PowerGenome settings files.
@@ -2087,6 +2388,12 @@ def reset_region_dependent_state():
     _render_candidates = globals().get("render_plant_candidates")
     if callable(_render_candidates):
         _render_candidates()
+
+    # Refresh the Step 7 "Region Name" default when regions change (the derived
+    # name mirrors the network costs filename, e.g. resource_groups_10r_...).
+    _refresh_rg_name = globals().get("update_resource_group_name_default")
+    if callable(_refresh_rg_name):
+        _refresh_rg_name()
 
 
 def reset_planning_year_dependent_state():
@@ -8432,7 +8739,14 @@ def generate_data_settings():
         "input_folder": "extra_inputs",
         "demand_segments_fn": "demand_segments_voll.csv",
         "emission_policies_fn": "emission_policies.csv",
-        "RESOURCE_GROUPS": "path/to/resource/groups/folder",
+        "RESOURCE_GROUPS": [
+            # Region-specific folder for new-build wind/solar resource groups,
+            # included in the export ZIP next to settings/.
+            _get_resource_group_name(),
+            # Sample path to the existing resource groups (Zenodo deposit) —
+            # replace with your local folder.
+            EXISTING_RESOURCE_GROUPS_SAMPLE_PATH,
+        ],
         "RESOURCE_GROUP_PROFILES": "path/to/resource/profiles/folder",
         "data_location": ["path/to/your/primary/data/folder"],
         "generation_table": "reeds_generators_transformed.csv",
@@ -8641,20 +8955,19 @@ async def _run_network_cost_calculation():
         set_status(f"Warning: network cost calculation failed: {exc}", "warning")
 
 
-def _build_network_costs_filename() -> str:
-    """Return a descriptive filename for the network costs CSV export.
+def _build_name_stem() -> str:
+    """Return the descriptive stem shared by derived file/region names.
 
-    The name encodes:
-    - the number of model regions (e.g. ``10r``)
+    The stem encodes:
+    - the number of model regions (e.g. ``_10r``)
     - the interconnects represented by the selected BAs, sorted and joined with
-      hyphens (e.g. ``eastern-western``); each name is sanitized to
+      hyphens (e.g. ``_eastern-western``); each name is sanitized to
       alphanumeric, underscore, and hyphen characters so the result is always a
       safe filesystem name
-    - the grouping column used for clustering (e.g. ``nercr``)
+    - the grouping column used for clustering (e.g. ``_nercr``)
 
     Falls back to descriptive placeholder values when the relevant state
-    attributes are unavailable.
-    Example: ``network_costs_10r_eastern-western_nercr.csv``.
+    attributes are unavailable.  Example: ``_10r_eastern-western_nercr``.
     """
 
     def _safe(s: str) -> str:
@@ -8682,7 +8995,56 @@ def _build_network_costs_filename() -> str:
         _safe(state.current_grouping) if state.current_grouping else "default"
     )
 
-    return f"network_costs{regions_part}_{interconnects_part}_{grouping_part}.csv"
+    return f"{regions_part}_{interconnects_part}_{grouping_part}"
+
+
+def _build_network_costs_filename() -> str:
+    """Return a descriptive filename for the network costs CSV export.
+
+    The name encodes the number of model regions, the interconnects
+    represented by the selected BAs, and the grouping column used for
+    clustering (see ``_build_name_stem()``).
+    Example: ``network_costs_10r_eastern-western_nercr.csv``.
+    """
+    return f"network_costs{_build_name_stem()}.csv"
+
+
+def build_resource_group_name_default() -> str:
+    """Return the default Step 7 region name for resource-group files.
+
+    Uses the same derived stem as the network costs filename, but with
+    ``resource_groups`` instead of ``network_costs``. This is also the
+    region-specific folder name used inside the final Export ZIP.
+    Example: ``resource_groups_10r_eastern-western_nercr``.
+    """
+    return f"{WEB_APP_RESOURCE_GROUPS_FOLDER}{_build_name_stem()}"
+
+
+def update_resource_group_name_default():
+    """Refresh the Step 7 "Region Name" input to the derived default.
+
+    Only overwrites the field when it is empty or still holds the previous
+    auto-generated default, so custom names typed by the user are preserved.
+    """
+    el = document.getElementById("resourceGroupName")
+    if el is None:
+        return
+    new_default = build_resource_group_name_default()
+    current = el.value if el.value else ""
+    if current in ("", state.resource_group_name_default, "resource_groups"):
+        el.value = new_default
+    state.resource_group_name_default = new_default
+    # Keep the Step 9 example snippet in sync with the (possibly refreshed) name.
+    _populate = globals().get("populate_data_sources_section")
+    if callable(_populate):
+        _populate()
+
+
+def on_resource_group_name_change(event):
+    """Refresh the Step 9 example snippet when the Step 7 region name changes."""
+    _populate = globals().get("populate_data_sources_section")
+    if callable(_populate):
+        _populate()
 
 
 async def _load_pyodide_package(name: str) -> bool:
@@ -8794,9 +9156,18 @@ async def load_fast_interconnection_data():
 
 
 def _get_resource_group_name():
+    """Return the Step 7 region name, or the derived region-specific folder.
+
+    Reads the ``resourceGroupName`` input when it holds a real, non-empty
+    string; otherwise falls back to the derived default (the region-specific
+    folder used inside the Export ZIP).
+    """
     el = document.getElementById("resourceGroupName")
-    name = el.value.strip() if el and el.value else ""
-    return name or "resource_groups"
+    if el is not None and isinstance(getattr(el, "value", None), str):
+        name = el.value.strip()
+        if name:
+            return name
+    return build_resource_group_name_default()
 
 
 def _update_resource_group_list():
@@ -9188,9 +9559,10 @@ def build_workflow_state_manifest():
         if not has_resource_group_lcoe[tech]:
             tables[key] = _workflow_dataframe_payload(getattr(state, key))
     supplemental_files = []
+    resource_group_folder = _get_resource_group_name()
     for filename in sorted(state.resource_group_files):
         if "/" not in filename and "\\" not in filename and ".." not in filename:
-            supplemental_files.append(f"resource_groups/{filename}")
+            supplemental_files.append(f"{resource_group_folder}/{filename}")
 
     return {
         "schema": WORKFLOW_STATE_SCHEMA,
@@ -9274,8 +9646,14 @@ def _read_workflow_zip(data):
                 )
         resource_group_files = {}
         for name in required:
-            if name.startswith("resource_groups/"):
-                resource_group_files[name[len("resource_groups/") :]] = zipf.read(name)
+            # Supplemental files are resource-group files inside a single
+            # region-specific folder (e.g. resource_groups_2r_eastern-western_nercr/<file>).
+            if name.startswith("settings/") or name.startswith("extra_inputs/"):
+                continue
+            if "/" in name:
+                resource_group_files[name.split("/", 1)[1]] = zipf.read(name)
+            else:
+                resource_group_files[name] = zipf.read(name)
         return manifest, settings_yamls, resource_group_files
 
 
@@ -9702,6 +10080,9 @@ def on_download_all_settings(event):
             WORKFLOW_STATE_FILENAME, yaml.safe_dump(manifest, sort_keys=False)
         )
 
+        # Bundle the input-data download instructions so they travel with settings.
+        zipf.writestr(DATA_SOURCES_FILENAME, render_data_sources_md())
+
         # Write settings files in deterministic order, rejecting unsafe names.
         # All YAML files go to settings/.
         for filename in sorted(state.settings_yamls):
@@ -9730,13 +10111,14 @@ def on_download_all_settings(event):
                 state.network_costs_df.to_csv(index=False),
             )
 
+        resource_group_folder = _get_resource_group_name()
         for filename, payload in sorted(state.resource_group_files.items()):
             if "/" in filename or "\\" in filename or ".." in filename:
                 continue
             if isinstance(payload, (bytes, bytearray)):
-                zipf.writestr(f"resource_groups/{filename}", payload)
+                zipf.writestr(f"{resource_group_folder}/{filename}", payload)
             else:
-                zipf.writestr(f"resource_groups/{filename}", str(payload))
+                zipf.writestr(f"{resource_group_folder}/{filename}", str(payload))
 
     zip_name = "powergenome_settings.zip"
     _download_binary_file(zip_name, buffer.getvalue(), "application/zip")
@@ -10250,6 +10632,9 @@ async def main():
         document.getElementById("downloadResourceGroupsBtn").addEventListener(
             "click", create_proxy(on_download_resource_groups)
         )
+        document.getElementById("resourceGroupName").addEventListener(
+            "input", create_proxy(on_resource_group_name_change)
+        )
         document.getElementById("uploadLcoeWindInput").addEventListener(
             "change", create_proxy(on_upload_lcoe_wind)
         )
@@ -10344,6 +10729,8 @@ async def main():
         render_modified_resources_list()
         populate_settings_file_select()
         update_settings_preview()
+        populate_data_sources_section()
+        update_resource_group_name_default()
         _update_resource_group_list()
         _render_renewables_advanced_panel()
 
