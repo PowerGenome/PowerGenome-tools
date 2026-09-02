@@ -8767,9 +8767,16 @@ def generate_data_settings():
         "distributed_capacity_table": "distributed_capacity.parquet",
         "distributed_profile_table": "distributed_profiles.parquet",
     }
-    return (
-        yaml.dump(out, default_flow_style=False, sort_keys=False)
-        + "\n# weather_year: 2012\n"
+    return yaml.dump(out, default_flow_style=False, sort_keys=False) + (
+        "\n"
+        "# weather_year: 2012\n"
+        "#   Weather year(s) used for renewable profiles and demand.\n"
+        "#   Single int or list of ints (e.g. [2012, 2013]). More years\n"
+        "#   = more hourly rows, more memory, and slower runs.\n"
+        "# clustering_n_jobs: 4\n"
+        "#   Parallel jobs for new-build renewable profile clustering.\n"
+        "#   Higher = faster, but more memory (each job loads its own data).\n"
+        "#   Default is 1 (serial).\n"
     )
 
 
