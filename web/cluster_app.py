@@ -305,9 +305,8 @@ WORKFLOW_STATE_VERSION = 1
 #
 # The generated data.yml references input data that is published on Zenodo from
 # the PowerGenome-data repo (https://github.com/gschivley/PowerGenome-data).
-# There are three Zenodo deposits. UPDATE THE url FIELDS BELOW once the
-# production Zenodo records exist (currently only the core-data deposit has a
-# sandbox record). This block is the single place to update; the Step 9 UI
+# There are three Zenodo deposits. This block is the single place to update;
+# the Step 9 UI
 # section and the DATA_SOURCES.md bundled in the export ZIP are both rendered
 # from it.
 
@@ -354,8 +353,8 @@ DATA_SOURCES = [
             "heat rates, operational/transmission constraints, fuel prices, load, "
             "distributed generation, reserve margins, and dollar-year adjustment."
         ),
-        "url": "https://sandbox.zenodo.org/records/590994",  # TODO: production DOI pending
-        "doi": "10.5072/zenodo.590994 (sandbox; production DOI pending)",
+        "url": "https://zenodo.org/records/22233228",
+        "doi": "10.5281/zenodo.22233228",
         "target_folder": "data",
         "settings_keys": ["data_location"],
         "files": _CORE_DATA_FILES,
@@ -368,8 +367,8 @@ DATA_SOURCES = [
             "groups. Point RESOURCE_GROUP_PROFILES at the folder containing these "
             "profile files."
         ),
-        "url": "https://zenodo.org/",  # TODO: replace with deposit URL when published
-        "doi": "DOI pending (first publish upcoming)",
+        "url": "https://zenodo.org/records/22235855",
+        "doi": "10.5281/zenodo.22235855",
         "target_folder": "resource_profiles",
         "settings_keys": ["RESOURCE_GROUP_PROFILES"],
         "files": [
@@ -392,8 +391,8 @@ DATA_SOURCES = [
             "files are included in the final Export ZIP); the other entry points "
             "to this deposit's folder (the existing resource groups)."
         ),
-        "url": "https://zenodo.org/",  # TODO: replace with deposit URL when published
-        "doi": "DOI pending (first publish upcoming)",
+        "url": "https://zenodo.org/records/22235662",
+        "doi": "10.5281/zenodo.22235662",
         "target_folder": "existing_resource_groups",
         "settings_keys": ["RESOURCE_GROUPS"],
         "files": [

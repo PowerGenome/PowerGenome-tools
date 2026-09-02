@@ -1,7 +1,7 @@
 """Tests for the Step 9 data-download guidance (DATA_SOURCES config).
 
 Covers:
-- The DATA_SOURCES deposit metadata (ids/fields/placeholder markers).
+- The DATA_SOURCES deposit metadata (ids/fields/production Zenodo URLs).
 - build_data_yml_snippet(): example data.yml paths derived from DATA_SOURCES.
 - render_data_sources_md(): Markdown guide bundled into the export ZIP.
 - render_data_sources_html(): HTML fragment injected into the Step 9 pane.
@@ -257,28 +257,16 @@ class TestDataSourcesConfig:
             "regional_wind_True.json",
         }
 
-    def test_placeholder_deposits_are_clearly_marked(self, cluster_app):
-        """profiles/resource_groups are placeholders; core points at the sandbox record.
-
-        Asserting the exact placeholder markers is intentional: a future
-        production update to the real Zenodo records must update this test too.
-        """
+    def test_deposit_urls_match_production_zenodo_records(self, cluster_app):
+        """Each DATA_SOURCES entry points at its current production record."""
         by_id = {d["id"]: d for d in cluster_app.DATA_SOURCES}
-
-        for deposit_id in ("profiles", "resource_groups"):
-            deposit = by_id[deposit_id]
-            assert deposit["url"].startswith("https://zenodo.org/"), (
-                f"{deposit_id} url should be a https://zenodo.org/ placeholder, "
-                f"got {deposit['url']!r}"
-            )
-            assert (
-                "pending" in deposit["doi"].lower()
-            ), f"{deposit_id} doi should mark a pending DOI, got {deposit['doi']!r}"
-
-        assert by_id["core"]["url"] == "https://sandbox.zenodo.org/records/590994", (
-            "core deposit url should point at the sandbox record until the "
-            "production Zenodo deposit exists"
-        )
+        assert {
+            deposit_id: deposit["url"] for deposit_id, deposit in by_id.items()
+        } == {
+            "core": "https://zenodo.org/records/22233228",
+            "resource_groups": "https://zenodo.org/records/22235662",
+            "profiles": "https://zenodo.org/records/22235855",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -570,12 +558,17 @@ class TestRenderDataSourcesHtml:
         assert 'id="dataYmlSnippet"' in html
         assert "readonly" in html
 
-    def test_html_contains_settings_keys_and_sandbox_link(self, cluster_app):
+    def test_html_contains_settings_keys_and_production_zenodo_links(self, cluster_app):
         html = cluster_app.render_data_sources_html()
         assert "<code>data_location</code>" in html
         assert "<code>RESOURCE_GROUP_PROFILES</code>" in html
         assert "<code>RESOURCE_GROUPS</code>" in html
-        assert "https://sandbox.zenodo.org/records/590994" in html
+        for url in (
+            "https://zenodo.org/records/22233228",
+            "https://zenodo.org/records/22235662",
+            "https://zenodo.org/records/22235855",
+        ):
+            assert url in html
 
     def test_html_contains_escaped_snippet_with_data_root(self, cluster_app):
         html = cluster_app.render_data_sources_html()
