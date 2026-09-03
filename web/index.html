@@ -3007,6 +3007,15 @@
                     </div>
                 </div>
 
+                <div class="tip">
+                    💡 <strong>Tip:</strong> Two settings in the generated files affect
+                    memory and runtime. <code>weather_year</code> in <code>data.yml</code>
+                    picks the weather year used for renewable profiles and demand; adding
+                    more years increases memory use and processing time.
+                    <code>clustering_n_jobs</code> in <code>data.yml</code> parallelizes new-build
+                    renewable profile clustering — more jobs run faster but use more memory.
+                </div>
+
                 <div class="step-footer">
                     <button class="btn btn-secondary" onclick="goToStep(8)">&larr; Back</button>
                     <div></div>

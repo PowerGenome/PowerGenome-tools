@@ -1051,6 +1051,15 @@ Replace its resource path and primary data path with locations that
 match your local data installation before running a model. The generated
 `data.yml` does not include `data` as a secondary `data_location`.
 
+#### Settings Parameters to Be Aware Of
+
+Two optional PowerGenome settings in the generated files can significantly
+affect memory use and runtime. Both are opt-in: they appear in the generated
+files only as commented examples, and neither is required for a default export.
+
+* **`weather_year`** (in `data.yml`) - Selects the weather year used for renewable generation profiles and hourly demand. Accepts a single int (e.g. `2012`) or a list of ints (e.g. `[2012, 2013]`). A single year keeps profiles and demand at 8,760 hourly rows per site/region; listing multiple years concatenates the data (N × 8,760 rows), which increases PowerGenome's memory use, creates larger intermediate files, and lengthens processing and solver runtime. The generated `data.yml` includes a commented `# weather_year: 2012` example.
+* **`clustering_n_jobs`** (in `data.yml`) - Controls how many parallel jobs (processes) PowerGenome uses when clustering new-build renewable profiles across model regions. The default is 1 (serial). Increasing it toward your machine's core count speeds up clustering substantially; however, each parallel job loads its own copy of the profile data, so peak memory use grows roughly in proportion to the number of jobs.
+
 #### Download All ZIP Structure
 
 When you click **Download All**, the ZIP archive contains:
