@@ -44,5 +44,5 @@ The web application guides you through a 9-step workflow to build complete Power
 
 ## Getting Started
 
-* To use the interactive tool immediately, visit the [Web App](https://gschivley.github.io/PowerGenome-tools/web/).
+* To use the interactive tool immediately, visit the [Web App](https://powergenome.github.io/PowerGenome-tools/web/).
 * To run the tools locally, check the [Development](development.md) guide.

@@ -2,13 +2,13 @@
 
 This repository contains tools for clustering Balancing Authorities (BAs) into model regions and aggregating power plants for energy system modeling (specifically PowerGenome/GenX). The primary interface is a web-based application running entirely in the browser via PyScript.
 
-**[Full Documentation](https://gschivley.github.io/PowerGenome-tools/)**
+**[Full Documentation](https://powergenome.github.io/PowerGenome-tools/)**
 
 ## Web Application
 
 The tool is located in the `web/` directory. It allows users to interactively select regions, configure clustering parameters, and visualize results on a map.
 
-Use [PowerGenome Web Clustering Tool](https://gschivley.github.io/PowerGenome-tools/web/) online or run it locally as described below.
+Use [PowerGenome Web Clustering Tool](https://powergenome.github.io/PowerGenome-tools/web/) online or run it locally as described below.
 
 ### Running Locally
 
@@ -63,12 +63,12 @@ When **Spectral Clustering** is selected (and `Target Regions >= Number of Group
 flowchart TD
     Start([Start]) --> GroupBAs[Group BAs by Grouping Column]
     GroupBAs --> BuildGraph[Build Graph & Remove<br/>Inter-Group Edges]
-    
+
     subgraph Allocation ["Step 1: Allocation"]
         BuildGraph --> AgglomRef["Run Agglomerative Clustering<br/>(Average Linkage)"]
         AgglomRef --> CountClusters[Count Target Clusters<br/>Allocated to Each Group]
     end
-    
+
     subgraph Spectral ["Step 2: Spectral Clustering"]
         CountClusters --> LoopGroups["For Each Group..."]
         LoopGroups --> CheckCount{Allocated > 0?}
@@ -78,7 +78,7 @@ flowchart TD
         Skip --> NextGroup
         NextGroup -- Yes --> LoopGroups
     end
-    
+
     NextGroup -- No --> Combine[Combine All Sub-Clusters]
     Combine --> End([End])
 ```
@@ -91,12 +91,12 @@ When **Hierarchical Clustering** is selected (and `Target Regions >= Number of G
 flowchart TD
     Start([Start]) --> GroupBAs[Group BAs by Grouping Column]
     GroupBAs --> BuildGraph[Build Graph & Remove<br/>Inter-Group Edges]
-    
+
     subgraph Clustering ["Clustering Process"]
         BuildGraph --> RunAgglom["Run Agglomerative Clustering<br/>(Sum, Max, or Average Linkage)"]
         RunAgglom --> Note["Algorithm naturally handles<br/>disconnected components"]
     end
-    
+
     Note --> End([End])
 ```
 

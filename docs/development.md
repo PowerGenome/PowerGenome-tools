@@ -15,7 +15,7 @@ PowerGenome tools web application.
 1. Clone the repository:
 
     ```bash
-    git clone https://github.com/gschivley/PowerGenome-tools.git
+    git clone https://github.com/PowerGenome/PowerGenome-tools.git
     cd PowerGenome-tools
     ```
 
