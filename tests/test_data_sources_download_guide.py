@@ -548,6 +548,65 @@ class TestRenderDataSourcesMd:
 
 
 # ---------------------------------------------------------------------------
+# download_zenodo CLI guidance
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadCliGuidance:
+    """Both renderers should lead with the PowerGenome ``download_zenodo`` CLI.
+
+    The deposits are not packaged as a single ZIP, so the manual route means
+    one request per file. The CLI fetches everything, saves it in the folder
+    the guide recommends, and records the DOI/data version per file so
+    ``run_powergenome`` can report the sources it used.
+    """
+
+    def test_md_leads_with_the_cli_before_the_deposit_list(self, cluster_app):
+        md = cluster_app.render_data_sources_md()
+        cli_idx = md.index("## Recommended: download with the PowerGenome CLI")
+        first_deposit_idx = md.index(f"## {cluster_app.DATA_SOURCES[0]['title']}")
+        assert cli_idx < first_deposit_idx
+
+    def test_md_shows_the_commands_in_a_fenced_bash_block(self, cluster_app):
+        md = cluster_app.render_data_sources_md()
+        start = md.index("```bash")
+        end = md.index("```", start + len("```bash"))
+        block = md[start:end]
+        for command, _desc in cluster_app.DOWNLOAD_CLI_COMMANDS:
+            assert command in block
+        assert "--all" in block
+
+    def test_html_shows_the_commands_in_a_pre_block(self, cluster_app):
+        fragment = cluster_app.render_data_sources_html()
+        assert "<h4>Recommended: download with the PowerGenome CLI</h4>" in fragment
+        start = fragment.index("<pre")
+        end = fragment.index("</pre>", start)
+        block = fragment[start:end]
+        for command, _desc in cluster_app.DOWNLOAD_CLI_COMMANDS:
+            assert command in block
+
+    def test_every_deposit_target_folder_is_covered_by_a_command(self, cluster_app):
+        """Keep the commands in sync with the DATA_SOURCES folders."""
+        snippet = cluster_app.build_download_cli_snippet()
+        for deposit in cluster_app.DATA_SOURCES:
+            folder = deposit["target_folder"]
+            if folder:
+                assert folder in snippet, f"{deposit['id']} folder missing from CLI"
+
+    def test_guidance_mentions_the_local_root_and_recorded_provenance(
+        self, cluster_app
+    ):
+        root = cluster_app.DATA_ROOT_EXAMPLE
+        for rendered in (
+            cluster_app.render_data_sources_md(),
+            cluster_app.render_data_sources_html(),
+        ):
+            assert root in rendered
+            assert "data_sources.md" in rendered
+            assert "--list-collections" in rendered
+
+
+# ---------------------------------------------------------------------------
 # render_data_sources_html + populate_data_sources_section
 # ---------------------------------------------------------------------------
 
