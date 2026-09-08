@@ -418,6 +418,43 @@ DATA_SOURCES = [
 # Name of the instructions file bundled into the export ZIP.
 DATA_SOURCES_FILENAME = "DATA_SOURCES.md"
 
+# PowerGenome ships this CLI command. It fetches every file in a deposit --
+# these deposits are not packaged as a single ZIP -- into the folders below and
+# records the DOI and data version of each file it downloads.
+DOWNLOAD_CLI_MIN_VERSION = "0.9"
+DOWNLOAD_CLI_COMMANDS = [
+    ("download_zenodo --all", "all three collections, each to its folder below"),
+    ("download_zenodo data", f"core tables -> {DATA_ROOT_EXAMPLE}/data"),
+    (
+        "download_zenodo profiles",
+        f"hourly profiles -> {DATA_ROOT_EXAMPLE}/resource_profiles",
+    ),
+    (
+        "download_zenodo resource-groups",
+        f"resource groups -> {DATA_ROOT_EXAMPLE}/existing_resource_groups",
+    ),
+]
+DOWNLOAD_CLI_INTRO = (
+    f"PowerGenome {DOWNLOAD_CLI_MIN_VERSION} and later include a download_zenodo "
+    "command. It fetches every file in a deposit (these deposits are not packaged "
+    "as a single ZIP), saves it in the folder shown, and records the DOI and data "
+    "version of each file it downloads. If your install is older, use the deposit "
+    "links below."
+)
+DOWNLOAD_CLI_TIPS = (
+    "download_zenodo --list-collections shows the records, their default folders, "
+    "and what is already on disk. Use --dest or --data-root to save somewhere "
+    "else, and --force to re-download files that look complete. Because every "
+    "download is recorded, run_powergenome can write a data_sources.md (and "
+    ".json) citation report into each results folder for the run."
+)
+
+
+def build_download_cli_snippet():
+    """The commands that fetch the published collections, one per line."""
+    return "\n".join(f"{cmd:<34}# {desc}" for cmd, desc in DOWNLOAD_CLI_COMMANDS)
+
+
 # Static explanation of data versioning, shared by the UI section and the
 # generated DATA_SOURCES.md.
 DATA_VERSIONING_NOTES = (
@@ -488,6 +525,20 @@ def render_data_sources_md(resource_group_folder=None):
         "folders.",
         "",
     ]
+    lines.extend(
+        [
+            "## Recommended: download with the PowerGenome CLI",
+            "",
+            DOWNLOAD_CLI_INTRO,
+            "",
+            "```bash",
+            build_download_cli_snippet(),
+            "```",
+            "",
+            DOWNLOAD_CLI_TIPS,
+            "",
+        ]
+    )
     for d in DATA_SOURCES:
         lines.append(f"## {d['title']}")
         lines.append("")
@@ -540,6 +591,15 @@ def render_data_sources_html(resource_group_folder=None):
         'rel="noopener">PowerGenome-data</a> repo. Download each deposit below '
         "and place it in a matching local folder.</p>"
     )
+    parts.append("<h4>Recommended: download with the PowerGenome CLI</h4>")
+    parts.append(f"<p>{html.escape(DOWNLOAD_CLI_INTRO)}</p>")
+    parts.append(
+        '<pre style="margin:6px 0; padding:8px; background:#f6f8fa; '
+        'border-radius:4px; font-size:11px; overflow-x:auto;">'
+        + html.escape(build_download_cli_snippet())
+        + "</pre>"
+    )
+    parts.append(f"<p>{html.escape(DOWNLOAD_CLI_TIPS)}</p>")
     for d in DATA_SOURCES:
         title = html.escape(d["title"])
         desc = html.escape(d["description"])
