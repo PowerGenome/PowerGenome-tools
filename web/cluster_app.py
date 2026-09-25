@@ -369,6 +369,8 @@ DATA_SOURCES = [
         ),
         "url": "https://zenodo.org/records/22235855",
         "doi": "10.5281/zenodo.22235855",
+        "mirror_label": "Google Drive",
+        "mirror_url": "https://drive.google.com/drive/folders/16PL6HIdYchgyxGwtU6gkXwztBNclBpo1",
         "target_folder": "resource_profiles",
         "settings_keys": ["RESOURCE_GROUP_PROFILES"],
         "files": [
@@ -495,6 +497,9 @@ def render_data_sources_md(resource_group_folder=None):
         lines.append("")
         lines.append(f"- Zenodo: {d['url']}")
         lines.append(f"- DOI: {d['doi']}")
+        if d.get("mirror_url"):
+            label = d.get("mirror_label", "alternate download")
+            lines.append(f"- Mirror ({label}): {d['mirror_url']}")
         lines.append(
             f"- Suggested local folder: `{DATA_ROOT_EXAMPLE}/{d['target_folder']}`"
         )
@@ -554,6 +559,13 @@ def render_data_sources_html(resource_group_folder=None):
             f'<li>Zenodo: <a href="{url}" target="_blank" rel="noopener">{url}</a> '
             f"(DOI: {doi})</li>"
         )
+        if d.get("mirror_url"):
+            mirror_url = html.escape(d["mirror_url"])
+            mirror_label = html.escape(d.get("mirror_label", "alternate download"))
+            parts.append(
+                f'<li>Mirror ({mirror_label}): <a href="{mirror_url}" '
+                f'target="_blank" rel="noopener">{mirror_url}</a></li>'
+            )
         parts.append(f"<li>Suggested local folder: <code>{folder}</code></li>")
         parts.append(f"<li>Feeds settings key(s): {keys}</li>")
         if d["files"]:
