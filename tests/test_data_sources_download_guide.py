@@ -137,6 +137,25 @@ def _read_index_html() -> str:
     return (repo_root / "web" / "index.html").read_text(encoding="utf-8")
 
 
+def _no_mirror_deposit(deposit_id, title, target_folder, settings_keys, files):
+    """Build a minimal deposit dict that carries no ``mirror_url``.
+
+    Used to isolate backward-compatibility (a deposit without a mirror should
+    render no Mirror line/item) while keeping *all three* deposit ids present so
+    ``build_data_yml_snippet``/``build_resource_groups`` still resolve.
+    """
+    return {
+        "id": deposit_id,
+        "title": title,
+        "description": f"Deposit {title}.",
+        "url": "https://zenodo.org/records/1",
+        "doi": "10.5281/zenodo.1",
+        "target_folder": target_folder,
+        "settings_keys": settings_keys,
+        "files": files,
+    }
+
+
 # ---------------------------------------------------------------------------
 # DATA_SOURCES deposit metadata
 # ---------------------------------------------------------------------------
@@ -546,6 +565,72 @@ class TestRenderDataSourcesMd:
                     "Markdown bullet"
                 )
 
+    def test_profiles_mirror_url_and_label_in_md(self, cluster_app):
+        """The profiles deposit renders its Google Drive mirror in Markdown."""
+        md = cluster_app.render_data_sources_md()
+        url = "https://drive.google.com/drive/folders/16PL6HIdYchgyxGwtU6gkXwztBNclBpo1"
+        assert "Google Drive" in md
+        assert url in md
+        assert f"- Mirror (Google Drive): {url}" in md
+
+    def test_md_mirror_lines_only_for_deposits_with_mirror_url(self, cluster_app):
+        """Only deposits that define a mirror_url get a `- Mirror (...)` line.
+
+        The profiles deposit is the only one with a mirror, so exactly one
+        `- Mirror (` line appears in the rendered Markdown and the core /
+        resource_groups sections emit none.
+        """
+        mirror_count = sum(1 for d in cluster_app.DATA_SOURCES if d.get("mirror_url"))
+        assert mirror_count == 1, (
+            "expected exactly one deposit (profiles) to carry a mirror_url; "
+            "update this test if the DATA_SOURCES config changes"
+        )
+
+        md = cluster_app.render_data_sources_md()
+        assert md.count("- Mirror (") == mirror_count
+
+        by_id = {d["id"]: d for d in cluster_app.DATA_SOURCES}
+        for deposit_id in ("core", "resource_groups"):
+            deposit = by_id[deposit_id]
+            section_idx = md.index(f"## {deposit['title']}")
+            next_heading_idx = md.find("\n## ", section_idx + 1)
+            section = md[
+                section_idx : next_heading_idx if next_heading_idx != -1 else None
+            ]
+            assert (
+                "- Mirror (" not in section
+            ), f"{deposit_id} has no mirror_url but rendered a Mirror line"
+
+    def test_md_no_mirror_line_when_deposit_lacks_mirror_url(
+        self, cluster_app, monkeypatch
+    ):
+        """A deposit without a mirror_url emits no Mirror line (back-compat)."""
+        monkeypatch.setattr(
+            cluster_app,
+            "DATA_SOURCES",
+            [
+                _no_mirror_deposit(
+                    "core", "Core", "data", ["data_location"], ["cpi_data.csv"]
+                ),
+                _no_mirror_deposit(
+                    "profiles",
+                    "Profiles",
+                    "resource_profiles",
+                    ["RESOURCE_GROUP_PROFILES"],
+                    [],
+                ),
+                _no_mirror_deposit(
+                    "resource_groups",
+                    "Resource Groups",
+                    "existing_resource_groups",
+                    ["RESOURCE_GROUPS"],
+                    [],
+                ),
+            ],
+        )
+        md = cluster_app.render_data_sources_md()
+        assert "- Mirror (" not in md
+
 
 # ---------------------------------------------------------------------------
 # render_data_sources_html + populate_data_sources_section
@@ -653,6 +738,76 @@ class TestRenderDataSourcesHtml:
         assert (
             new_build_idx < textarea_idx
         ), "the new-build resource groups section must precede the snippet textarea"
+
+    def test_profiles_mirror_url_renders_as_clickable_link(self, cluster_app):
+        """The Google Drive mirror renders as an HTML anchor link."""
+        html = cluster_app.render_data_sources_html()
+        url = "https://drive.google.com/drive/folders/16PL6HIdYchgyxGwtU6gkXwztBNclBpo1"
+
+        assert "Google Drive" in html
+        assert url in html
+        # The URL must be wrapped in a clickable <a href=...> anchor.
+        assert f'<a href="{url}" target="_blank" rel="noopener">{url}</a>' in html
+        assert "<li>Mirror (Google Drive): " in html
+
+    def test_html_mirror_items_only_for_deposits_with_mirror_url(self, cluster_app):
+        """Only deposits that define a mirror_url get a Mirror <li> item.
+
+        The profiles deposit is the only one with a mirror, so exactly one
+        ``Mirror (`` item appears in the rendered HTML and the core /
+        resource_groups sections emit none.
+        """
+        mirror_count = sum(1 for d in cluster_app.DATA_SOURCES if d.get("mirror_url"))
+        assert mirror_count == 1, (
+            "expected exactly one deposit (profiles) to carry a mirror_url; "
+            "update this test if the DATA_SOURCES config changes"
+        )
+
+        html = cluster_app.render_data_sources_html()
+        assert html.count("Mirror (") == mirror_count
+
+        by_id = {d["id"]: d for d in cluster_app.DATA_SOURCES}
+        for deposit_id in ("core", "resource_groups"):
+            deposit = by_id[deposit_id]
+            title = deposit["title"]
+            section_idx = html.index(f"<h4>{title}</h4>")
+            next_heading_idx = html.find("<h4>", section_idx + len(f"<h4>{title}</h4>"))
+            section = html[
+                section_idx : next_heading_idx if next_heading_idx != -1 else None
+            ]
+            assert (
+                "Mirror (" not in section
+            ), f"{deposit_id} has no mirror_url but rendered a Mirror item"
+
+    def test_html_no_mirror_item_when_deposit_lacks_mirror_url(
+        self, cluster_app, monkeypatch
+    ):
+        """A deposit without a mirror_url emits no Mirror <li> item (back-compat)."""
+        monkeypatch.setattr(
+            cluster_app,
+            "DATA_SOURCES",
+            [
+                _no_mirror_deposit(
+                    "core", "Core", "data", ["data_location"], ["cpi_data.csv"]
+                ),
+                _no_mirror_deposit(
+                    "profiles",
+                    "Profiles",
+                    "resource_profiles",
+                    ["RESOURCE_GROUP_PROFILES"],
+                    [],
+                ),
+                _no_mirror_deposit(
+                    "resource_groups",
+                    "Resource Groups",
+                    "existing_resource_groups",
+                    ["RESOURCE_GROUPS"],
+                    [],
+                ),
+            ],
+        )
+        html = cluster_app.render_data_sources_html()
+        assert "Mirror (" not in html
 
 
 # ---------------------------------------------------------------------------
