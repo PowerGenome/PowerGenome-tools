@@ -25,8 +25,14 @@ def build_assigned_df(
     tech: str,
     metro_region_map: pd.DataFrame,
     msa_name_map: Optional[pd.Series] = None,
+    dollar_year: Optional[int] = None,
 ) -> pd.DataFrame:
-    """Build the output dataframe for a single technology."""
+    """Build the output dataframe for a single technology.
+
+    When ``dollar_year`` is provided it is recorded in a ``dollar_year`` column
+    so the file declares the dollar basis of ``lcoe`` and the interconnection
+    cost columns.
+    """
     tech_assigns = assignments[assignments["tech"] == tech].copy()
     if tech_assigns.empty:
         return pd.DataFrame()
@@ -65,6 +71,9 @@ def build_assigned_df(
 
     if msa_name_map is not None:
         assigned_df["msa_name"] = assigned_df["msa_id"].map(msa_name_map)
+
+    if dollar_year is not None:
+        assigned_df["dollar_year"] = np.int32(dollar_year)
 
     return assigned_df
 
