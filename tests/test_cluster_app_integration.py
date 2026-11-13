@@ -8,7 +8,9 @@ This file uses the same mocking strategy as test_cluster_app_algorithms.py
 to load the PyScript-dependent module in a standard pytest environment.
 """
 
+import asyncio
 import importlib.util
+import io
 import json
 import sys
 from io import StringIO
@@ -382,3 +384,135 @@ def test_build_settings_yamls(app):
         assert "model_definition.yml" in yamls
         assert "resources.yml" in yamls
         assert yamls["model_definition.yml"] == "model_def: 1"
+
+
+# ---------------------------------------------------------------------------
+# 4. Resource Group Generation Tests
+# ---------------------------------------------------------------------------
+
+
+def _load_real_resource_groups_module():
+    """Load the real fast_interconnection resource_groups module.
+
+    The session fixture stubs ``fast_interconnection.resource_groups`` in
+    ``sys.modules`` with a MagicMock, so the real helpers must be loaded from
+    disk by path for behavior-level assertions.
+    """
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "web"
+        / "fast_interconnection"
+        / "resource_groups.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "_real_fast_interconnection_resource_groups", module_path
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+async def test_generate_resource_groups_writes_dollar_year(app, monkeypatch):
+    """Generated LCOE parquet files record the network cost dollar year."""
+    resource_groups = _load_real_resource_groups_module()
+
+    assignments = pd.DataFrame(
+        {
+            "tech": ["solar", "onshorewind"],
+            "CPA_ID": [1, 2],
+            "metro_id": [101, 202],
+            "cpa_mw": [50.0, 75.0],
+            "cf": [0.25, 0.4],
+            "path": [[101, 102], [203]],
+            "lcoe": [40.0, 55.0],
+            "interconnect_capex_mw": [1000.0, 1500.0],
+            "total_interconnect_km": [12.5, 30.0],
+            "model_region": ["Region1", "Region2"],
+        }
+    )
+
+    app.state.region_aggregations = {"Region1": ["A"], "Region2": ["B"]}
+    app.state.fast_interconnection_data = {
+        "candidates": pd.DataFrame({"cpa_id": [1, 2]}),
+        "saturation": pd.DataFrame({"metro_id": [101, 202]}),
+        "metro_region_map": pd.DataFrame(
+            {"metro_id": [101, 202], "base_region": ["REG1", "REG2"]}
+        ),
+        "substation_metro_region": pd.DataFrame(
+            {"metro_id": [101, 202], "substation_metro_id": [1001, 1002]}
+        ),
+        "cpa_solar_attrs": pd.DataFrame({"CPA_ID": [1], "anyQual": [True]}),
+        "cpa_onshorewind_attrs": pd.DataFrame({"CPA_ID": [2], "anyQual": [False]}),
+        "msa_name_map": pd.DataFrame(
+            {"CBSAFP": ["101", "202"], "NAME": ["Metro One", "Metro Two"]}
+        ),
+        "cross_region": None,
+    }
+
+    statuses = []
+
+    def record_status(message, status_type="info"):
+        statuses.append((message, status_type))
+
+    refreshed = []
+
+    async def fake_refresh(event=None):
+        refreshed.append(event)
+
+    def fake_get_element_by_id(element_id):
+        element = MagicMock()
+        if element_id == "resourceGroupName":
+            element.value = "test_region"
+        elif element_id == "resourceGroupPenalty":
+            element.value = "10"
+        else:
+            element.value = "0"
+        return element
+
+    monkeypatch.setattr(app, "set_resource_group_status", record_status)
+    monkeypatch.setattr(
+        app, "load_fast_interconnection_data", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(app, "fast_assign_cpas", AsyncMock(return_value=assignments))
+    monkeypatch.setattr(app, "build_assigned_df", resource_groups.build_assigned_df)
+    monkeypatch.setattr(
+        app,
+        "build_resource_group_json",
+        lambda resource, lcoe_filename, profile_paths=None: {
+            "technology": resource,
+            "metadata": lcoe_filename,
+        },
+    )
+    monkeypatch.setattr(app, "_refresh_renewables_budget_defaults", fake_refresh)
+    monkeypatch.setattr(
+        app._test_mocks["document"], "getElementById", fake_get_element_by_id
+    )
+
+    try:
+        await app._generate_resource_groups()
+        # Let the fire-and-forget budget refresh task run to completion.
+        await asyncio.sleep(0)
+
+        error_statuses = [entry for entry in statuses if entry[1] == "error"]
+        assert not error_statuses, error_statuses
+        assert refreshed, "renewables budget refresh should be scheduled"
+
+        assert app.NETWORK_COST_DOLLAR_YEAR == 2018
+        expected_filenames = (
+            "solar_lcoe_test_region.parquet",
+            "onshorewind_lcoe_test_region.parquet",
+        )
+        for filename in expected_filenames:
+            assert filename in app.state.resource_group_files
+            payload = app.state.resource_group_files[filename]
+            df = pd.read_parquet(io.BytesIO(payload))
+
+            assert not df.empty
+            assert "dollar_year" in df.columns
+            assert df["dollar_year"].eq(2018).all()
+            assert (df["dollar_year"] == 2018).all()
+    finally:
+        app.state.resource_group_files = {}
+        app.state.resource_group_assignments = None
+        app.state.fast_interconnection_data = None

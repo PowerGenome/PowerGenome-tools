@@ -199,6 +199,8 @@ Output rows are canonical unordered region pairs. `start_region` and `dest_regio
 | `total_interconnect_annuity_mw` | Annualized cost using 4.4% WACC and 60-year lifetime | $/MW/yr |
 | `dollar_year` | Dollar-year for cost figures | year (2018) |
 
+The value comes from the `NETWORK_COST_DOLLAR_YEAR` constant in `web/calc_network.py`, which is also stamped into the `dollar_year` column of the Step 7 resource-group LCOE parquet files (see [Step 7: Interconnection](web_app.md#step-7-interconnection)).
+
 ## Edge Cases and Fallback Behavior
 
 * Regions without any MSA above the threshold use their largest MSA as fallback.

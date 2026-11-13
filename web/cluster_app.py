@@ -38,7 +38,7 @@ import numpy as np
 # Will be imported after PyScript loads packages
 import pandas as pd
 import yaml
-from calc_network import calculate_network_from_frames
+from calc_network import NETWORK_COST_DOLLAR_YEAR, calculate_network_from_frames
 from clustering_algorithms import (
     agglomerative_cluster,
     build_transmission_graph,
@@ -9290,7 +9290,11 @@ async def _generate_resource_groups():
             ("onshorewind", data["cpa_onshorewind_attrs"]),
         ]:
             assigned_df = build_assigned_df(
-                assignments, resource, data["metro_region_map"], msa_name_map
+                assignments,
+                resource,
+                data["metro_region_map"],
+                msa_name_map,
+                dollar_year=NETWORK_COST_DOLLAR_YEAR,
             )
             if assigned_df.empty:
                 continue
@@ -9330,7 +9334,9 @@ async def _generate_resource_groups():
 
         if output_files:
             set_resource_group_status(
-                f"Generated {len(output_files)} resource group files.", "success"
+                f"Generated {len(output_files)} resource group files "
+                f"({NETWORK_COST_DOLLAR_YEAR}$).",
+                "success",
             )
         else:
             set_resource_group_status("No resource group files generated.", "error")
