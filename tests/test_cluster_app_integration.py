@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
+import pyarrow.parquet as pq
 import pytest
 import yaml
 
@@ -498,6 +499,8 @@ async def test_generate_resource_groups_writes_dollar_year(app, monkeypatch):
         assert not error_statuses, error_statuses
         assert refreshed, "renewables budget refresh should be scheduled"
 
+        # Guard against the import itself being dropped (the value is asserted
+        # behaviorally below); this is not the dollar-basis behavior assertion.
         assert app.NETWORK_COST_DOLLAR_YEAR == 2018
         expected_filenames = (
             "solar_lcoe_test_region.parquet",
@@ -506,12 +509,16 @@ async def test_generate_resource_groups_writes_dollar_year(app, monkeypatch):
         for filename in expected_filenames:
             assert filename in app.state.resource_group_files
             payload = app.state.resource_group_files[filename]
-            df = pd.read_parquet(io.BytesIO(payload))
+            # Deliberately bypass pd.read_parquet: another test module leaves
+            # pandas.read_parquet (the same global object cluster_app.pd refers
+            # to) monkey-patched, so reading through it makes this test depend
+            # on collection order. Do not "simplify" this back.
+            df = pq.read_table(io.BytesIO(payload)).to_pandas()
 
             assert not df.empty
             assert "dollar_year" in df.columns
             assert df["dollar_year"].eq(2018).all()
-            assert (df["dollar_year"] == 2018).all()
+            assert pd.api.types.is_integer_dtype(df["dollar_year"])
     finally:
         app.state.resource_group_files = {}
         app.state.resource_group_assignments = None
