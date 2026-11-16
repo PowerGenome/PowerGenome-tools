@@ -33,6 +33,10 @@ jobs:
           npm ci
 
       - name: Install Playwright browser
+        # Playwright >= 1.65 ships a Chromium build, apt dependency list, and
+        # officially-supported platform entry for ubuntu26.04-x64 (older
+        # versions such as 1.58 do not). Keep ubuntu-latest in the matrix
+        # rather than pinning to an older runner image.
         run: |
           npx playwright install --with-deps chromium
 

@@ -84,6 +84,12 @@ Run the UI suite with:
 npm run test:ui
 ```
 
+Playwright starts a static server for `web/` itself; it uses `python3` on
+macOS/Linux and `python` on Windows, so no `python` alias is needed. The
+pinned Playwright version must stay at 1.65 or newer, because CI runs on
+`ubuntu-latest`, which resolves to Ubuntu 26.04 — a platform older
+Playwright releases cannot install Chromium for.
+
 ## Documentation
 
 The documentation is built with [MkDocs](https://www.mkdocs.org/).
