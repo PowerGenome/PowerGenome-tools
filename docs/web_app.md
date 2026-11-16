@@ -910,6 +910,7 @@ The results are saved in parquet files that include:
       <li>Average capacity factor of the resource at that location</li>
     </ul>
   </li>
+  <li><strong>Dollar year</strong> - A <code>dollar_year</code> column declaring the dollar year of the cost figures (2018), matching the network cost table</li>
 </ul>
 <!-- markdownlint-enable MD033 -->
 
@@ -928,6 +929,8 @@ These parquet files, along with accompanying JSON files containing generation pr
 * **Resource group JSON**: Resource group metadata (profiles + site maps)
 * **Network costs table (in app state)**: Region-to-region cost/loss/distance metrics, exported in Step 9 when available
 
+Both LCOE parquet files include a `dollar_year` column that records the dollar year of the cost figures, so each file declares its own dollar basis. The value is the same 2018 dollar year used in the network cost table and is fixed, so it does not follow the **Target USD Year** from Step 2. PowerGenome applies `dollar_year_adjustment.csv` during extraction to reach your target dollar year.
+
 The generated resource-group files are automatically included in the final export: the Export step (Step 9) places them in a region-specific folder (for example `resource_groups_10r_eastern-western_nercr`) inside the downloaded settings ZIP, next to `settings/`. The `data.yml` in that ZIP lists the folder as the first `RESOURCE_GROUPS` entry (new-build wind/solar), alongside the existing resource groups. Downloading the ZIP from this tab is **optional** — use it only if you want the files standalone. See the [Downloading Input Data](#downloading-input-data) section in Step 9 for details.
 
 ### Upload Pre-calculated LCOE Files
@@ -939,6 +942,8 @@ If you have LCOE files from a previous session, you can upload them directly ins
 **Supported formats:** `.parquet` or `.csv`
 
 **Required columns:** `region`, `cpa_mw`, `cf`, `lcoe`
+
+The `dollar_year` column is optional here: uploaded files do not need it, and it is not validated or used if present.
 
 Upload separate files for wind and solar as needed. The resource group JSON files are **not** required for this workflow — only the LCOE parquet/CSV files are needed.
 

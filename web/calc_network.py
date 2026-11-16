@@ -24,6 +24,9 @@ import networkx as nx
 import pandas as pd
 
 # ── Network cost annuity constants ────────────────────────────────────────────
+# The dollar year is also stamped onto the resource-group LCOE files
+# (see build_assigned_df in fast_interconnection/resource_groups.py) so both
+# cost outputs declare the same basis.
 
 NETWORK_COST_WACC = 0.044
 NETWORK_COST_LIFETIME_YEARS = 60
