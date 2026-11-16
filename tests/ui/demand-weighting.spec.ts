@@ -1,5 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
-import { loadApp } from './page-objects/app-startup';
+import { goToWizardStep } from './page-objects/app-startup';
+import { createSharedAppSuite } from './fixtures/shared-app';
 
 type RegionAggregations = Record<string, string[]>;
 
@@ -65,24 +66,55 @@ async function readTransgrpByBa(page: Page): Promise<Record<string, string>> {
     });
 }
 
+/**
+ * Restore the Regions step to the defaults asserted by this file.
+ *
+ * The dropdown tests share one booted app and only mutate the demand weighting
+ * dropdown and the auto-optimize checkbox, so resetting those two (plus the BA
+ * selection, for any future test that selects regions) is cheaper and just as
+ * correct as reloading the page.
+ *
+ * The shared-app fixture does not run this before the first test, so boot
+ * defaults are asserted there rather than here.
+ */
+async function resetRegionsStep(page: Page) {
+    await goToWizardStep(page, 1);
+
+    const autoOptimize = page.locator('#autoOptimize');
+    if (await autoOptimize.isChecked()) {
+        // Fires the change handler that re-shows the demand weighting section.
+        await autoOptimize.uncheck();
+    }
+
+    const demandWeight = page.locator('#demandWeightMethod');
+    if ((await demandWeight.inputValue()) !== 'none') {
+        await demandWeight.selectOption('none');
+    }
+
+    const selectedCount = page.locator('#selectedCount');
+    if (((await selectedCount.textContent()) ?? '').trim() !== '0') {
+        await page.locator('#clearSelectionBtn').click();
+        await expect(selectedCount).toHaveText('0');
+    }
+}
+
 test.describe('Demand Weighting Dropdown (Step 1)', () => {
-    test('demand weight dropdown is visible in clustering mode', async ({ page }) => {
-        await loadApp(page, 60000);
+    // The fixture skips the reset before the first test, so only the first test
+    // observes real boot state. Keep every startup-default assertion in this
+    // test; later tests run against a page the reset has already normalized.
+    const suite = createSharedAppSuite(test, { reset: resetRegionsStep });
+
+    test('demand weight dropdown is visible and defaults to none on first load', async () => {
+        const page = suite.getPage();
 
         // Step 1 is shown by default
         const dropdown = page.locator('#demandWeightMethod');
         await expect(dropdown).toBeVisible();
-    });
-
-    test('demand weight dropdown defaults to none', async ({ page }) => {
-        await loadApp(page, 60000);
-
-        const dropdown = page.locator('#demandWeightMethod');
         await expect(dropdown).toHaveValue('none');
     });
 
-    test('demand weight dropdown has all three options', async ({ page }) => {
-        await loadApp(page, 60000);
+    test('demand weight dropdown has all three options', async () => {
+        const page = suite.getPage();
 
         const dropdown = page.locator('#demandWeightMethod');
         const options = dropdown.locator('option');
@@ -96,24 +128,36 @@ test.describe('Demand Weighting Dropdown (Step 1)', () => {
         expect(values).toContain('demand-log');
     });
 
-    test('can change demand weight to sqrt method', async ({ page }) => {
-        await loadApp(page, 60000);
+    test('can change demand weight to sqrt method', async () => {
+        const page = suite.getPage();
 
         const dropdown = page.locator('#demandWeightMethod');
         await dropdown.selectOption('demand-sqrt');
         await expect(dropdown).toHaveValue('demand-sqrt');
     });
 
-    test('can change demand weight to log method', async ({ page }) => {
-        await loadApp(page, 60000);
+    test('suite reset restores the demand weight dropdown default', async () => {
+        const page = suite.getPage();
+
+        // Ordering is load-bearing: the suite runs in serial mode, so tests
+        // execute in declaration order. This guard only proves anything while it
+        // directly follows a test that leaves the dropdown mutating state (the
+        // sqrt test above leaves it at 'demand-sqrt'), because the fixture runs
+        // resetRegionsStep before each test after the first. Moving it anywhere
+        // else turns it back into a restatement of the boot defaults.
+        await expect(page.locator('#demandWeightMethod')).toHaveValue('none');
+    });
+
+    test('can change demand weight to log method', async () => {
+        const page = suite.getPage();
 
         const dropdown = page.locator('#demandWeightMethod');
         await dropdown.selectOption('demand-log');
         await expect(dropdown).toHaveValue('demand-log');
     });
 
-    test('demand weight section is hidden when auto-optimize is enabled', async ({ page }) => {
-        await loadApp(page, 60000);
+    test('demand weight section is hidden when auto-optimize is enabled', async () => {
+        const page = suite.getPage();
 
         const autoOptimizeCheckbox = page.locator('#autoOptimize');
         const demandSection = page.locator('#demandWeightSection');
@@ -128,8 +172,8 @@ test.describe('Demand Weighting Dropdown (Step 1)', () => {
         await expect(demandSection).toBeHidden();
     });
 
-    test('demand weight section reappears when auto-optimize is disabled', async ({ page }) => {
-        await loadApp(page, 60000);
+    test('demand weight section reappears when auto-optimize is disabled', async () => {
+        const page = suite.getPage();
 
         const autoOptimizeCheckbox = page.locator('#autoOptimize');
         const demandSection = page.locator('#demandWeightSection');
@@ -144,11 +188,14 @@ test.describe('Demand Weighting Dropdown (Step 1)', () => {
 });
 
 test.describe('Demand-weighted clustering regressions', () => {
-    test('real app keeps p8 clustered only with NorthernGrid_South members', async ({ page }) => {
+    // Separate suite: the clustering run dirties the region selections and
+    // clustering inputs, so it gets its own clean app instance.
+    const suite = createSharedAppSuite(test, { startupTimeout: 90000 });
+
+    test('real app keeps p8 clustered only with NorthernGrid_South members', async () => {
         test.setTimeout(180000);
 
-        await loadApp(page, 90000);
-
+        const page = suite.getPage();
         const transgrpByBa = await readTransgrpByBa(page);
         expect(transgrpByBa.p8).toBe('NorthernGrid_South');
 

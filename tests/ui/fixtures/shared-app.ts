@@ -1,9 +1,32 @@
 import { BrowserContext, Page, test as base, expect } from '@playwright/test';
-import { loadApp } from '../page-objects/app-startup';
+import { loadApp, reloadApp } from '../page-objects/app-startup';
 
 type ResetCallback = (page: Page) => Promise<void>;
 
 type SharedAppSuiteOptions = {
+    /**
+     * How the shared page is restored before each test.
+     *
+     * - `'callback'` (default): only `reset` runs. The page keeps its
+     *   in-memory state, so a spec that shares a page must reset every value
+     *   the previous test could have mutated.
+     * - `'reload'`: the page is reloaded inside the existing browser context,
+     *   which restarts PyScript/Pyodide and clears all Python-side state
+     *   while reusing the context's HTTP cache. Use this when a test mutates
+     *   state that has no cheap callback reset. `reset` still runs
+     *   afterwards when provided.
+     */
+    resetMode?: 'callback' | 'reload';
+    /**
+     * Restores page state before each test, starting with the suite's second
+     * test. The first test never runs the callback: the `beforeAll` load
+     * leaves the page in genuine startup state, so boot-default assertions
+     * must observe that state instead of a repaired one.
+     *
+     * Put boot-default assertions in (or immediately after) the first test,
+     * because any later test runs against a page the reset has already
+     * normalized.
+     */
     reset?: ResetCallback;
     startupTimeout?: number;
 };
@@ -18,14 +41,25 @@ export function createSharedAppSuite(
 ): SharedAppSuite {
     test.describe.configure({ mode: 'serial' });
 
+    const startupTimeout = options.startupTimeout ?? 30000;
+    // Boot/browser work happens in hooks, which have their own timeout.
+    const hookTimeout = startupTimeout + 30000;
+
     let context: BrowserContext | undefined;
     let page: Page | undefined;
+    // The load in beforeAll already leaves the page clean, so the first test
+    // of a reload-mode suite does not need an extra boot.
+    let needsReload = false;
+    // The first test also skips `reset`, so it observes real boot state.
+    let isFirstTestInSuite = true;
 
     test.beforeAll(async ({ browser }) => {
+        test.setTimeout(hookTimeout);
         context = await browser.newContext();
         page = await context.newPage();
-        await loadApp(page, options.startupTimeout ?? 30000);
+        await loadApp(page, startupTimeout);
         await assertAppReady(page);
+        needsReload = false;
     });
 
     test.afterAll(async () => {
@@ -34,11 +68,24 @@ export function createSharedAppSuite(
         page = undefined;
     });
 
-    test.beforeEach(async () => {
+    test.beforeEach(async ({}, testInfo) => {
         const sharedPage = getSharedPage(page);
-        if (options.reset) {
+
+        if (options.resetMode === 'reload') {
+            if (needsReload) {
+                // beforeEach shares its timeout with the test body.
+                test.setTimeout(testInfo.timeout + startupTimeout);
+                await reloadApp(sharedPage, startupTimeout);
+                await assertAppReady(sharedPage);
+            }
+            needsReload = true;
+        }
+
+        if (options.reset && !isFirstTestInSuite) {
             await options.reset(sharedPage);
         }
+
+        isFirstTestInSuite = false;
     });
 
     return {

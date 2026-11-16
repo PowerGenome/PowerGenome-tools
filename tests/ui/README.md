@@ -57,7 +57,48 @@ npx playwright test model-setup.spec.ts
 
 - **`smoke.spec.ts`** - Basic functionality tests to ensure the app loads and PyScript initializes
 - **`model-setup.spec.ts`** - Comprehensive tests for Step 2 (Model Setup) planning period functionality
+- **`fixtures/shared-app.ts`** - Shared app suite that boots PyScript once per spec file
 - **`page-objects/`** - Page object models that encapsulate UI interactions
+
+## Shared app suites
+
+Booting PyScript/Pyodide takes several seconds per page, so new specs should
+use `createSharedAppSuite` instead of calling `loadApp()` in every test:
+
+```ts
+import { test, expect } from '@playwright/test';
+import { createSharedAppSuite } from './fixtures/shared-app';
+
+test.describe('My feature', () => {
+    // Runs before every test except the first one, on the shared page.
+    const suite = createSharedAppSuite(test, {
+        reset: async (page) => {
+            // Restore any state the previous test mutated.
+        }
+    });
+
+    test('does something', async () => {
+        const page = suite.getPage();
+        // ...
+    });
+});
+```
+
+- The suite runs in serial mode and creates one `BrowserContext` per spec file.
+- **The first test in a shared-app suite sees the freshly loaded app; resets
+  apply from the second test onward.** The `beforeAll` load already leaves the
+  page in startup state, so the fixture skips `reset` before the first test
+  (exactly like it skips the reload). Put boot-default assertions — "Step 1 is
+  shown by default", "the dropdown defaults to `none`" — in that first test, or
+  merge them into it. A later test runs against a page the reset has already
+  repaired, so it cannot catch an app that boots in the wrong state.
+- `reset` must put the page back into the state each test expects. When a test
+  mutates state that has no cheap reset, use
+  `createSharedAppSuite(test, { resetMode: 'reload' })`: a reload restarts
+  PyScript/Pyodide inside the same context and reuses its HTTP cache, which is
+  still much cheaper than booting a fresh context per test.
+- Keep `loadApp()` only for specs that genuinely cannot share a page (for
+  example a single-test file, where sharing saves nothing).
 
 ## Key Features Tested
 
