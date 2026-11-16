@@ -4,6 +4,12 @@ import { defineConfig, devices } from '@playwright/test';
 // commonly ship only `python3`.
 const pythonCommand = process.platform === 'win32' ? 'python' : 'python3';
 
+// Each worker boots its own Pyodide runtime with pandas/numpy/shapely, which is
+// memory hungry. Two workers overlap the (serial) shared-app suites by file on
+// Linux CI; Windows CI keeps one worker for headroom. RUNNER_OS is set by
+// GitHub Actions, so local runs never pick up the CI value.
+const ciWorkers = process.env.RUNNER_OS === 'Windows' ? 1 : 2;
+
 export default defineConfig({
     testDir: './tests/ui',
 
@@ -14,10 +20,10 @@ export default defineConfig({
     forbidOnly: !!process.env.CI,
 
     // Retry on CI only
-    retries: process.env.CI ? 2 : 0,
+    retries: process.env.CI ? 1 : 0,
 
-    // Opt out of parallel tests on CI
-    workers: process.env.CI ? 1 : undefined,
+    // Limit parallelism on CI; local runs stay fully parallel.
+    workers: process.env.CI ? ciWorkers : undefined,
 
     // Reporter configuration
     reporter: [

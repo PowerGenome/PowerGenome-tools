@@ -18,6 +18,21 @@ export async function loadApp(page: Page, timeout = 60000) {
     await dismissWelcomeOverlay(page);
 }
 
+/**
+ * Restart the app in place, keeping the current browser context.
+ *
+ * A reload re-boots PyScript/Pyodide but reuses the context's HTTP cache, so
+ * the jsdelivr-hosted Pyodide, pandas, numpy and shapely files are served
+ * locally instead of being downloaded again. That makes it far cheaper than
+ * opening a fresh context and calling `loadApp()`, while still resetting the
+ * Python-side application state between tests.
+ */
+export async function reloadApp(page: Page, timeout = 60000) {
+    await page.reload();
+    await waitForAppReady(page, timeout);
+    await dismissWelcomeOverlay(page);
+}
+
 export async function goToWizardStep(page: Page, step: number) {
     await page.evaluate((stepNumber) => {
         if (typeof (window as any).goToStep === 'function') {

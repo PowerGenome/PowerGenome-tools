@@ -2,10 +2,14 @@
  * Playwright tests for standalone workflow_state.yml import.
  *
  * Strategy:
- *   - Each test loads a fresh page via loadApp() (which boots PyScript,
- *     dismisses the welcome overlay, and confirms the app is ready).
+ *   - All tests share one booted app via createSharedAppSuite(). Imports
+ *     mutate Python-side workflow state and the #statusBox, so the suite
+ *     reloads the page before each test: a reload restarts PyScript/Pyodide
+ *     inside the same browser context (and its HTTP cache), which is much
+ *     cheaper than booting a fresh context per test while still giving every
+ *     test a clean app.
  *   - The #uploadWorkflowInput file input lives inside #welcomeOverlay.
- *     After loadApp() the overlay is hidden, but Playwright's setInputFiles
+ *     After the suite boots the overlay is hidden, but Playwright's setInputFiles
  *     works on hidden elements, so we target it directly by selector and
  *     trigger the PyScript change handler without needing the overlay visible.
  *   - Manifest bytes are serialised as JSON; yaml.safe_load on the Python
@@ -14,7 +18,8 @@
  */
 
 import { test, expect, Page } from '@playwright/test';
-import { loadApp, goToWizardStep } from './page-objects/app-startup';
+import { goToWizardStep } from './page-objects/app-startup';
+import { createSharedAppSuite } from './fixtures/shared-app';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -91,9 +96,10 @@ async function uploadWorkflowYml(page: Page, content: Buffer): Promise<string> {
 // ---------------------------------------------------------------------------
 
 test.describe('Workflow import — standalone workflow_state.yml', () => {
+    const suite = createSharedAppSuite(test, { resetMode: 'reload' });
 
-    test('success status shown after importing a minimal valid manifest', async ({ page }) => {
-        await loadApp(page, 60_000);
+    test('success status shown after importing a minimal valid manifest', async () => {
+        const page = suite.getPage();
 
         const statusText = await uploadWorkflowYml(page, manifestBytes(minimalManifest()));
 
@@ -101,8 +107,8 @@ test.describe('Workflow import — standalone workflow_state.yml', () => {
         await expect(page.locator('#statusBox')).toHaveClass(/success/);
     });
 
-    test('planning period rows restored from forms.planning_periods', async ({ page }) => {
-        await loadApp(page, 60_000);
+    test('planning period rows restored from forms.planning_periods', async () => {
+        const page = suite.getPage();
 
         const periods: PlanningPeriod[] = [
             { period_start: 2025, planning_year: 2030, start_mode: 'manual', autofill_value: '' },
@@ -128,8 +134,8 @@ test.describe('Workflow import — standalone workflow_state.yml', () => {
         await expect(rows.nth(1).locator('.planning-period-model-year')).toHaveValue('2040');
     });
 
-    test('hidden modelYears and planningYears inputs reflect imported planning periods', async ({ page }) => {
-        await loadApp(page, 60_000);
+    test('hidden modelYears and planningYears inputs reflect imported planning periods', async () => {
+        const page = suite.getPage();
 
         const periods: PlanningPeriod[] = [
             { period_start: 2026, planning_year: 2035, start_mode: 'manual', autofill_value: '' },
@@ -149,8 +155,8 @@ test.describe('Workflow import — standalone workflow_state.yml', () => {
         await expect(page.locator('#planningYears')).toHaveValue('2026', { timeout: 10_000 });
     });
 
-    test('error status shown for an invalid manifest (wrong schema)', async ({ page }) => {
-        await loadApp(page, 60_000);
+    test('error status shown for an invalid manifest (wrong schema)', async () => {
+        const page = suite.getPage();
 
         const manifest = minimalManifest({ schema: 'not-a-valid-schema' });
         const statusText = await uploadWorkflowYml(page, manifestBytes(manifest));
@@ -159,10 +165,10 @@ test.describe('Workflow import — standalone workflow_state.yml', () => {
         await expect(page.locator('#statusBox')).toHaveClass(/error/);
     });
 
-    test('error status shown when manifest requires supplemental files', async ({ page }) => {
+    test('error status shown when manifest requires supplemental files', async () => {
         // A standalone .yml that lists required_supplemental_files must be
         // rejected — the user must upload the full ZIP instead.
-        await loadApp(page, 60_000);
+        const page = suite.getPage();
 
         const manifest = minimalManifest({
             required_supplemental_files: ['resource_groups_unspecified_default/groups.json'],
@@ -173,8 +179,8 @@ test.describe('Workflow import — standalone workflow_state.yml', () => {
         await expect(page.locator('#statusBox')).toHaveClass(/error/);
     });
 
-    test('error status shown for invalid (non-YAML) file content', async ({ page }) => {
-        await loadApp(page, 60_000);
+    test('error status shown for invalid (non-YAML) file content', async () => {
+        const page = suite.getPage();
 
         // Raw bytes that are neither valid UTF-8 nor valid YAML.
         const garbage = Buffer.from([0xff, 0xfe, 0x00, 0x80]);
@@ -184,10 +190,10 @@ test.describe('Workflow import — standalone workflow_state.yml', () => {
         await expect(page.locator('#statusBox')).toHaveClass(/error/);
     });
 
-    test('welcome overlay can be re-shown and the import input is then visible', async ({ page }) => {
-        // Verifies the overlay/input relationship: after loadApp hides the
-        // overlay, we can re-expose it and the file input becomes visible.
-        await loadApp(page, 60_000);
+    test('welcome overlay can be re-shown and the import input is then visible', async () => {
+        // Verifies the overlay/input relationship: the app boots with the
+        // overlay dismissed, and re-exposing it makes the file input visible.
+        const page = suite.getPage();
 
         await page.evaluate(() => {
             document.getElementById('welcomeOverlay')?.classList.remove('hidden');
@@ -201,8 +207,8 @@ test.describe('Workflow import — standalone workflow_state.yml', () => {
         await expect(page.locator('#welcomeOverlay')).toHaveClass(/hidden/);
     });
 
-    test('welcome dialog presents workflow import as the primary entry point with loading feedback', async ({ page }) => {
-        await loadApp(page, 60_000);
+    test('welcome dialog presents workflow import as the primary entry point with loading feedback', async () => {
+        const page = suite.getPage();
 
         await page.evaluate(() => {
             document.getElementById('welcomeOverlay')?.classList.remove('hidden');

@@ -4,6 +4,7 @@ on:
   push:
     branches: [ main ]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   playwright-tests:
@@ -11,7 +12,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # Windows runners are the slowest leg (browser install alone cost
+        # ~2m52s), so they only run outside pull requests. Pull requests use
+        # ubuntu-latest only.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest","windows-latest"]') }}
 
     steps:
       - name: Checkout repository
@@ -32,13 +36,25 @@ jobs:
         run: |
           npm ci
 
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          # The browser bundle lives in a different directory on Windows.
+          path: ${{ runner.os == 'Windows' && '~/AppData/Local/ms-playwright' || '~/.cache/ms-playwright' }}
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
       - name: Install Playwright browser
         # Playwright >= 1.65 ships a Chromium build, apt dependency list, and
         # officially-supported platform entry for ubuntu26.04-x64 (older
         # versions such as 1.58 do not). Keep ubuntu-latest in the matrix
         # rather than pinning to an older runner image.
+        # CI always runs headless, so only the Chromium headless shell is
+        # installed (skips the full headed browser download). --with-deps is
+        # still needed for the apt libraries on Linux.
         run: |
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps --only-shell chromium
 
       - name: Run Playwright tests
         run: |
