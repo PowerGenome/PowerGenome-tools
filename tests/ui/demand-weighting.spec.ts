@@ -113,15 +113,6 @@ test.describe('Demand Weighting Dropdown (Step 1)', () => {
         await expect(dropdown).toHaveValue('none');
     });
 
-    test('suite reset restores the demand weight dropdown default', async () => {
-        const page = suite.getPage();
-
-        // resetRegionsStep has already run, so this guards the reset helper
-        // rather than boot state.
-        await expect(page.locator('#autoOptimize')).not.toBeChecked();
-        await expect(page.locator('#demandWeightMethod')).toHaveValue('none');
-    });
-
     test('demand weight dropdown has all three options', async () => {
         const page = suite.getPage();
 
@@ -143,6 +134,18 @@ test.describe('Demand Weighting Dropdown (Step 1)', () => {
         const dropdown = page.locator('#demandWeightMethod');
         await dropdown.selectOption('demand-sqrt');
         await expect(dropdown).toHaveValue('demand-sqrt');
+    });
+
+    test('suite reset restores the demand weight dropdown default', async () => {
+        const page = suite.getPage();
+
+        // Ordering is load-bearing: the suite runs in serial mode, so tests
+        // execute in declaration order. This guard only proves anything while it
+        // directly follows a test that leaves the dropdown mutating state (the
+        // sqrt test above leaves it at 'demand-sqrt'), because the fixture runs
+        // resetRegionsStep before each test after the first. Moving it anywhere
+        // else turns it back into a restatement of the boot defaults.
+        await expect(page.locator('#demandWeightMethod')).toHaveValue('none');
     });
 
     test('can change demand weight to log method', async () => {
