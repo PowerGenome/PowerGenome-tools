@@ -1,5 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// Windows CI runners expose `python` (from actions/setup-python); macOS/Linux
+// commonly ship only `python3`.
+const pythonCommand = process.platform === 'win32' ? 'python' : 'python3';
+
 export default defineConfig({
     testDir: './tests/ui',
 
@@ -46,7 +50,7 @@ export default defineConfig({
 
     // Start web server before running tests
     webServer: {
-        command: 'cd web && python -m http.server 8001',
+        command: `cd web && ${pythonCommand} -m http.server 8001`,
         url: 'http://127.0.0.1:8001',
         reuseExistingServer: true,
         timeout: 120 * 1000,
