@@ -13,6 +13,7 @@ Covers:
 """
 
 import contextlib
+import html
 import importlib.util
 import sys
 import zipfile
@@ -150,6 +151,7 @@ def _no_mirror_deposit(deposit_id, title, target_folder, settings_keys, files):
         "description": f"Deposit {title}.",
         "url": "https://zenodo.org/records/1",
         "doi": "10.5281/zenodo.1",
+        "record_id": "1",
         "target_folder": target_folder,
         "settings_keys": settings_keys,
         "files": files,
@@ -286,6 +288,53 @@ class TestDataSourcesConfig:
             "resource_groups": "https://zenodo.org/records/22235662",
             "profiles": "https://zenodo.org/records/22235855",
         }
+
+    def test_record_id_matches_zenodo_url(self, cluster_app):
+        """Each deposit carries a record_id consistent with its Zenodo URL.
+
+        The record ID is what the `download_zenodo_data` command takes, so it
+        must not drift from the record the deposit links to.
+        """
+        for deposit in cluster_app.DATA_SOURCES:
+            url = deposit["url"]
+            assert deposit["record_id"] == url.rsplit("/", 1)[-1], (
+                f"deposit {deposit['id']!r}: record_id "
+                f"{deposit['record_id']!r} does not match url {url!r}"
+            )
+            assert deposit["record_id"].isdigit()
+
+
+# ---------------------------------------------------------------------------
+# build_zenodo_download_command() / build_zenodo_download_commands()
+# ---------------------------------------------------------------------------
+
+
+class TestZenodoDownloadCommands:
+    """The CLI commands are derived from DATA_SOURCES, never hardcoded."""
+
+    def test_command_uses_record_id_and_suggested_folder(self, cluster_app):
+        for deposit in cluster_app.DATA_SOURCES:
+            command = cluster_app.build_zenodo_download_command(deposit)
+            assert command.startswith("download_zenodo_data ")
+            assert deposit["record_id"] in command
+            assert (
+                f"{cluster_app.DATA_ROOT_EXAMPLE}/{deposit['target_folder']}" in command
+            )
+            assert " -d " in command
+
+    def test_commands_cover_every_deposit_in_order(self, cluster_app):
+        commands = cluster_app.build_zenodo_download_commands()
+        assert len(commands) == len(cluster_app.DATA_SOURCES)
+        assert commands == [
+            cluster_app.build_zenodo_download_command(d)
+            for d in cluster_app.DATA_SOURCES
+        ]
+
+    def test_commands_accept_explicit_source_list(self, cluster_app):
+        one = cluster_app.build_zenodo_download_commands([cluster_app.DATA_SOURCES[0]])
+        assert one == [
+            cluster_app.build_zenodo_download_command(cluster_app.DATA_SOURCES[0])
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -471,6 +520,39 @@ class TestRenderDataSourcesMd:
             "the new-build resource groups section must precede the example "
             "data.yml paths section"
         )
+
+    def test_md_download_bullet_per_deposit(self, cluster_app):
+        """Each deposit block offers its own `download_zenodo_data` command."""
+        md = cluster_app.render_data_sources_md()
+        for deposit in cluster_app.DATA_SOURCES:
+            command = cluster_app.build_zenodo_download_command(deposit)
+            assert f"- Download: `{command}`" in md
+        assert md.count("- Download: `") == len(cluster_app.DATA_SOURCES)
+
+    def test_md_cli_section_after_deposits_before_new_build(self, cluster_app):
+        """The CLI section sits after the deposit blocks and before Step 7."""
+        md = cluster_app.render_data_sources_md()
+        heading = "## Downloading with the PowerGenome CLI"
+        assert heading in md
+        assert cluster_app.ZENODO_CLI_REFERENCE_URL in md
+        assert cluster_app.ZENODO_CLI_NOTE in md
+
+        section_idx = md.index(heading)
+        last_title = cluster_app.DATA_SOURCES[-1]["title"]
+        assert md.index(f"## {last_title}") < section_idx
+        assert section_idx < md.index("## New-build resource groups (Step 7)")
+
+    def test_md_cli_section_bash_block_has_all_commands_in_order(self, cluster_app):
+        md = cluster_app.render_data_sources_md()
+        section_idx = md.index("## Downloading with the PowerGenome CLI")
+        fence_start = md.index("```bash", section_idx)
+        fence_end = md.index("```", fence_start + len("```bash"))
+        block = md[fence_start:fence_end]
+
+        commands = cluster_app.build_zenodo_download_commands()
+        assert len(commands) == 3, "expected one command per deposit"
+        # Drop the opening ```bash line; each command occupies its own line.
+        assert block.strip().splitlines()[1:] == commands
 
     def test_new_build_note_mentions_settings_folder_placement(self, cluster_app):
         """The Step 7 note places the new-build folder inside the export ZIP."""
@@ -738,6 +820,32 @@ class TestRenderDataSourcesHtml:
         assert (
             new_build_idx < textarea_idx
         ), "the new-build resource groups section must precede the snippet textarea"
+
+    def test_html_download_item_per_deposit(self, cluster_app):
+        """Each deposit's <ul> carries its `download_zenodo_data` command."""
+        fragment = cluster_app.render_data_sources_html()
+        for deposit in cluster_app.DATA_SOURCES:
+            command = html.escape(cluster_app.build_zenodo_download_command(deposit))
+            assert f"<li>Download: <code>{command}</code></li>" in fragment
+
+    def test_html_cli_section_links_reference_and_lists_commands(self, cluster_app):
+        """The HTML CLI block mirrors the Markdown: note, link, commands."""
+        fragment = cluster_app.render_data_sources_html()
+        reference = cluster_app.ZENODO_CLI_REFERENCE_URL
+        heading = "<h4>Downloading with the PowerGenome CLI</h4>"
+
+        assert heading in fragment
+        assert html.escape(cluster_app.ZENODO_CLI_NOTE) in fragment
+        assert (
+            f'<a href="{html.escape(reference)}" target="_blank" rel="noopener">'
+            in fragment
+        )
+        for command in cluster_app.build_zenodo_download_commands():
+            assert f"<code>{html.escape(command)}</code>" in fragment
+
+        assert fragment.index(heading) < fragment.index(
+            "<h4>New-build resource groups (Step 7)</h4>"
+        )
 
     def test_profiles_mirror_url_renders_as_clickable_link(self, cluster_app):
         """The Google Drive mirror renders as an HTML anchor link."""
