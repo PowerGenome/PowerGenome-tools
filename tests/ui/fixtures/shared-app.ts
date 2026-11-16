@@ -17,6 +17,16 @@ type SharedAppSuiteOptions = {
      *   afterwards when provided.
      */
     resetMode?: 'callback' | 'reload';
+    /**
+     * Restores page state before each test, starting with the suite's second
+     * test. The first test never runs the callback: the `beforeAll` load
+     * leaves the page in genuine startup state, so boot-default assertions
+     * must observe that state instead of a repaired one.
+     *
+     * Put boot-default assertions in (or immediately after) the first test,
+     * because any later test runs against a page the reset has already
+     * normalized.
+     */
     reset?: ResetCallback;
     startupTimeout?: number;
 };
@@ -40,6 +50,8 @@ export function createSharedAppSuite(
     // The load in beforeAll already leaves the page clean, so the first test
     // of a reload-mode suite does not need an extra boot.
     let needsReload = false;
+    // The first test also skips `reset`, so it observes real boot state.
+    let isFirstTestInSuite = true;
 
     test.beforeAll(async ({ browser }) => {
         test.setTimeout(hookTimeout);
@@ -69,9 +81,11 @@ export function createSharedAppSuite(
             needsReload = true;
         }
 
-        if (options.reset) {
+        if (options.reset && !isFirstTestInSuite) {
             await options.reset(sharedPage);
         }
+
+        isFirstTestInSuite = false;
     });
 
     return {

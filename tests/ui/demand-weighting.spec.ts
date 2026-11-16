@@ -73,6 +73,9 @@ async function readTransgrpByBa(page: Page): Promise<Record<string, string>> {
  * dropdown and the auto-optimize checkbox, so resetting those two (plus the BA
  * selection, for any future test that selects regions) is cheaper and just as
  * correct as reloading the page.
+ *
+ * The shared-app fixture does not run this before the first test, so boot
+ * defaults are asserted there rather than here.
  */
 async function resetRegionsStep(page: Page) {
     await goToWizardStep(page, 1);
@@ -96,21 +99,27 @@ async function resetRegionsStep(page: Page) {
 }
 
 test.describe('Demand Weighting Dropdown (Step 1)', () => {
+    // The fixture skips the reset before the first test, so only the first test
+    // observes real boot state. Keep every startup-default assertion in this
+    // test; later tests run against a page the reset has already normalized.
     const suite = createSharedAppSuite(test, { reset: resetRegionsStep });
 
-    test('demand weight dropdown is visible in clustering mode', async () => {
+    test('demand weight dropdown is visible and defaults to none on first load', async () => {
         const page = suite.getPage();
 
         // Step 1 is shown by default
         const dropdown = page.locator('#demandWeightMethod');
         await expect(dropdown).toBeVisible();
+        await expect(dropdown).toHaveValue('none');
     });
 
-    test('demand weight dropdown defaults to none', async () => {
+    test('suite reset restores the demand weight dropdown default', async () => {
         const page = suite.getPage();
 
-        const dropdown = page.locator('#demandWeightMethod');
-        await expect(dropdown).toHaveValue('none');
+        // resetRegionsStep has already run, so this guards the reset helper
+        // rather than boot state.
+        await expect(page.locator('#autoOptimize')).not.toBeChecked();
+        await expect(page.locator('#demandWeightMethod')).toHaveValue('none');
     });
 
     test('demand weight dropdown has all three options', async () => {

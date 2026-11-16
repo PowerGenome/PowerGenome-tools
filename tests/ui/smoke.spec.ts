@@ -3,13 +3,11 @@ import { goToWizardStep } from './page-objects/app-startup';
 import { createSharedAppSuite } from './fixtures/shared-app';
 
 test.describe('Smoke Tests', () => {
-    // These tests only read the app, so they share a single booted page. The
-    // reset just returns to Step 1, the default view asserted below.
-    const suite = createSharedAppSuite(test, {
-        reset: async (page) => {
-            await goToWizardStep(page, 1);
-        }
-    });
+    // These tests only read the app, so they share a single booted page. No
+    // reset callback: the fixture skips resets before the first test, so it
+    // observes real startup state, and the later tests navigate to Step 2
+    // themselves.
+    const suite = createSharedAppSuite(test);
 
     test('web app loads and PyScript initializes', async () => {
         const page = suite.getPage();
