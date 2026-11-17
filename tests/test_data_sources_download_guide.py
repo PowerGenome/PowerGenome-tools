@@ -521,16 +521,8 @@ class TestRenderDataSourcesMd:
             "data.yml paths section"
         )
 
-    def test_md_download_bullet_per_deposit(self, cluster_app):
-        """Each deposit block offers its own `download_zenodo_data` command."""
-        md = cluster_app.render_data_sources_md()
-        for deposit in cluster_app.DATA_SOURCES:
-            command = cluster_app.build_zenodo_download_command(deposit)
-            assert f"- Download: `{command}`" in md
-        assert md.count("- Download: `") == len(cluster_app.DATA_SOURCES)
-
-    def test_md_cli_section_after_deposits_before_new_build(self, cluster_app):
-        """The CLI section sits after the deposit blocks and before Step 7."""
+    def test_md_cli_section_precedes_deposits(self, cluster_app):
+        """The CLI section is up front, above every deposit block."""
         md = cluster_app.render_data_sources_md()
         heading = "## Downloading with the PowerGenome CLI"
         assert heading in md
@@ -538,9 +530,14 @@ class TestRenderDataSourcesMd:
         assert cluster_app.ZENODO_CLI_NOTE in md
 
         section_idx = md.index(heading)
-        last_title = cluster_app.DATA_SOURCES[-1]["title"]
-        assert md.index(f"## {last_title}") < section_idx
+        first_title = cluster_app.DATA_SOURCES[0]["title"]
+        assert section_idx < md.index(f"## {first_title}")
         assert section_idx < md.index("## New-build resource groups (Step 7)")
+
+    def test_md_no_per_deposit_download_bullet(self, cluster_app):
+        """Commands live only in the CLI block, not repeated per deposit."""
+        md = cluster_app.render_data_sources_md()
+        assert "- Download:" not in md
 
     def test_md_cli_section_bash_block_has_all_commands_in_order(self, cluster_app):
         md = cluster_app.render_data_sources_md()
@@ -647,41 +644,40 @@ class TestRenderDataSourcesMd:
                     "Markdown bullet"
                 )
 
-    def test_profiles_mirror_url_and_label_in_md(self, cluster_app):
-        """The profiles deposit renders its Google Drive mirror in Markdown."""
+    def test_md_no_mirror_line_for_configured_deposits(self, cluster_app):
+        """No configured deposit carries a mirror, so no Mirror line renders."""
+        assert not any(d.get("mirror_url") for d in cluster_app.DATA_SOURCES)
         md = cluster_app.render_data_sources_md()
-        url = "https://drive.google.com/drive/folders/16PL6HIdYchgyxGwtU6gkXwztBNclBpo1"
-        assert "Google Drive" in md
-        assert url in md
-        assert f"- Mirror (Google Drive): {url}" in md
+        assert "- Mirror (" not in md
 
-    def test_md_mirror_lines_only_for_deposits_with_mirror_url(self, cluster_app):
-        """Only deposits that define a mirror_url get a `- Mirror (...)` line.
-
-        The profiles deposit is the only one with a mirror, so exactly one
-        `- Mirror (` line appears in the rendered Markdown and the core /
-        resource_groups sections emit none.
-        """
-        mirror_count = sum(1 for d in cluster_app.DATA_SOURCES if d.get("mirror_url"))
-        assert mirror_count == 1, (
-            "expected exactly one deposit (profiles) to carry a mirror_url; "
-            "update this test if the DATA_SOURCES config changes"
-        )
+    def test_md_mirror_line_renders_when_deposit_defines_one(
+        self, cluster_app, monkeypatch
+    ):
+        """A deposit that does define a mirror_url still renders a Mirror line."""
+        sources = [
+            _no_mirror_deposit("core", "Core", "data", ["data_location"], ["a.csv"]),
+            _no_mirror_deposit(
+                "profiles",
+                "Profiles",
+                "resource_profiles",
+                ["RESOURCE_GROUP_PROFILES"],
+                [],
+            ),
+            _no_mirror_deposit(
+                "resource_groups",
+                "Resource Groups",
+                "existing_resource_groups",
+                ["RESOURCE_GROUPS"],
+                [],
+            ),
+        ]
+        sources[1]["mirror_label"] = "Example Mirror"
+        sources[1]["mirror_url"] = "https://example.com/mirror"
+        monkeypatch.setattr(cluster_app, "DATA_SOURCES", sources)
 
         md = cluster_app.render_data_sources_md()
-        assert md.count("- Mirror (") == mirror_count
-
-        by_id = {d["id"]: d for d in cluster_app.DATA_SOURCES}
-        for deposit_id in ("core", "resource_groups"):
-            deposit = by_id[deposit_id]
-            section_idx = md.index(f"## {deposit['title']}")
-            next_heading_idx = md.find("\n## ", section_idx + 1)
-            section = md[
-                section_idx : next_heading_idx if next_heading_idx != -1 else None
-            ]
-            assert (
-                "- Mirror (" not in section
-            ), f"{deposit_id} has no mirror_url but rendered a Mirror line"
+        assert "- Mirror (Example Mirror): https://example.com/mirror" in md
+        assert md.count("- Mirror (") == 1
 
     def test_md_no_mirror_line_when_deposit_lacks_mirror_url(
         self, cluster_app, monkeypatch
@@ -793,12 +789,13 @@ class TestRenderDataSourcesHtml:
     def test_html_new_build_note_mentions_settings_folder_placement(self, cluster_app):
         """The HTML Step 7 note also places the new-build folder in the export ZIP.
 
-        The note is html.escaped, but backticks, `settings`, and the em dash
-        survive unchanged.
+        Backticked spans become <code> elements, so `settings` renders as markup
+        rather than literal backticks.
         """
         html = cluster_app.render_data_sources_html()
         assert "included automatically in the final Export (Step 9) ZIP" in html
-        assert "`settings` folder" in html
+        assert "<code>settings</code> folder" in html
+        assert "`" not in cluster_app.render_data_sources_html()
         assert "no manual download" in html
 
     def test_html_contains_new_build_resource_groups_section(self, cluster_app):
@@ -821,12 +818,10 @@ class TestRenderDataSourcesHtml:
             new_build_idx < textarea_idx
         ), "the new-build resource groups section must precede the snippet textarea"
 
-    def test_html_download_item_per_deposit(self, cluster_app):
-        """Each deposit's <ul> carries its `download_zenodo_data` command."""
+    def test_html_no_per_deposit_download_item(self, cluster_app):
+        """Commands live in the CLI block, not repeated in each deposit <ul>."""
         fragment = cluster_app.render_data_sources_html()
-        for deposit in cluster_app.DATA_SOURCES:
-            command = html.escape(cluster_app.build_zenodo_download_command(deposit))
-            assert f"<li>Download: <code>{command}</code></li>" in fragment
+        assert "Download: <code>" not in fragment
 
     def test_html_cli_section_links_reference_and_lists_commands(self, cluster_app):
         """The HTML CLI block mirrors the Markdown: note, link, commands."""
@@ -835,7 +830,9 @@ class TestRenderDataSourcesHtml:
         heading = "<h4>Downloading with the PowerGenome CLI</h4>"
 
         assert heading in fragment
-        assert html.escape(cluster_app.ZENODO_CLI_NOTE) in fragment
+        assert cluster_app.render_inline_code_html(cluster_app.ZENODO_CLI_NOTE) in (
+            fragment
+        )
         assert (
             f'<a href="{html.escape(reference)}" target="_blank" rel="noopener">'
             in fragment
@@ -843,49 +840,49 @@ class TestRenderDataSourcesHtml:
         for command in cluster_app.build_zenodo_download_commands():
             assert f"<code>{html.escape(command)}</code>" in fragment
 
+        # The CLI block comes before every deposit heading.
+        first_title = cluster_app.DATA_SOURCES[0]["title"]
+        assert fragment.index(heading) < fragment.index(f"<h4>{first_title}</h4>")
         assert fragment.index(heading) < fragment.index(
             "<h4>New-build resource groups (Step 7)</h4>"
         )
 
-    def test_profiles_mirror_url_renders_as_clickable_link(self, cluster_app):
-        """The Google Drive mirror renders as an HTML anchor link."""
-        html = cluster_app.render_data_sources_html()
-        url = "https://drive.google.com/drive/folders/16PL6HIdYchgyxGwtU6gkXwztBNclBpo1"
+    def test_html_no_mirror_item_for_configured_deposits(self, cluster_app):
+        """No configured deposit carries a mirror, so no Mirror item renders."""
+        assert not any(d.get("mirror_url") for d in cluster_app.DATA_SOURCES)
+        assert "Mirror (" not in cluster_app.render_data_sources_html()
 
-        assert "Google Drive" in html
-        assert url in html
-        # The URL must be wrapped in a clickable <a href=...> anchor.
-        assert f'<a href="{url}" target="_blank" rel="noopener">{url}</a>' in html
-        assert "<li>Mirror (Google Drive): " in html
+    def test_html_mirror_item_renders_when_deposit_defines_one(
+        self, cluster_app, monkeypatch
+    ):
+        """A deposit that does define a mirror_url still renders a Mirror link."""
+        sources = [
+            _no_mirror_deposit("core", "Core", "data", ["data_location"], ["a.csv"]),
+            _no_mirror_deposit(
+                "profiles",
+                "Profiles",
+                "resource_profiles",
+                ["RESOURCE_GROUP_PROFILES"],
+                [],
+            ),
+            _no_mirror_deposit(
+                "resource_groups",
+                "Resource Groups",
+                "existing_resource_groups",
+                ["RESOURCE_GROUPS"],
+                [],
+            ),
+        ]
+        sources[1]["mirror_label"] = "Example Mirror"
+        sources[1]["mirror_url"] = "https://example.com/mirror"
+        monkeypatch.setattr(cluster_app, "DATA_SOURCES", sources)
 
-    def test_html_mirror_items_only_for_deposits_with_mirror_url(self, cluster_app):
-        """Only deposits that define a mirror_url get a Mirror <li> item.
-
-        The profiles deposit is the only one with a mirror, so exactly one
-        ``Mirror (`` item appears in the rendered HTML and the core /
-        resource_groups sections emit none.
-        """
-        mirror_count = sum(1 for d in cluster_app.DATA_SOURCES if d.get("mirror_url"))
-        assert mirror_count == 1, (
-            "expected exactly one deposit (profiles) to carry a mirror_url; "
-            "update this test if the DATA_SOURCES config changes"
-        )
-
-        html = cluster_app.render_data_sources_html()
-        assert html.count("Mirror (") == mirror_count
-
-        by_id = {d["id"]: d for d in cluster_app.DATA_SOURCES}
-        for deposit_id in ("core", "resource_groups"):
-            deposit = by_id[deposit_id]
-            title = deposit["title"]
-            section_idx = html.index(f"<h4>{title}</h4>")
-            next_heading_idx = html.find("<h4>", section_idx + len(f"<h4>{title}</h4>"))
-            section = html[
-                section_idx : next_heading_idx if next_heading_idx != -1 else None
-            ]
-            assert (
-                "Mirror (" not in section
-            ), f"{deposit_id} has no mirror_url but rendered a Mirror item"
+        fragment = cluster_app.render_data_sources_html()
+        assert (
+            '<li>Mirror (Example Mirror): <a href="https://example.com/mirror" '
+            'target="_blank" rel="noopener">https://example.com/mirror</a></li>'
+        ) in fragment
+        assert fragment.count("Mirror (") == 1
 
     def test_html_no_mirror_item_when_deposit_lacks_mirror_url(
         self, cluster_app, monkeypatch

@@ -1149,10 +1149,6 @@ Below the **Download All as ZIP** button, the **Download input data** section ex
 
 Each deposit can be downloaded with PowerGenome's [`download_zenodo_data`](https://powergenome.github.io/PowerGenome/latest/reference/cli/#download_zenodo_data) command instead of downloading files by hand; the commands below write into the same suggested folders.
 
-* **PowerGenome Input Data (core)** - The 15 files referenced by `data.yml` (`reeds_generators_transformed.csv`, `plant_region_map.csv`, `technology_costs_atb.parquet`, `technology_heat_rates_nrelatb.csv`, `operational_constraints_reeds.csv`, `transmission_capacity_reeds.csv`, `fuel_prices.parquet`, `dollar_year_adjustment.csv`, `reeds_load_transformed.parquet`, `regional_cost_multipliers.csv`, `distributed_capacity.parquet`, `distributed_profiles.parquet`, `reserve_margins.csv`, `nerc_reserve_margins.csv`, `cpi_data.csv`). Feeds the `data_location` settings key. [Zenodo record 22233228](https://zenodo.org/records/22233228). Suggested folder: `~/PowerGenome-data/data`.
-* **PowerGenome Renewable Resource Profiles** - Hourly capacity-factor profiles for new-build renewables. Feeds `RESOURCE_GROUP_PROFILES`. [Zenodo record 22235855](https://zenodo.org/records/22235855). Suggested folder: `~/PowerGenome-data/resource_profiles`. Also mirrored on [Google Drive](https://drive.google.com/drive/folders/16PL6HIdYchgyxGwtU6gkXwztBNclBpo1) as a faster alternative to Zenodo.
-* **PowerGenome Existing Renewable Resource Groups** - Resource group metadata for existing renewable generators. The second `RESOURCE_GROUPS` entry points to this deposit's folder; the first entry is the region-specific folder for the new-build wind/solar resource groups generated in Step 7 and included automatically in the Export ZIP. [Zenodo record 22235662](https://zenodo.org/records/22235662). Suggested folder: `~/PowerGenome-data/existing_resource_groups`.
-
 To fetch all three deposits into the suggested folders, run one command per deposit:
 
 ```bash
@@ -1166,7 +1162,11 @@ download_zenodo_data 22235855 -d "~/PowerGenome-data/resource_profiles"
 download_zenodo_data 22235662 -d "~/PowerGenome-data/existing_resource_groups"
 ```
 
-The command is preferable to manual downloads because it downloads files concurrently, resumes interrupted transfers, and verifies the MD5 checksum Zenodo publishes for every file. `-d` sets the destination folder; omitting it and passing `-sf settings` instead writes into the `data_location` from your settings file, which is the right target for the core deposit — the profiles and existing resource groups belong in their own folders, so give those an explicit `-d`.
+The command downloads concurrently, resumes interrupted transfers, and verifies each file's MD5 checksum. `-d` sets the destination folder; `-sf settings` instead uses the `data_location` from your settings file.
+
+* **PowerGenome Input Data (core)** - The 15 files referenced by `data.yml` (`reeds_generators_transformed.csv`, `plant_region_map.csv`, `technology_costs_atb.parquet`, `technology_heat_rates_nrelatb.csv`, `operational_constraints_reeds.csv`, `transmission_capacity_reeds.csv`, `fuel_prices.parquet`, `dollar_year_adjustment.csv`, `reeds_load_transformed.parquet`, `regional_cost_multipliers.csv`, `distributed_capacity.parquet`, `distributed_profiles.parquet`, `reserve_margins.csv`, `nerc_reserve_margins.csv`, `cpi_data.csv`). Feeds the `data_location` settings key. [Zenodo record 22233228](https://zenodo.org/records/22233228). Suggested folder: `~/PowerGenome-data/data`.
+* **PowerGenome Renewable Resource Profiles** - Hourly capacity-factor profiles for new-build renewables. Feeds `RESOURCE_GROUP_PROFILES`. [Zenodo record 22235855](https://zenodo.org/records/22235855). Suggested folder: `~/PowerGenome-data/resource_profiles`.
+* **PowerGenome Existing Renewable Resource Groups** - Resource group metadata for existing renewable generators. The second `RESOURCE_GROUPS` entry points to this deposit's folder; the first entry is the region-specific folder for the new-build wind/solar resource groups generated in Step 7 and included automatically in the Export ZIP. [Zenodo record 22235662](https://zenodo.org/records/22235662). Suggested folder: `~/PowerGenome-data/existing_resource_groups`.
 
 The section also includes a copy-paste-ready `data.yml` snippet pointing each setting at its suggested folder. The snippet reflects the current **Region Name** entered in Step 7: the first `RESOURCE_GROUPS` entry uses that name (the region-specific folder included in the Export ZIP), so it updates live if you change the Region Name. The second `RESOURCE_GROUPS` entry points to the existing resource groups deposit — download it from Zenodo and update the path to your local copy.
 
