@@ -313,6 +313,13 @@ WORKFLOW_STATE_VERSION = 1
 # Suggested local data root used by the example data.yml snippet.
 DATA_ROOT_EXAMPLE = "~/PowerGenome-data"
 
+# Reference page for PowerGenome's `download_zenodo_data` CLI, linked from both
+# the Step 9 UI section and the generated DATA_SOURCES.md.
+ZENODO_CLI_REFERENCE_URL = (
+    "https://powergenome.github.io/PowerGenome/latest/reference/cli/"
+    "#download_zenodo_data"
+)
+
 # Prefix of the region-specific folder name used for the new-build wind/solar
 # resource groups generated in Step 7. The folder lives inside the final
 # Export (Step 9) ZIP next to `settings` and is named after the region setup
@@ -355,6 +362,7 @@ DATA_SOURCES = [
         ),
         "url": "https://zenodo.org/records/22233228",
         "doi": "10.5281/zenodo.22233228",
+        "record_id": "22233228",
         "target_folder": "data",
         "settings_keys": ["data_location"],
         "files": _CORE_DATA_FILES,
@@ -369,8 +377,7 @@ DATA_SOURCES = [
         ),
         "url": "https://zenodo.org/records/22235855",
         "doi": "10.5281/zenodo.22235855",
-        "mirror_label": "Google Drive",
-        "mirror_url": "https://drive.google.com/drive/folders/16PL6HIdYchgyxGwtU6gkXwztBNclBpo1",
+        "record_id": "22235855",
         "target_folder": "resource_profiles",
         "settings_keys": ["RESOURCE_GROUP_PROFILES"],
         "files": [
@@ -395,6 +402,7 @@ DATA_SOURCES = [
         ),
         "url": "https://zenodo.org/records/22235662",
         "doi": "10.5281/zenodo.22235662",
+        "record_id": "22235662",
         "target_folder": "existing_resource_groups",
         "settings_keys": ["RESOURCE_GROUPS"],
         "files": [
@@ -445,6 +453,50 @@ NEW_BUILD_RESOURCE_GROUPS_NOTE = (
     "Zenodo and update the path to your local copy."
 )
 
+# Explains the `download_zenodo_data` alternative to downloading files by hand.
+# Shared by the Step 9 section and the bundled DATA_SOURCES.md.
+ZENODO_CLI_NOTE = (
+    "PowerGenome's `download_zenodo_data` CLI fetches a deposit's files "
+    "concurrently, resumes interrupted transfers, and verifies each file's MD5 "
+    "checksum. `-d` sets the destination folder; `-sf settings` instead uses "
+    "the `data_location` from your settings file."
+)
+
+
+def build_zenodo_download_command(source):
+    """Return the `download_zenodo_data` command for one deposit.
+
+    Built from the deposit's ``record_id`` and the suggested local folder, so
+    both renderers stay in sync with ``DATA_SOURCES``.
+    """
+    return (
+        f"download_zenodo_data {source['record_id']} "
+        f'-d "{DATA_ROOT_EXAMPLE}/{source["target_folder"]}"'
+    )
+
+
+def build_zenodo_download_commands(sources=None):
+    """Return the `download_zenodo_data` commands for every deposit, in order."""
+    if sources is None:
+        sources = DATA_SOURCES
+    return [build_zenodo_download_command(d) for d in sources]
+
+
+def render_inline_code_html(text):
+    """Escape *text* and turn Markdown-style ``code`` spans into <code> elements.
+
+    The shared plain-text notes use backticks so the Markdown output reads well;
+    the Step 9 HTML pane needs the same spans as markup instead of literal
+    backticks.
+    """
+    parts = []
+    for index, chunk in enumerate(text.split("`")):
+        if index % 2:
+            parts.append(f"<code>{html.escape(chunk)}</code>")
+        else:
+            parts.append(html.escape(chunk))
+    return "".join(parts)
+
 
 def build_data_yml_snippet(resource_group_folder=None):
     """Return a copy-paste-ready data.yml path snippet using the suggested root.
@@ -488,6 +540,16 @@ def render_data_sources_md(resource_group_folder=None):
         "the [PowerGenome-data](https://github.com/gschivley/PowerGenome-data) "
         "repo. Download the deposits below and place them in matching local "
         "folders.",
+        "",
+        "## Downloading with the PowerGenome CLI",
+        "",
+        ZENODO_CLI_NOTE,
+        "",
+        f"Reference: {ZENODO_CLI_REFERENCE_URL}",
+        "",
+        "```bash",
+        *build_zenodo_download_commands(),
+        "```",
         "",
     ]
     for d in DATA_SOURCES:
@@ -545,6 +607,24 @@ def render_data_sources_html(resource_group_folder=None):
         'rel="noopener">PowerGenome-data</a> repo. Download each deposit below '
         "and place it in a matching local folder.</p>"
     )
+    parts.append("<h4>Downloading with the PowerGenome CLI</h4>")
+    parts.append(f"<p>{render_inline_code_html(ZENODO_CLI_NOTE)}</p>")
+    cli_reference_url = html.escape(ZENODO_CLI_REFERENCE_URL)
+    parts.append(
+        '<p>Reference: <a href="'
+        + cli_reference_url
+        + '" target="_blank" rel="noopener">'
+        + cli_reference_url
+        + "</a></p>"
+    )
+    parts.append(
+        '<pre style="background: #f5f5f5; border: 1px solid #ddd; '
+        'border-radius: 4px; padding: 8px; overflow-x: auto; font-size: 11px;">'
+        + "\n".join(
+            f"<code>{html.escape(c)}</code>" for c in build_zenodo_download_commands()
+        )
+        + "</pre>"
+    )
     for d in DATA_SOURCES:
         title = html.escape(d["title"])
         desc = html.escape(d["description"])
@@ -578,7 +658,7 @@ def render_data_sources_html(resource_group_folder=None):
             )
         parts.append("</ul>")
     parts.append("<h4>New-build resource groups (Step 7)</h4>")
-    parts.append(f"<p>{html.escape(NEW_BUILD_RESOURCE_GROUPS_NOTE)}</p>")
+    parts.append(f"<p>{render_inline_code_html(NEW_BUILD_RESOURCE_GROUPS_NOTE)}</p>")
     parts.append("<h4>Example data.yml paths</h4>")
     parts.append(
         '<textarea id="dataYmlSnippet" readonly title="Copy-paste example data.yml '
