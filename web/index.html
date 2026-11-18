@@ -1405,6 +1405,35 @@
             text-align: center;
         }
 
+        /* New resources: compact controls beside projection comparisons. */
+        .atb-explorer {
+            display: grid;
+            grid-template-columns: minmax(240px, 1fr) minmax(0, 2fr);
+            gap: 28px;
+            margin-top: 20px;
+            align-items: start;
+        }
+
+        .atb-controls, .atb-charts { min-width: 0; }
+        .atb-controls select { width: 100%; }
+        .atb-charts { border-left: 1px solid var(--border); padding-left: 24px; }
+        .atb-charts h3 { font-size: 15px; margin: 0 0 6px; }
+        .atb-chart-note, .atb-chart-empty {
+            font-size: 12px;
+            color: var(--text-muted, #555);
+            line-height: 1.5;
+        }
+        .atb-chart-note { margin: 8px 0 0; }
+        .atb-chart-empty { padding: 22px 12px; background: var(--surface-2); }
+        .atb-chart-panel { margin: 12px 0 0; }
+        .atb-chart-panel h4 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+        .atb-chart-panel svg { display: block; width: 100%; height: auto; }
+        @media (max-width: 850px) {
+            .atb-explorer { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+            .atb-charts { border-left: 0; border-top: 1px solid var(--border); padding: 20px 0 0; }
+            #step-4 .centered-step { padding: 24px 18px 40px; }
+        }
+
         /* ── Fuel price mini-charts ───────────────────────────── */
         .fuel-scenario-row {
             display: flex;
@@ -2329,19 +2358,21 @@
                             documentation</a> for information on technologies and assumptions.
                     </div>
 
-                    <label style="font-size: 12px;">ATB Data Year</label>
+                    <div class="atb-explorer">
+                    <div class="atb-controls">
+                    <label for="atbYearSelect" style="font-size: 12px;">ATB Data Year</label>
                     <select id="atbYearSelect"></select>
 
-                    <label style="font-size: 12px; margin-top: 8px;">Technology</label>
+                    <label for="atbTechSelect" style="font-size: 12px; margin-top: 8px;">Technology</label>
                     <select id="atbTechSelect"></select>
 
-                    <label style="font-size: 12px; margin-top: 8px;">Tech Detail</label>
+                    <label for="atbTechDetailSelect" style="font-size: 12px; margin-top: 8px;">Tech Detail</label>
                     <select id="atbTechDetailSelect"></select>
 
-                    <label style="font-size: 12px; margin-top: 8px;">Cost Case</label>
+                    <label for="atbCostCaseSelect" style="font-size: 12px; margin-top: 8px;">Cost Case</label>
                     <select id="atbCostCaseSelect"></select>
 
-                    <label style="font-size: 12px; margin-top: 8px;">Size (MW)
+                    <label for="atbSizeMw" style="font-size: 12px; margin-top: 8px;">Size (MW)
                         <span class="info-icon"
                             data-tooltip="Only used for thermal resources with unit commitment constraints.">?</span>
                     </label>
@@ -2353,6 +2384,14 @@
                         <div style="font-size: 11px; color: #666; margin-top: 4px;">
                             Shown only for CCS technologies. Defaults to 20.
                         </div>
+                    </div>
+
+                    </div>
+                    <section id="atbCharts" class="atb-charts" aria-label="ATB data"
+                        aria-live="polite" aria-busy="true">
+                        <h3>ATB data</h3>
+                        <p class="atb-chart-note">Loading ATB cost and performance data…</p>
+                    </section>
                     </div>
 
                     <details id="atbAttrsOverride" style="margin-top: 8px;">
@@ -2407,7 +2446,7 @@
                         </div>
                     </details>
 
-                    <div style="display: flex; align-items: center; gap: 10px; margin-top: 8px;">
+                    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px;">
                         <button class="btn btn-secondary" id="addNewResourceBtn" type="button">Add New-build
                             Resource</button>
                         <label for="newResourceYearSelect" style="font-size: 12px; margin: 0;">Planning Year:</label>
