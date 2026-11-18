@@ -584,6 +584,10 @@ If ATB data is available, use the dropdowns to select:
 * **ATB Data Year** → **Technology** → **Tech Detail** → **Cost Case**
 * Specify **Size (MW)** for each resource
 
+**Technology** defaults to **NaturalGas** when it is available for the selected
+ATB Data Year, falling back to the first technology alphabetically. Once you
+pick a technology, that choice is kept while it remains valid.
+
 #### Comparing ATB Data
 
 The picker occupies roughly one-third of the layout, with stacked **CAPEX**

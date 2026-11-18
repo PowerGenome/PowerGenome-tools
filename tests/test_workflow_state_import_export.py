@@ -1497,6 +1497,73 @@ _ATB_IMPORT_FORMS = {
 }
 
 
+class TestAtbPickerDefaults:
+    """The New Resources technology picker opens on NaturalGas when available."""
+
+    def test_startup_defaults_to_natural_gas_not_first_alphabetical(
+        self, atb_env, monkeypatch
+    ):
+        ca = atb_env["ca"]
+        elements = atb_env["elements"]
+        # Fresh page load: none of the selects has options yet.
+        for element_id in _ATB_SELECT_IDS:
+            elements[element_id] = _FakeSelect([], value="")
+        ca.state.atb_years = [2023, 2024]
+        ca.state.atb_index = _atb_index_payload()
+        ca.state.atb_load_error = None
+
+        renders = []
+        monkeypatch.setattr(
+            ca, "render_atb_charts", _recording_render(elements, renders)
+        )
+        monkeypatch.setattr(ca, "update_size_field_from_atb_size", MagicMock())
+        monkeypatch.setattr(ca, "populate_default_battery_attributes", MagicMock())
+
+        ca.populate_atb_picker()
+
+        # "Biopower" sorts first; the default must still be NaturalGas.
+        assert elements["atbTechSelect"].options == ["Biopower", "NaturalGas"]
+        assert elements["atbTechSelect"].value == "NaturalGas"
+
+    def test_year_without_natural_gas_falls_back_to_first_technology(
+        self, atb_env, monkeypatch
+    ):
+        ca = atb_env["ca"]
+        elements = atb_env["elements"]
+        for element_id in _ATB_SELECT_IDS:
+            elements[element_id] = _FakeSelect([], value="")
+        ca.state.atb_years = [2024]
+        ca.state.atb_index = {2024: {"Biopower": {"Dedicated": ["Moderate"]}}}
+        ca.state.atb_load_error = None
+
+        monkeypatch.setattr(ca, "render_atb_charts", _recording_render(elements, []))
+        monkeypatch.setattr(ca, "update_size_field_from_atb_size", MagicMock())
+        monkeypatch.setattr(ca, "populate_default_battery_attributes", MagicMock())
+
+        ca.populate_atb_picker()
+
+        assert elements["atbTechSelect"].options == ["Biopower"]
+        assert elements["atbTechSelect"].value == "Biopower"
+
+    def test_existing_valid_selection_is_not_forced_back_to_natural_gas(
+        self, atb_env, monkeypatch
+    ):
+        ca = atb_env["ca"]
+        elements = atb_env["elements"]
+        _install_startup_picker(elements, year="2024", tech="Biopower")
+        ca.state.atb_years = [2023, 2024]
+        ca.state.atb_index = _atb_index_payload()
+        ca.state.atb_load_error = None
+
+        monkeypatch.setattr(ca, "render_atb_charts", _recording_render(elements, []))
+        monkeypatch.setattr(ca, "update_size_field_from_atb_size", MagicMock())
+        monkeypatch.setattr(ca, "populate_default_battery_attributes", MagicMock())
+
+        ca.populate_atb_picker()
+
+        assert elements["atbTechSelect"].value == "Biopower"
+
+
 class TestAtbPickerRebuildOnWorkflowImport:
     def test_import_rebuilds_atb_picker_options_and_redraws_charts(
         self, atb_env, monkeypatch

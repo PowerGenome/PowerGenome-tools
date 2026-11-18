@@ -4691,6 +4691,15 @@ def _get_default_cost_case(cases):
     return cases[0]
 
 
+def _get_default_atb_technology(techs):
+    """Get default ATB technology, preferring 'NaturalGas', otherwise first in list."""
+    if not techs:
+        return None
+    if "NaturalGas" in techs:
+        return "NaturalGas"
+    return techs[0]
+
+
 def populate_fuel_data_year_select(event=None):
     """Populate the Fuel Data Year dropdown from loaded fuel_prices.csv."""
     year_el = document.getElementById("fuelDataYear")
@@ -4800,7 +4809,7 @@ def _refresh_atb_picker_options(preferred=None):
         "atbTechSelect", _get_select_value(tech_el, techs[0] if techs else None)
     )
     if selected_tech not in techs and techs:
-        selected_tech = techs[0]
+        selected_tech = _get_default_atb_technology(techs)
     _set_select_options(tech_el, techs, selected_value=selected_tech)
 
     details = sorted(
