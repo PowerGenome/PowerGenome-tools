@@ -189,3 +189,70 @@ test.describe('New Resources — ATB data charts', () => {
         });
     }
 });
+
+// Regression: the charts first render while Step 4 is hidden, so
+// container.clientWidth is 0 and render_atb_charts() falls back to a
+// viewport-based estimate. goToStep(4) must redraw synchronously after the
+// pane becomes active so the viewBox reflects the measured container width.
+// No page.setViewportSize() here: a resize event would redraw the charts and
+// mask a missing entry-time render.
+test.describe('New Resources — first entry measures the pane', () => {
+    const suite = createSharedAppSuite(test, { resetMode: 'reload' });
+
+    test('entering the step redraws charts at the measured container width', async () => {
+        const page = suite.getPage();
+        await expect(page.locator('#step-1')).toHaveClass(/active/);
+
+        const before = await page.evaluate(() => {
+            const container = document.getElementById('atbCharts');
+            const svg = container?.querySelector('svg');
+            return {
+                clientWidth: container?.clientWidth ?? -1,
+                viewBox: svg?.getAttribute('viewBox') ?? null,
+                innerWidth: window.innerWidth,
+            };
+        });
+
+        // The hidden pane has no measurable width, so the startup render used
+        // the viewport-based estimate.
+        expect(before.clientWidth).toBe(0);
+        expect(before.viewBox).not.toBeNull();
+        const beforeWidth = Number(before.viewBox!.trim().split(/\s+/)[2]);
+        expect(Number.isFinite(beforeWidth)).toBe(true);
+        expect(beforeWidth).toBeGreaterThan(0);
+
+        await goToWizardStep(page, 4);
+
+        const after = await page.evaluate(() => {
+            const container = document.getElementById('atbCharts')!;
+            const viewBoxes = Array.from(container.querySelectorAll('svg')).map(
+                (svg) =>
+                    (svg.getAttribute('viewBox') ?? '')
+                        .trim()
+                        .split(/\s+/)
+                        .map(Number)
+            );
+            return {
+                clientWidth: container.clientWidth,
+                innerWidth: window.innerWidth,
+                viewBoxes,
+            };
+        });
+
+        expect(after.clientWidth).toBeGreaterThan(0);
+        expect(after.viewBoxes.length).toBeGreaterThan(0);
+        const expectedWidth =
+            after.clientWidth - (after.innerWidth > 850 ? 24 : 0);
+
+        for (const [x, y, width, height] of after.viewBoxes) {
+            expect([x, y]).toEqual([0, 0]);
+            expect(width).toBe(expectedWidth);
+            expect(height).toBe(108);
+        }
+
+        // The entry render must not reuse the estimate from the hidden pane.
+        // (At the config viewport the estimate is 440px; the measured width is
+        // smaller, so this fails on the old estimate-only code.)
+        expect(beforeWidth).not.toBe(expectedWidth);
+    });
+});

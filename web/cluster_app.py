@@ -4756,15 +4756,25 @@ def _get_selected_atb_data_year():
         return 0
 
 
-def populate_atb_picker():
-    """Populate the ATB picker selects in the Settings tab."""
+def _refresh_atb_picker_options(preferred=None):
+    """Rebuild the cascading ATB option lists around the current values.
+
+    The lists cascade from data year → technology → detail → cost case, so a
+    value can only survive a rebuild when its parent list was rebuilt first.
+    Keep each current selection when it is still valid; otherwise fall back to
+    the first option. ``preferred`` maps select element IDs to imported values
+    that should win over the current picker value when they are valid for the
+    rebuilt lists. Returns a reason string when the picker cannot be populated,
+    or ``None`` on success.
+    """
+    preferred = preferred or {}
     year_el = document.getElementById("atbYearSelect")
     tech_el = document.getElementById("atbTechSelect")
     detail_el = document.getElementById("atbTechDetailSelect")
     case_el = document.getElementById("atbCostCaseSelect")
 
     if not (year_el and tech_el and detail_el and case_el):
-        return
+        return "missing controls"
 
     years = state.atb_years
     if not years:
@@ -4772,18 +4782,23 @@ def populate_atb_picker():
         _set_select_options(tech_el, [])
         _set_select_options(detail_el, [])
         _set_select_options(case_el, [])
-        render_atb_charts()
-        return
+        return "empty index"
 
     latest_year = max(years)
-    selected_year = int(_get_select_value(year_el, latest_year) or latest_year)
+    raw_year = preferred.get("atbYearSelect", _get_select_value(year_el, latest_year))
+    try:
+        selected_year = int(raw_year or latest_year)
+    except (TypeError, ValueError):
+        selected_year = latest_year
     if selected_year not in state.atb_index:
         selected_year = latest_year
 
     _set_select_options(year_el, years, selected_value=str(selected_year))
 
     techs = sorted(state.atb_index.get(selected_year, {}).keys())
-    selected_tech = _get_select_value(tech_el, techs[0] if techs else None)
+    selected_tech = preferred.get(
+        "atbTechSelect", _get_select_value(tech_el, techs[0] if techs else None)
+    )
     if selected_tech not in techs and techs:
         selected_tech = techs[0]
     _set_select_options(tech_el, techs, selected_value=selected_tech)
@@ -4791,7 +4806,10 @@ def populate_atb_picker():
     details = sorted(
         state.atb_index.get(selected_year, {}).get(selected_tech, {}).keys()
     )
-    selected_detail = _get_select_value(detail_el, details[0] if details else None)
+    selected_detail = preferred.get(
+        "atbTechDetailSelect",
+        _get_select_value(detail_el, details[0] if details else None),
+    )
     if selected_detail not in details and details:
         selected_detail = details[0]
     _set_select_options(detail_el, details, selected_value=selected_detail)
@@ -4801,10 +4819,24 @@ def populate_atb_picker():
         .get(selected_tech, {})
         .get(selected_detail, [])
     )
-    selected_case = _get_select_value(case_el, _get_default_cost_case(cases))
+    selected_case = preferred.get(
+        "atbCostCaseSelect", _get_select_value(case_el, _get_default_cost_case(cases))
+    )
     if selected_case not in cases and cases:
         selected_case = _get_default_cost_case(cases)
     _set_select_options(case_el, cases, selected_value=selected_case)
+    return None
+
+
+def populate_atb_picker():
+    """Populate the ATB picker selects in the Settings tab."""
+    reason = _refresh_atb_picker_options()
+    if reason == "empty index":
+        render_atb_charts()
+        return
+    if reason is not None:
+        return
+
     update_atb_ccs_cost_visibility()
     update_size_field_from_atb_size()
     populate_default_battery_attributes()
@@ -10181,6 +10213,30 @@ def _set_workflow_form_value(element_id, value):
         element.value = str(value)
 
 
+def _restore_atb_picker_from_workflow(forms):
+    """Apply imported ATB picker values and redraw the comparison charts.
+
+    Select options are derived from ``state.atb_index`` at startup, so an
+    imported technology or detail may not have an option yet. Rebuild the
+    cascading lists around the imported values in one pass, then render once so
+    the curves and their "Selected: ..." description match the restored
+    controls. A missing or failed ATB index still renders its message.
+    """
+    preferred = {
+        element_id: forms[element_id]
+        for element_id in (
+            "atbYearSelect",
+            "atbTechSelect",
+            "atbTechDetailSelect",
+            "atbCostCaseSelect",
+        )
+        if forms.get(element_id) is not None
+    }
+    if _refresh_atb_picker_options(preferred) is None:
+        update_atb_ccs_cost_visibility()
+    render_atb_charts()
+
+
 def _restore_plant_clustering_outputs():
     """Rebuild Step 3 (Existing Plants) clustering outputs after a workflow import.
 
@@ -10342,6 +10398,9 @@ def _restore_workflow_state(manifest, settings_yamls=None, resource_group_files=
             checkbox.checked = str(checkbox.value) in selected_no_cluster
     render_omit_editor()
     render_group_editor()
+    # The ATB index is loaded before the restore, but the picker's dependent
+    # option lists are not, so redraw them around the imported selection.
+    _restore_atb_picker_from_workflow(forms)
     populate_resource_year_selects()
     populate_fuel_scenario_selects()
     for fuel, scenario in (forms.get("fuel_scenarios") or {}).items():
@@ -11127,6 +11186,8 @@ async def main():
             lambda: asyncio.ensure_future(load_esr_data_deferred())
         )
         window.invalidateRenewablesMaps = create_proxy(invalidate_renewables_maps)
+        # Let goToStep() resize the ATB charts once the Step 4 pane is visible.
+        window.renderAtbCharts = create_proxy(render_atb_charts)
 
         # Done loading
         hide_loading()

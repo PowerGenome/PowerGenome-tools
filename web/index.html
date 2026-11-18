@@ -3112,6 +3112,15 @@
                 }
             }
 
+            // New Resources step: Redraw the ATB charts now that the pane is
+            // active. Reading clientWidth forces layout, so the charts size
+            // against the real container instead of the hidden-pane estimate.
+            if (stepNum === 4) {
+                if (window.renderAtbCharts) {
+                    window.renderAtbCharts();
+                }
+            }
+
             if (stepNum === 8) {
                 if (window.invalidateRenewablesMaps) {
                     setTimeout(() => {
