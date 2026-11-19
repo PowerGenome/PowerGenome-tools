@@ -221,4 +221,66 @@ test.describe('Workflow import — standalone workflow_state.yml', () => {
         await expect(page.locator('#workflowImportProgressMessage')).toHaveText('Loading workflow state...');
         await expect(page.locator('#workflowImportProgress')).not.toHaveClass(/visible/);
     });
+
+    test('ATB picker forms rebuild the cascade and redraw the comparison charts', async () => {
+        // Regression: imported picker values used to be written into selects
+        // whose dependent option lists were still the startup defaults, so a
+        // detail such as "F-Frame CC" had no matching option and reset to "".
+        const page = suite.getPage();
+
+        const manifest = minimalManifest({
+            forms: {
+                atbYearSelect: '2023',
+                atbTechSelect: 'NaturalGas',
+                atbTechDetailSelect: 'F-Frame CC',
+                atbCostCaseSelect: 'Advanced',
+            },
+        });
+
+        const statusText = await uploadWorkflowYml(page, manifestBytes(manifest));
+        expect(statusText).toContain('Workflow defaults imported successfully.');
+
+        // The detail option was rebuilt for NaturalGas before selection.
+        await expect(
+            page.locator('#atbTechDetailSelect option[value="F-Frame CC"]')
+        ).toHaveCount(1);
+        await expect(page.locator('#atbYearSelect')).toHaveValue('2023');
+        await expect(page.locator('#atbTechSelect')).toHaveValue('NaturalGas');
+        await expect(page.locator('#atbTechDetailSelect')).toHaveValue(
+            'F-Frame CC'
+        );
+        await expect(page.locator('#atbCostCaseSelect')).toHaveValue('Advanced');
+
+        // The import redraws the charts even while Step 4 is still hidden, so
+        // the caption reflects the restored picker without any user action.
+        await expect(page.locator('#atbCharts svg').first()).toHaveAttribute(
+            'aria-label',
+            /Selected: F-Frame CC; solid blue/
+        );
+
+        await goToWizardStep(page, 4);
+
+        const capex = page
+            .locator('#atbCharts .atb-chart-panel')
+            .filter({ has: page.getByRole('heading', { name: /^CAPEX/ }) });
+        const heatRate = page
+            .locator('#atbCharts .atb-chart-panel')
+            .filter({ has: page.getByRole('heading', { name: /^Heat rate/ }) });
+
+        // 2023 ATB data is reported in 2021 dollars.
+        await expect(capex.getByRole('heading')).toContainText('2021 $/kW');
+
+        // One solid blue line for the selected detail in each chart, and a
+        // dashed gray comparison line for the other NaturalGas detail.
+        await expect(page.locator('#atbCharts svg')).toHaveCount(2);
+        await expect(
+            capex.locator('polyline[stroke="#1a56c4"]:not([stroke-dasharray])')
+        ).toHaveCount(1);
+        await expect(
+            heatRate.locator('polyline[stroke="#1a56c4"]:not([stroke-dasharray])')
+        ).toHaveCount(1);
+        await expect(
+            heatRate.locator('polyline[stroke="#9ca3af"][stroke-dasharray]')
+        ).not.toHaveCount(0);
+    });
 });

@@ -201,7 +201,8 @@ class AppState:
             dict(r) for r in _DEFAULT_NEW_RESOURCES
         ]  # list of dicts: {technology, tech_detail, cost_case, size_mw, planning_year}
         self.modified_new_resources = {}  # key -> metadata + schema for resources.yml
-        self.atb_options = []  # list[dict] loaded from web/data/atb_options.json
+        self.atb_options = []  # list[dict] loaded from web/data/atb_options.parquet
+        self.atb_load_error = None
         self.atb_index = {}  # year -> tech -> detail -> sorted(list(cost_case))
         self.atb_years = []  # sorted list of years
         self.atb_size_map = (
@@ -3833,16 +3834,14 @@ async def load_atb_options():
     regenerated offline from technology_costs_atb.parquet; the web app only
     consumes the index. Columns: data_year, technology, tech_detail, cost_case.
     """
+    state.atb_load_error = None
     try:
         df = await _fetch_parquet_df("./data/atb_options.parquet")
 
         # Normalize to list of dicts containing at least data_year/technology/tech_detail/cost_case
         required_cols = {"data_year", "technology", "tech_detail", "cost_case"}
         if not required_cols.issubset(set(df.columns)):
-            state.atb_options = []
-            state.atb_index = {}
-            state.atb_years = []
-            return
+            raise ValueError("ATB index is missing required picker columns")
 
         df["data_year"] = df["data_year"].astype(int)
         df["technology"] = df["technology"].astype(str).str.strip()
@@ -3884,10 +3883,284 @@ async def load_atb_options():
             }
             for y, techs in idx.items()
         }
-    except Exception:
+        if not normalized:
+            state.atb_load_error = "The ATB index contains no resource options."
+    except Exception as exc:
         state.atb_options = []
         state.atb_index = {}
         state.atb_years = []
+        state.atb_load_error = (
+            "ATB data could not be loaded. Reload the app to retry. "
+            "If the problem persists, regenerate data/atb_options.parquet."
+        )
+        print(f"ATB index load failed: {exc}")
+
+
+def _build_atb_chart_data(records, data_year, technology, cost_case, metric):
+    """Group projection-year observations without averaging source dimensions."""
+    grouped = {}
+    for row in records:
+        if (
+            row.get("data_year") != data_year
+            or row.get("technology") != technology
+            or row.get("cost_case") != cost_case
+        ):
+            continue
+        try:
+            raw_year = float(row.get("basis_year"))
+            if not math.isfinite(raw_year) or not raw_year.is_integer():
+                continue
+            year = int(raw_year)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        detail = str(row.get("tech_detail", "")).strip()
+        if not detail:
+            continue
+        try:
+            value = float(row.get(metric))
+            if not math.isfinite(value) or value <= 0:
+                value = None
+        except (TypeError, ValueError):
+            value = None
+        points = grouped.setdefault(detail, {})
+        if year in points and points[year] != value:
+            raise ValueError(f"Conflicting {metric} observations for {detail}, {year}")
+        points[year] = value
+    return {
+        detail: sorted(points.items()) for detail, points in sorted(grouped.items())
+    }
+
+
+# Chart display only: ATB stores CAPEX as $/MW, but capacity costs read
+# better per kW. Conversion happens in the chart path; source values stay $/MW.
+_ATB_KW_PER_MW = 1000.0
+
+
+def _atb_chart_display_series(series, metric):
+    """Return series values in the chart's display unit without mutating inputs."""
+    if metric != "capex_mw":
+        return series
+    return {
+        detail: [
+            (year, None if value is None else value / _ATB_KW_PER_MW)
+            for year, value in points
+        ]
+        for detail, points in series.items()
+    }
+
+
+def _format_atb_chart_tick(value, metric):
+    """Axis label in display units, avoiding scientific notation."""
+    if metric == "capex_mw":
+        return f"{value:,.0f}"
+    return (
+        f"{value / 1_000_000:.2f}M"
+        if value >= 1_000_000
+        else (f"{value / 1_000:.0f}k" if value >= 10_000 else f"{value:,.2f}")
+    )
+
+
+def _format_atb_chart_value(value, metric):
+    """Hover value in display units, avoiding scientific notation."""
+    return f"{value:,.0f}" if metric == "capex_mw" else f"{value:,.6g}"
+
+
+def _render_atb_chart_svg(series, selected_detail, title, unit, width=600, metric=None):
+    """Render independent axes, gap-safe lines, and accessible observations."""
+    series = _atb_chart_display_series(series, metric)
+    valid = [
+        (year, value)
+        for pts in series.values()
+        for year, value in pts
+        if value is not None
+    ]
+    if not valid:
+        return ""
+    # Keep the stacked CAPEX + heat-rate pair shorter than the picker column
+    # on desktop; 108 keeps the three gridlines and 12px tick labels legible.
+    height = 108
+    left, right, top, bottom = 72, 18, 12, 32
+    pw, ph = width - left - right, height - top - bottom
+    years = [year for pts in series.values() for year, _ in pts]
+    xmin, xmax = min(years), max(years)
+    values = [v for _, v in valid]
+    ymin, ymax = min(values), max(values)
+    pad = (ymax - ymin) * 0.1 or max(ymax * 0.05, 0.1)
+    ymin, ymax = max(0, ymin - pad), ymax + pad
+
+    def x(year):
+        return left + ((year - xmin) / (xmax - xmin) if xmax != xmin else 0.5) * pw
+
+    def y(value):
+        return top + ph - (value - ymin) / (ymax - ymin) * ph
+
+    summary = html.escape(
+        f"{title} ({unit}). Projection year on horizontal axis. "
+        f"Selected: {selected_detail}; solid blue. Other details: dashed gray."
+    )
+    svg = [
+        f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="{summary}">',
+        f"<desc>{summary}</desc>",
+    ]
+    for i in range(3):
+        value = ymin + (ymax - ymin) * i / 2
+        pos = y(value)
+        svg.append(
+            f'<line x1="{left}" x2="{width-right}" y1="{pos:.2f}" y2="{pos:.2f}" stroke="#e1e4e8"/>'
+        )
+        svg.append(
+            f'<text x="{left-8}" y="{pos+4:.2f}" text-anchor="end" font-size="12" fill="#555">{_format_atb_chart_tick(value, metric)}</text>'
+        )
+    ticks = sorted({xmin, xmax, *[yr for yr in range(xmin + 1, xmax) if yr % 10 == 0]})
+    for year in ticks:
+        svg.append(
+            f'<text x="{x(year):.2f}" y="{height-10}" text-anchor="middle" font-size="12" fill="#555">{year}</text>'
+        )
+    for detail in sorted(series, key=lambda d: (d == selected_detail, d)):
+        selected = detail == selected_detail
+        color = "#1a56c4" if selected else "#9ca3af"
+        stroke = "2.75" if selected else "1.5"
+        dash = "" if selected else ' stroke-dasharray="5 3"'
+        runs, run = [], []
+        for year, value in series[detail]:
+            if value is None:
+                if run:
+                    runs.append(run)
+                    run = []
+            else:
+                run.append((year, value))
+        if run:
+            runs.append(run)
+        for points in runs:
+            if len(points) == 1:
+                yr, value = points[0]
+                svg.append(
+                    f'<circle cx="{x(yr):.2f}" cy="{y(value):.2f}" r="3" fill="{color}"/>'
+                )
+            else:
+                coords = " ".join(f"{x(yr):.2f},{y(v):.2f}" for yr, v in points)
+                svg.append(
+                    f'<polyline points="{coords}" fill="none" stroke="{color}" stroke-width="{stroke}"{dash} stroke-linejoin="round"/>'
+                )
+        for year, value in series[detail]:
+            if value is not None:
+                description = html.escape(
+                    f"{detail}: {_format_atb_chart_value(value, metric)}"
+                )
+                svg.append(
+                    f'<circle cx="{x(year):.2f}" cy="{y(value):.2f}" r="4" fill="transparent"><title>{description}</title></circle>'
+                )
+    svg.append("</svg>")
+    return "".join(svg)
+
+
+def render_atb_charts(event=None):
+    """Compare all tech details for the picker, using ATB defaults only."""
+    container = document.getElementById("atbCharts")
+    if not container:
+        return
+    # Match the viewBox to available space so labels and plot heights remain
+    # readable on phones instead of shrinking an entire desktop chart.
+    viewport = int(window.innerWidth)
+    available = int(container.clientWidth)
+    if not available:  # Step 4 is hidden during startup.
+        available = (
+            viewport - 36 if viewport <= 850 else (min(viewport, 760) - 64) * 2 / 3
+        )
+    chart_width = max(280, min(600, int(available) - (24 if viewport > 850 else 0)))
+    container.setAttribute("aria-busy", "false")
+    heading = "<h3>ATB data</h3>"
+
+    def message(text):
+        container.innerHTML = (
+            heading + f'<p class="atb-chart-empty">{html.escape(text)}</p>'
+        )
+
+    if state.atb_load_error:
+        message(state.atb_load_error)
+        return
+    try:
+        year = int(_get_select_value(document.getElementById("atbYearSelect"), 0))
+    except (ValueError, TypeError):
+        year = 0
+    tech = _get_select_value(document.getElementById("atbTechSelect"), "")
+    detail = _get_select_value(document.getElementById("atbTechDetailSelect"), "")
+    case = _get_select_value(document.getElementById("atbCostCaseSelect"), "")
+    records = [
+        r
+        for r in state.atb_options
+        if r["data_year"] == year and r["technology"] == tech and r["cost_case"] == case
+    ]
+    if not records:
+        message("No ATB defaults are available for this selection.")
+        return
+    if not all("basis_year" in r for r in records):
+        message(
+            "Projection years are missing from this ATB index. Regenerate data/atb_options.parquet to view charts."
+        )
+        return
+    parts = [heading]
+    dollar_years = set()
+    unknown_dollars = False
+    for row in records:
+        raw = row.get("dollar_year")
+        if pd.isna(raw):
+            unknown_dollars = True
+        else:
+            dollar_years.add(int(raw))
+    capex_unit = (
+        f"{next(iter(dollar_years))} $/kW"
+        if len(dollar_years) == 1 and not unknown_dollars
+        else "$/kW (dollar year unavailable)"
+    )
+    try:
+        for metric, title, unit in [
+            ("capex_mw", "CAPEX", capex_unit),
+            ("heat_rate", "Heat rate", "MMBtu/MWh"),
+        ]:
+            data = _build_atb_chart_data(records, year, tech, case, metric)
+            parts.append(
+                f'<figure class="atb-chart-panel"><h4>{html.escape(title)} · {html.escape(unit)}</h4>'
+            )
+            if metric == "capex_mw" and len(dollar_years) > 1:
+                parts.append(
+                    '<p class="atb-chart-empty">CAPEX cannot be compared: the source contains different dollar years.</p>'
+                )
+            else:
+                chart = _render_atb_chart_svg(
+                    data, detail, title, unit, width=chart_width, metric=metric
+                )
+                if chart:
+                    parts.append(chart)
+                    if not any(v is not None for _, v in data.get(detail, [])):
+                        parts.append(
+                            '<p class="atb-chart-note">No values available for the selected detail; other details are shown.</p>'
+                        )
+                else:
+                    if metric == "heat_rate":
+                        empty = "No heat-rate values reported for this selection. "
+                        empty += (
+                            "Non-combustion technologies such as wind and solar do not have a heat rate."
+                            if tech
+                            in {
+                                "LandbasedWind",
+                                "OffshoreWind",
+                                "UtilityPV",
+                                "CommPV",
+                                "ResPV",
+                                "DistributedWind",
+                            }
+                            else "Values are unavailable in this ATB source, not zero."
+                        )
+                    else:
+                        empty = "No CAPEX values reported for this selection."
+                    parts.append(f'<p class="atb-chart-empty">{empty}</p>')
+            parts.append("</figure>")
+        container.innerHTML = "".join(parts)
+    except (ValueError, TypeError):
+        message(
+            "ATB projections contain conflicting or invalid values. Regenerate data/atb_options.parquet; values have not been averaged."
+        )
 
 
 async def load_atb_size():
@@ -4418,6 +4691,15 @@ def _get_default_cost_case(cases):
     return cases[0]
 
 
+def _get_default_atb_technology(techs):
+    """Get default ATB technology, preferring 'NaturalGas', otherwise first in list."""
+    if not techs:
+        return None
+    if "NaturalGas" in techs:
+        return "NaturalGas"
+    return techs[0]
+
+
 def populate_fuel_data_year_select(event=None):
     """Populate the Fuel Data Year dropdown from loaded fuel_prices.csv."""
     year_el = document.getElementById("fuelDataYear")
@@ -4483,15 +4765,25 @@ def _get_selected_atb_data_year():
         return 0
 
 
-def populate_atb_picker():
-    """Populate the ATB picker selects in the Settings tab."""
+def _refresh_atb_picker_options(preferred=None):
+    """Rebuild the cascading ATB option lists around the current values.
+
+    The lists cascade from data year → technology → detail → cost case, so a
+    value can only survive a rebuild when its parent list was rebuilt first.
+    Keep each current selection when it is still valid; otherwise fall back to
+    the first option. ``preferred`` maps select element IDs to imported values
+    that should win over the current picker value when they are valid for the
+    rebuilt lists. Returns a reason string when the picker cannot be populated,
+    or ``None`` on success.
+    """
+    preferred = preferred or {}
     year_el = document.getElementById("atbYearSelect")
     tech_el = document.getElementById("atbTechSelect")
     detail_el = document.getElementById("atbTechDetailSelect")
     case_el = document.getElementById("atbCostCaseSelect")
 
     if not (year_el and tech_el and detail_el and case_el):
-        return
+        return "missing controls"
 
     years = state.atb_years
     if not years:
@@ -4499,25 +4791,34 @@ def populate_atb_picker():
         _set_select_options(tech_el, [])
         _set_select_options(detail_el, [])
         _set_select_options(case_el, [])
-        return
+        return "empty index"
 
     latest_year = max(years)
-    selected_year = int(_get_select_value(year_el, latest_year) or latest_year)
+    raw_year = preferred.get("atbYearSelect", _get_select_value(year_el, latest_year))
+    try:
+        selected_year = int(raw_year or latest_year)
+    except (TypeError, ValueError):
+        selected_year = latest_year
     if selected_year not in state.atb_index:
         selected_year = latest_year
 
     _set_select_options(year_el, years, selected_value=str(selected_year))
 
     techs = sorted(state.atb_index.get(selected_year, {}).keys())
-    selected_tech = _get_select_value(tech_el, techs[0] if techs else None)
+    selected_tech = preferred.get(
+        "atbTechSelect", _get_select_value(tech_el, techs[0] if techs else None)
+    )
     if selected_tech not in techs and techs:
-        selected_tech = techs[0]
+        selected_tech = _get_default_atb_technology(techs)
     _set_select_options(tech_el, techs, selected_value=selected_tech)
 
     details = sorted(
         state.atb_index.get(selected_year, {}).get(selected_tech, {}).keys()
     )
-    selected_detail = _get_select_value(detail_el, details[0] if details else None)
+    selected_detail = preferred.get(
+        "atbTechDetailSelect",
+        _get_select_value(detail_el, details[0] if details else None),
+    )
     if selected_detail not in details and details:
         selected_detail = details[0]
     _set_select_options(detail_el, details, selected_value=selected_detail)
@@ -4527,13 +4828,28 @@ def populate_atb_picker():
         .get(selected_tech, {})
         .get(selected_detail, [])
     )
-    selected_case = _get_select_value(case_el, _get_default_cost_case(cases))
+    selected_case = preferred.get(
+        "atbCostCaseSelect", _get_select_value(case_el, _get_default_cost_case(cases))
+    )
     if selected_case not in cases and cases:
         selected_case = _get_default_cost_case(cases)
     _set_select_options(case_el, cases, selected_value=selected_case)
+    return None
+
+
+def populate_atb_picker():
+    """Populate the ATB picker selects in the Settings tab."""
+    reason = _refresh_atb_picker_options()
+    if reason == "empty index":
+        render_atb_charts()
+        return
+    if reason is not None:
+        return
+
     update_atb_ccs_cost_visibility()
     update_size_field_from_atb_size()
     populate_default_battery_attributes()
+    render_atb_charts()
 
 
 def on_atb_picker_change(event=None):
@@ -5526,6 +5842,7 @@ def _populate_atb_picker_from_resource(
             details_el.open = True
 
     update_atb_ccs_cost_visibility()
+    render_atb_charts()
     set_status(
         f"Loaded \u2018{tech} \u2014 {detail} \u2014 {case}\u2019 into the ATB picker.",
         "info",
@@ -9905,6 +10222,30 @@ def _set_workflow_form_value(element_id, value):
         element.value = str(value)
 
 
+def _restore_atb_picker_from_workflow(forms):
+    """Apply imported ATB picker values and redraw the comparison charts.
+
+    Select options are derived from ``state.atb_index`` at startup, so an
+    imported technology or detail may not have an option yet. Rebuild the
+    cascading lists around the imported values in one pass, then render once so
+    the curves and their "Selected: ..." description match the restored
+    controls. A missing or failed ATB index still renders its message.
+    """
+    preferred = {
+        element_id: forms[element_id]
+        for element_id in (
+            "atbYearSelect",
+            "atbTechSelect",
+            "atbTechDetailSelect",
+            "atbCostCaseSelect",
+        )
+        if forms.get(element_id) is not None
+    }
+    if _refresh_atb_picker_options(preferred) is None:
+        update_atb_ccs_cost_visibility()
+    render_atb_charts()
+
+
 def _restore_plant_clustering_outputs():
     """Rebuild Step 3 (Existing Plants) clustering outputs after a workflow import.
 
@@ -10066,6 +10407,9 @@ def _restore_workflow_state(manifest, settings_yamls=None, resource_group_files=
             checkbox.checked = str(checkbox.value) in selected_no_cluster
     render_omit_editor()
     render_group_editor()
+    # The ATB index is loaded before the restore, but the picker's dependent
+    # option lists are not, so redraw them around the imported selection.
+    _restore_atb_picker_from_workflow(forms)
     populate_resource_year_selects()
     populate_fuel_scenario_selects()
     for fuel, scenario in (forms.get("fuel_scenarios") or {}).items():
@@ -10786,6 +11130,7 @@ async def main():
         document.getElementById("atbYearSelect").addEventListener(
             "change", create_proxy(on_atb_picker_change)
         )
+        window.addEventListener("resize", create_proxy(render_atb_charts))
         document.getElementById("atbTechSelect").addEventListener(
             "change", create_proxy(on_atb_picker_change)
         )
@@ -10850,6 +11195,8 @@ async def main():
             lambda: asyncio.ensure_future(load_esr_data_deferred())
         )
         window.invalidateRenewablesMaps = create_proxy(invalidate_renewables_maps)
+        # Let goToStep() resize the ATB charts once the Step 4 pane is visible.
+        window.renderAtbCharts = create_proxy(render_atb_charts)
 
         # Done loading
         hide_loading()

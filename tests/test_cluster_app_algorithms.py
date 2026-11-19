@@ -10,7 +10,10 @@ module-load cost across all tests.
 
 import importlib.util
 import math
+import re
 import sys
+import xml.etree.ElementTree as ET
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -26,7 +29,7 @@ import yaml
 
 
 @pytest.fixture(scope="session")
-def cluster_app():
+def cluster_app(visualization_utils_module):
     """Load cluster_app module with mocked js/PyScript dependencies."""
     module_names = [
         "js",
@@ -61,15 +64,9 @@ def cluster_app():
 
         # Mock visualization_utils with actual functions from the real module
         mock_vu = MagicMock()
-        from web.visualization_utils import (
-            CLUSTER_COLORS,
-            GROUP_OUTLINE_COLORS,
-            lighten_color,
-        )
-
-        mock_vu.lighten_color = lighten_color
-        mock_vu.CLUSTER_COLORS = CLUSTER_COLORS
-        mock_vu.GROUP_OUTLINE_COLORS = GROUP_OUTLINE_COLORS
+        mock_vu.lighten_color = visualization_utils_module.lighten_color
+        mock_vu.CLUSTER_COLORS = visualization_utils_module.CLUSTER_COLORS
+        mock_vu.GROUP_OUTLINE_COLORS = visualization_utils_module.GROUP_OUTLINE_COLORS
         sys.modules["visualization_utils"] = mock_vu
 
         sys.modules["fast_interconnection"] = MagicMock()
@@ -109,21 +106,481 @@ def cluster_app():
 
 @pytest.fixture(scope="session")
 def visualization_utils_module():
-    """Load visualization_utils module directly."""
-    web_dir = Path(__file__).parent.parent / "web"
-    sys.path.insert(0, str(web_dir))
-    try:
-        import visualization_utils
-
-        yield visualization_utils
-    finally:
-        if str(web_dir) in sys.path:
-            sys.path.remove(str(web_dir))
+    """Load real source without consulting or mutating mocked import aliases."""
+    module_path = Path(__file__).parent.parent / "web" / "visualization_utils.py"
+    spec = importlib.util.spec_from_file_location(
+        "_test_real_visualization_utils", module_path
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 # ---------------------------------------------------------------------------
 # 1. Color utilities
 # ---------------------------------------------------------------------------
+
+
+def _atb_chart_record(**overrides):
+    """A compact-index record with distinct publication and projection years."""
+    record = {
+        "data_year": 2024,
+        "technology": "NaturalGas",
+        "tech_detail": "CT",
+        "cost_case": "Moderate",
+        "basis_year": 2030,
+        "dollar_year": 2022,
+        "capex_mw": 1_200_000,
+        "heat_rate": 7.123456789,
+    }
+    record.update(overrides)
+    return record
+
+
+class TestBuildAtbChartData:
+    """Chart data must preserve observations, not average ambiguous records."""
+
+    @pytest.mark.parametrize(
+        "metric, expected",
+        [
+            (
+                "capex_mw",
+                {
+                    "CC": [(2030, 900_000.0)],
+                    "CT": [(2025, 1_200_000.0), (2035, 800_000.0)],
+                },
+            ),
+            (
+                "heat_rate",
+                {"CC": [(2030, 6.25)], "CT": [(2025, 7.123456789), (2035, 6.875)]},
+            ),
+        ],
+    )
+    def test_filters_selection_groups_details_and_sorts_projection_years(
+        self, cluster_app, metric, expected
+    ):
+        records = [
+            _atb_chart_record(basis_year=2035, capex_mw=800_000, heat_rate=6.875),
+            _atb_chart_record(tech_detail="CC", capex_mw=900_000, heat_rate=6.25),
+            _atb_chart_record(basis_year=2025),
+            _atb_chart_record(data_year=2023, capex_mw=999),
+            _atb_chart_record(technology="Coal", capex_mw=888),
+            _atb_chart_record(cost_case="Advanced", capex_mw=777),
+        ]
+        original = deepcopy(records)
+
+        result = cluster_app._build_atb_chart_data(
+            records, 2024, "NaturalGas", "Moderate", metric
+        )
+
+        assert result == expected
+        assert records == original
+        assert all(
+            type(year) is int and type(value) is float
+            for points in result.values()
+            for year, value in points
+        )
+
+    @pytest.mark.parametrize("records", [[], [_atb_chart_record(data_year=2023)]])
+    def test_no_matching_records_returns_empty_mapping(self, cluster_app, records):
+        assert (
+            cluster_app._build_atb_chart_data(
+                records, 2024, "NaturalGas", "Moderate", "capex_mw"
+            )
+            == {}
+        )
+
+    @pytest.mark.parametrize("metric", ["capex_mw", "heat_rate"])
+    @pytest.mark.parametrize(
+        "invalid",
+        [None, "", "not available", 0, -1, float("nan"), float("inf"), -float("inf")],
+    )
+    def test_invalid_metric_is_a_gap_not_a_dropped_year(
+        self, cluster_app, metric, invalid
+    ):
+        records = [
+            _atb_chart_record(basis_year=2025, **{metric: 10}),
+            _atb_chart_record(basis_year=2030, **{metric: invalid}),
+            _atb_chart_record(basis_year=2035, **{metric: 20}),
+        ]
+
+        assert cluster_app._build_atb_chart_data(
+            records, 2024, "NaturalGas", "Moderate", metric
+        ) == {"CT": [(2025, 10.0), (2030, None), (2035, 20.0)]}
+
+    @pytest.mark.parametrize("metric", ["capex_mw", "heat_rate"])
+    def test_absent_metric_is_a_gap_including_heat_only_rows(self, cluster_app, metric):
+        record = _atb_chart_record()
+        del record[metric]
+
+        assert cluster_app._build_atb_chart_data(
+            [record], 2024, "NaturalGas", "Moderate", metric
+        ) == {"CT": [(2030, None)]}
+
+    @pytest.mark.parametrize(
+        "year", [None, "", "not a year", float("nan"), float("inf")]
+    )
+    def test_invalid_projection_year_is_excluded_without_publication_fallback(
+        self, cluster_app, year
+    ):
+        records = [
+            _atb_chart_record(basis_year=year),
+            _atb_chart_record(basis_year=2035),
+        ]
+        missing_year = _atb_chart_record()
+        del missing_year["basis_year"]
+        records.append(missing_year)
+
+        assert cluster_app._build_atb_chart_data(
+            records, 2024, "NaturalGas", "Moderate", "capex_mw"
+        ) == {"CT": [(2035, 1_200_000.0)]}
+
+    def test_numeric_strings_become_integer_years_and_float_values(self, cluster_app):
+        record = _atb_chart_record(basis_year="2035", heat_rate="6.123456789")
+
+        result = cluster_app._build_atb_chart_data(
+            [record], 2024, "NaturalGas", "Moderate", "heat_rate"
+        )
+
+        assert result == {"CT": [(2035, 6.123456789)]}
+        assert type(result["CT"][0][0]) is int
+        assert type(result["CT"][0][1]) is float
+
+    @pytest.mark.parametrize("metric", ["capex_mw", "heat_rate"])
+    def test_identical_duplicates_collapse_without_duplicate_points(
+        self, cluster_app, metric
+    ):
+        record = _atb_chart_record()
+
+        assert cluster_app._build_atb_chart_data(
+            [record, record.copy()], 2024, "NaturalGas", "Moderate", metric
+        ) == {"CT": [(2030, float(record[metric]))]}
+
+    @pytest.mark.parametrize("metric", ["capex_mw", "heat_rate"])
+    def test_conflicting_duplicate_metric_values_raise_even_if_very_close(
+        self, cluster_app, metric
+    ):
+        records = [
+            _atb_chart_record(**{metric: 7.123451}),
+            _atb_chart_record(**{metric: 7.123452}),
+        ]
+
+        with pytest.raises(ValueError):
+            cluster_app._build_atb_chart_data(
+                records, 2024, "NaturalGas", "Moderate", metric
+            )
+
+    def test_other_metric_conflict_does_not_make_selected_metric_ambiguous(
+        self, cluster_app
+    ):
+        records = [_atb_chart_record(capex_mw=100), _atb_chart_record(capex_mw=200)]
+
+        assert cluster_app._build_atb_chart_data(
+            records, 2024, "NaturalGas", "Moderate", "heat_rate"
+        ) == {"CT": [(2030, 7.123456789)]}
+
+
+def _atb_svg_marks(svg):
+    """Read plotted geometry and inherited colors without snapshotting markup."""
+    marks = []
+
+    def visit(element, inherited):
+        style = dict(
+            part.split(":", 1)
+            for part in element.get("style", "").split(";")
+            if ":" in part
+        )
+        colors = {
+            **inherited,
+            **{key.strip(): value.strip() for key, value in style.items()},
+            **{
+                key: element.attrib[key]
+                for key in ("stroke", "fill")
+                if key in element.attrib
+            },
+        }
+        tag = element.tag.rsplit("}", 1)[-1]
+        if tag in {"polyline", "path", "line", "circle"}:
+            color = colors.get("fill" if tag == "circle" else "stroke")
+            if color in {"#1a56c4", "#9ca3af"}:
+                marks.append((tag, color, element))
+        for child in element:
+            visit(child, colors)
+
+    visit(svg, {})
+    return marks
+
+
+class TestRenderAtbChartSvg:
+    @pytest.mark.parametrize(
+        "values, expected",
+        [
+            ([7.123456789, 6.875], ["7.12346", "6.875"]),
+            ([12345.6789, 1_200_000], ["12,345.7", "1.2e+06"]),
+        ],
+    )
+    def test_only_point_hover_targets_have_minimal_titles(
+        self, cluster_app, values, expected
+    ):
+        detail = 'CT <advanced> & "CC"'
+        svg = ET.fromstring(
+            cluster_app._render_atb_chart_svg(
+                {
+                    detail: [(2025, values[0]), (2030, None), (2035, values[1])],
+                    "Comparison": [(2025, 10.0), (2035, 20.0)],
+                },
+                detail,
+                "Heat rate",
+                "MMBtu/MWh",
+            )
+        )
+        ns = svg.tag.removesuffix("svg")
+
+        assert svg.find(f"{ns}title") is None
+        description = svg.find(f"{ns}desc")
+        assert description is not None
+        assert description.text == svg.get("aria-label")
+        assert "Heat rate (MMBtu/MWh)" in description.text
+        assert f"Selected: {detail};" in description.text
+
+        titles = svg.findall(f".//{ns}title")
+        targets = svg.findall(f".//{ns}circle[{ns}title]")
+        assert len(titles) == len(targets) == 4
+        assert sorted(title.text for title in titles) == sorted(
+            [f"{detail}: {value}" for value in expected]
+            + ["Comparison: 10", "Comparison: 20"]
+        )
+        assert all(float(target.get("r")) > 0 for target in targets)
+
+    def test_escapes_accessible_title_unit_and_detail(self, cluster_app):
+        title = 'CAPEX <projection> & "cost"'
+        unit = '$/MW <real> & "constant"'
+        detail = 'CT <script>alert("x")</script> & CC'
+
+        markup = cluster_app._render_atb_chart_svg(
+            {detail: [(2025, 10.0), (2035, 20.0)]}, detail, title, unit
+        )
+        svg = ET.fromstring(markup)
+        accessible = (
+            " ".join(svg.itertext())
+            + " "
+            + " ".join(element.get("aria-label", "") for element in svg.iter())
+        )
+
+        assert svg.tag.rsplit("}", 1)[-1] == "svg"
+        assert svg.get("role") == "img"
+        assert title in accessible
+        assert unit in accessible
+        assert detail in accessible
+        assert not any(
+            element.tag.rsplit("}", 1)[-1] in {"script", "projection", "real"}
+            for element in svg.iter()
+        )
+
+    def test_selected_blue_series_is_drawn_after_gray_comparisons(self, cluster_app):
+        svg = ET.fromstring(
+            cluster_app._render_atb_chart_svg(
+                {
+                    "Selected": [(2025, 10.0), (2035, 20.0)],
+                    "Comparison": [(2025, 20.0), (2035, 10.0)],
+                },
+                "Selected",
+                "CAPEX",
+                "$/MW",
+            )
+        )
+
+        marks = _atb_svg_marks(svg)
+        colors = [color for _, color, _ in marks]
+
+        assert "#9ca3af" in colors
+        assert "#1a56c4" in colors
+        assert max(i for i, color in enumerate(colors) if color == "#9ca3af") < min(
+            i for i, color in enumerate(colors) if color == "#1a56c4"
+        )
+        lines = [(color, element) for tag, color, element in marks if tag != "circle"]
+        assert len(lines) == 2
+        for color, element in lines:
+            if color == "#9ca3af":
+                assert element.get("stroke-dasharray")
+            else:
+                assert element.get("stroke-dasharray") in (None, "", "none")
+
+    def test_missing_selected_detail_keeps_comparison_gray(self, cluster_app):
+        svg = ET.fromstring(
+            cluster_app._render_atb_chart_svg(
+                {"CT": [(2030, 7.25)]}, "Not present", "Heat rate", "MMBtu/MWh"
+            )
+        )
+
+        marks = _atb_svg_marks(svg)
+        assert marks
+        assert {color for _, color, _ in marks} == {"#9ca3af"}
+
+    @pytest.mark.parametrize(
+        "points",
+        [[(2030, 7.25)], [(2025, 7.25), (2035, 7.25)]],
+        ids=["single-year", "constant-values"],
+    )
+    def test_degenerate_ranges_have_finite_visible_geometry(self, cluster_app, points):
+        svg = ET.fromstring(
+            cluster_app._render_atb_chart_svg(
+                {"CT": points}, "CT", "Heat rate", "MMBtu/MWh"
+            )
+        )
+        marks = _atb_svg_marks(svg)
+
+        assert marks
+        if len(points) == 1:
+            assert any(tag == "circle" for tag, _, _ in marks)
+        for _, _, element in marks:
+            geometry = " ".join(
+                element.get(key, "")
+                for key in ("points", "d", "cx", "cy", "r", "x1", "x2", "y1", "y2")
+            )
+            assert not re.search(r"nan|inf", geometry, re.IGNORECASE)
+            if element.get("r"):
+                assert float(element.get("r")) > 0
+
+    def test_none_gaps_split_lines_and_preserve_isolated_dot(self, cluster_app):
+        svg = ET.fromstring(
+            cluster_app._render_atb_chart_svg(
+                {
+                    "CT": [
+                        (2020, 10.0),
+                        (2025, 12.0),
+                        (2030, None),
+                        (2035, 14.0),
+                        (2040, 16.0),
+                        (2045, None),
+                        (2050, 18.0),
+                    ]
+                },
+                "CT",
+                "CAPEX",
+                "$/MW",
+            )
+        )
+        marks = _atb_svg_marks(svg)
+        # A renderer may use separate polylines/lines or disconnected M
+        # subpaths. Each continuous run has just two points in this fixture.
+        runs = []
+        dots = []
+        for tag, _, element in marks:
+            if tag == "circle":
+                dots.append(element)
+            elif tag == "polyline":
+                runs.append(
+                    re.findall(
+                        r"[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?",
+                        element.get("points", ""),
+                    )
+                )
+            elif tag == "line":
+                runs.append([element.get(key) for key in ("x1", "y1", "x2", "y2")])
+            elif tag == "path":
+                for subpath in re.split(r"[Mm]", element.get("d", "")):
+                    if subpath.strip():
+                        runs.append(
+                            re.findall(
+                                r"[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?", subpath
+                            )
+                        )
+
+        assert len(runs) == 2, "Do not draw a continuous stroke across missing years"
+        assert all(len(run) == 4 for run in runs)
+        assert len(dots) == 1, "The final isolated observation must remain visible"
+        assert float(dots[0].get("cx")) > max(float(run[2]) for run in runs)
+
+    def test_axes_label_projection_years_and_numeric_values(self, cluster_app):
+        svg = ET.fromstring(
+            cluster_app._render_atb_chart_svg(
+                {"CT": [(2025, 10.0), (2045, 20.0)]}, "CT", "CAPEX", "$/MW"
+            )
+        )
+        labels = [
+            "".join(element.itertext()).strip()
+            for element in svg.iter()
+            if element.tag.rsplit("}", 1)[-1] == "text"
+        ]
+
+        assert "2025" in labels
+        assert "2045" in labels
+        assert "2024" not in labels
+        value_labels = [
+            label
+            for label in labels
+            if label not in {"2025", "2045"}
+            and re.fullmatch(r"\$?[-+]?\d[\d,.]*(?:\s*[kKmMbB])?", label)
+        ]
+        assert len(set(value_labels)) >= 2
+
+    @pytest.mark.parametrize("series", [{}, {"CT": [(2025, None), (2030, None)]}])
+    def test_empty_or_all_gap_series_draws_no_data_marks(self, cluster_app, series):
+        markup = cluster_app._render_atb_chart_svg(
+            series, "CT", "Heat rate", "MMBtu/MWh"
+        )
+
+        # An empty string or an accessible empty-state SVG are both acceptable.
+        if markup:
+            assert not _atb_svg_marks(ET.fromstring(markup))
+
+    def test_capex_display_series_converts_and_leaves_input_unchanged(
+        self, cluster_app
+    ):
+        series = {"CT": [(2030, 1_316_276.0), (2035, None)]}
+
+        display = cluster_app._atb_chart_display_series(series, "capex_mw")
+
+        assert display == {"CT": [(2030, 1316.276), (2035, None)]}
+        assert display is not series
+        assert series == {"CT": [(2030, 1_316_276.0), (2035, None)]}
+
+    def test_non_capex_display_series_is_unmodified(self, cluster_app):
+        series = {"CT": [(2030, 1_316_276.0), (2035, None)]}
+
+        assert cluster_app._atb_chart_display_series(series, "heat_rate") == series
+
+    def test_capex_formatters_use_thousands_separators(self, cluster_app):
+        assert cluster_app._format_atb_chart_tick(2162.5, "capex_mw") == "2,162"
+        assert cluster_app._format_atb_chart_tick(800, "capex_mw") == "800"
+        assert cluster_app._format_atb_chart_value(1316.276, "capex_mw") == "1,316"
+        assert cluster_app._format_atb_chart_value(800, "capex_mw") == "800"
+
+    def test_heat_rate_tooltip_format_is_unchanged(self, cluster_app):
+        assert cluster_app._format_atb_chart_value(6.122, "heat_rate") == "6.122"
+
+    def test_capex_render_shows_per_kw_values_without_scientific_notation(
+        self, cluster_app
+    ):
+        svg = ET.fromstring(
+            cluster_app._render_atb_chart_svg(
+                {"CT": [(2025, 1_200_000.0), (2035, 800_000.0)]},
+                "CT",
+                "CAPEX",
+                "2022 $/kW",
+                metric="capex_mw",
+            )
+        )
+        ns = svg.tag.removesuffix("svg")
+
+        ticks = [
+            "".join(element.itertext()).strip()
+            for element in svg.findall(f".//{ns}text")
+            if element.get("text-anchor") == "end"
+        ]
+        assert ticks == ["760", "1,000", "1,240"]
+
+        titles = ["".join(title.itertext()) for title in svg.findall(f".//{ns}title")]
+        assert titles == ["CT: 1,200", "CT: 800"]
+
+        labels = (
+            ticks + titles + ["".join(element.itertext()) for element in svg.iter()]
+        )
+        assert not any(re.search(r"\d[eE][-+]?\d", label) for label in labels)
+
+        assert "CAPEX (2022 $/kW)" in svg.get("aria-label")
 
 
 class TestColorUtilities:

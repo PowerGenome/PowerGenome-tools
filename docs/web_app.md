@@ -584,6 +584,50 @@ If ATB data is available, use the dropdowns to select:
 * **ATB Data Year** → **Technology** → **Tech Detail** → **Cost Case**
 * Specify **Size (MW)** for each resource
 
+**Technology** defaults to **NaturalGas** when it is available for the selected
+ATB Data Year, falling back to the first technology alphabetically. Once you
+pick a technology, that choice is kept while it remains valid.
+
+#### Comparing ATB Data
+
+The picker occupies roughly one-third of the layout, with stacked **CAPEX**
+and **Heat rate** charts in the remaining two-thirds. At screen widths of
+850px or less, the charts move below the controls.
+
+The charts compare all **Tech Detail** variants for the selected ATB
+publication year, technology, and cost case. The selected detail is solid
+blue; other details are dashed gray. Changing the dropdowns or selecting
+a resource row in the New Resources list updates the charts and selected
+series together.
+
+* **Projection year** is the source `basis_year`, not the ATB publication
+  year (`data_year`).
+* **CAPEX** is shown in **$/kW** (capacity basis) so labels stay readable;
+  the value is converted for display only and the underlying ATB data remains
+  in $/MW. The chart uses the source `dollar_year`, not the
+  Target USD Year from Model Setup. This dollar-year comes from the cost
+  data, not the heat-rate CSV.
+* **Heat rate** is shown in **MMBtu/MWh**, retaining fractional values.
+  Nonthermal technologies without reported heat rates show an empty
+  state, not zero. Unavailable values appear as gaps.
+
+Heat-rate defaults use the canonical `technology_heat_rates_nrelatb.csv`
+for matching publication year, technology, detail, cost case, and
+projection year; values are never borrowed across years. The CSV includes
+ATB 2024 heat rates, so missing 2024 curves in an older parquet-only index
+reflect a source integration gap, not missing upstream data. It also
+includes ATB 2025 heat rates, but CSV-only rows never create picker options.
+The bundled asset's original cost snapshot contains only ATB 2023/2024
+costs, so CSV enrichment does not add 2025 options to it. Live default
+downloads may include newer cost years, including 2025.
+
+These charts show **ATB defaults only**. Size changes, cost/performance
+overrides, and CCS disposal costs do not change the plotted values.
+
+If the ATB asset is missing, outdated, or fails to load, the chart area
+displays a message rather than projections. For local installations, see
+[regenerating the ATB index](development.md#regenerating-the-atb-index).
+
 #### CCS Disposal Cost (Conditional)
 
 For CCS technologies, the ATB picker shows a **CCS disposal cost** input. This field only appears for CCS resources and defaults to 20 (USD per tonne). This value should be inflation-adjusted to the desired dollar-year -- it will not be modified by PowerGenome.

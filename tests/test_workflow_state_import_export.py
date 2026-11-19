@@ -16,7 +16,9 @@ Covers:
 - State round-trip: selected_bas, ba_to_region, settings_yamls survive import via ZIP
 """
 
+import html
 import importlib.util
+import re
 import sys
 import zipfile
 from io import BytesIO
@@ -1309,3 +1311,404 @@ class TestRestorePlantClusteringOutputs:
         runner.assert_not_called()
         assert ca.state.plant_cluster_settings is None
         assert ca.state.plant_groups == []
+
+
+# ---------------------------------------------------------------------------
+# ATB picker rebuild on workflow import
+#
+# Regression coverage for two fixes:
+#   1. Imported ATB picker values must be applied while the cascading option
+#      lists are rebuilt (year -> tech -> detail -> cost case), otherwise a
+#      detail such as "F-Frame CC" has no option yet and the browser resets
+#      the select to "".
+#   2. The restore path must not reuse populate_atb_picker(), because that
+#      form-reset path overwrites restored atbSizeMw / atbOverride* /
+#      atbCcsDisposalCost values.
+# ---------------------------------------------------------------------------
+
+_ATB_SELECT_IDS = (
+    "atbYearSelect",
+    "atbTechSelect",
+    "atbTechDetailSelect",
+    "atbCostCaseSelect",
+)
+
+_ATB_STATE_FIELDS = (
+    "atb_years",
+    "atb_index",
+    "atb_load_error",
+    "atb_size_map",
+    "atb_options",
+    "ccs_disposal_cost",
+)
+
+
+class _FakeSelect:
+    """Minimal ``<select>`` emulating browser option semantics.
+
+    ``_set_select_options`` writes ``<option value='X' selected>...</option>``
+    markup into ``innerHTML``. Assigning that markup must update the visible
+    options *and* the selected value exactly as a browser does: the option
+    carrying ``selected`` wins, else the first option, else ``""``. Assigning
+    ``value`` to a value with no matching option also resets it to ``""``.
+    """
+
+    _OPTION_RE = re.compile(r"<option value='([^']*)'([^>]*)>")
+
+    def __init__(self, options=None, value=None):
+        self._html = ""
+        self._value = ""
+        self.options = []
+        self.style = MagicMock()
+        if options:
+            self.innerHTML = "".join(
+                f"<option value='{option}'>{option}</option>" for option in options
+            )
+        if value is not None:
+            self.value = value
+
+    @property
+    def innerHTML(self):
+        return self._html
+
+    @innerHTML.setter
+    def innerHTML(self, markup):
+        self._html = markup
+        options = []
+        selected = None
+        for raw_value, attributes in self._OPTION_RE.findall(markup or ""):
+            option_value = html.unescape(raw_value)
+            options.append(option_value)
+            if "selected" in attributes.split():
+                selected = option_value
+        self.options = options
+        self._value = (
+            selected if selected is not None else (options[0] if options else "")
+        )
+
+    @property
+    def value(self):
+        return self._value
+
+    @value.setter
+    def value(self, new_value):
+        text = "" if new_value is None else str(new_value)
+        self._value = text if text in self.options else ""
+
+
+class _FakeInput:
+    def __init__(self, value="", input_type="number"):
+        self.value = value
+        self.type = input_type
+        self.style = MagicMock()
+
+
+class _FakeContainer:
+    def __init__(self, client_width=640):
+        self.clientWidth = client_width
+        self.innerHTML = ""
+        self.attributes = {}
+
+    def setAttribute(self, name, value):
+        self.attributes[name] = value
+
+
+@pytest.fixture
+def atb_env(cluster_app, monkeypatch):
+    """Route getElementById to a per-test fake element registry.
+
+    Registered IDs return the fakes created by the test; everything else falls
+    back to a MagicMock so the rest of ``_restore_workflow_state`` stays a
+    no-op, exactly like the module fixture's shared ``js.document`` mock.
+    """
+    ca = cluster_app
+    saved = {name: getattr(ca.state, name) for name in _ATB_STATE_FIELDS}
+    elements = {}
+    fallbacks = {}
+
+    def get_element(element_id):
+        if element_id in elements:
+            return elements[element_id]
+        # Cache per-ID like the DOM does: repeat lookups of the same element
+        # must see values written earlier in the restore.
+        if element_id not in fallbacks:
+            fallbacks[element_id] = MagicMock()
+        return fallbacks[element_id]
+
+    monkeypatch.setattr(ca.document, "getElementById", get_element)
+    # render_atb_charts reads window.innerWidth; MagicMock would not int().
+    monkeypatch.setattr(ca.window, "innerWidth", 1280, raising=False)
+
+    yield {"ca": ca, "elements": elements}
+
+    for name, value in saved.items():
+        setattr(ca.state, name, value)
+
+
+def _install_startup_picker(
+    elements, *, year="2024", tech="Biopower", detail="Dedicated", case="Moderate"
+):
+    """Create the four ATB selects in their startup/derived-from-index state."""
+    elements["atbYearSelect"] = _FakeSelect(["2023", "2024"], value=year)
+    elements["atbTechSelect"] = _FakeSelect(["Biopower", "NaturalGas"], value=tech)
+    elements["atbTechDetailSelect"] = _FakeSelect([detail], value=detail)
+    elements["atbCostCaseSelect"] = _FakeSelect(
+        ["Advanced", "Conservative", "Moderate"], value=case
+    )
+
+
+def _atb_index_payload():
+    """Year -> tech -> detail -> cost cases, shaped like load_atb_index()."""
+    natural_gas = {
+        "F-Frame CC": ["Advanced", "Conservative", "Moderate"],
+        "H-Frame CC": ["Advanced", "Conservative", "Moderate"],
+    }
+    return {
+        2023: {
+            "Biopower": {"Dedicated": ["Moderate", "Advanced"]},
+            "NaturalGas": {key: list(value) for key, value in natural_gas.items()},
+        },
+        2024: {
+            "Biopower": {"Dedicated": ["Moderate", "Advanced"]},
+            "NaturalGas": {key: list(value) for key, value in natural_gas.items()},
+        },
+    }
+
+
+def _recording_render(elements, calls, real=None):
+    """Record the picker values visible at render time (and optionally render)."""
+
+    def render(event=None):
+        calls.append(
+            {element_id: elements[element_id].value for element_id in _ATB_SELECT_IDS}
+        )
+        if real is not None:
+            return real(event)
+        return None
+
+    return render
+
+
+_ATB_IMPORT_FORMS = {
+    "atbYearSelect": "2023",
+    "atbTechSelect": "NaturalGas",
+    "atbTechDetailSelect": "F-Frame CC",
+    "atbCostCaseSelect": "Advanced",
+}
+
+
+class TestAtbPickerDefaults:
+    """The New Resources technology picker opens on NaturalGas when available."""
+
+    def test_startup_defaults_to_natural_gas_not_first_alphabetical(
+        self, atb_env, monkeypatch
+    ):
+        ca = atb_env["ca"]
+        elements = atb_env["elements"]
+        # Fresh page load: none of the selects has options yet.
+        for element_id in _ATB_SELECT_IDS:
+            elements[element_id] = _FakeSelect([], value="")
+        ca.state.atb_years = [2023, 2024]
+        ca.state.atb_index = _atb_index_payload()
+        ca.state.atb_load_error = None
+
+        renders = []
+        monkeypatch.setattr(
+            ca, "render_atb_charts", _recording_render(elements, renders)
+        )
+        monkeypatch.setattr(ca, "update_size_field_from_atb_size", MagicMock())
+        monkeypatch.setattr(ca, "populate_default_battery_attributes", MagicMock())
+
+        ca.populate_atb_picker()
+
+        # "Biopower" sorts first; the default must still be NaturalGas.
+        assert elements["atbTechSelect"].options == ["Biopower", "NaturalGas"]
+        assert elements["atbTechSelect"].value == "NaturalGas"
+
+    def test_year_without_natural_gas_falls_back_to_first_technology(
+        self, atb_env, monkeypatch
+    ):
+        ca = atb_env["ca"]
+        elements = atb_env["elements"]
+        for element_id in _ATB_SELECT_IDS:
+            elements[element_id] = _FakeSelect([], value="")
+        ca.state.atb_years = [2024]
+        ca.state.atb_index = {2024: {"Biopower": {"Dedicated": ["Moderate"]}}}
+        ca.state.atb_load_error = None
+
+        monkeypatch.setattr(ca, "render_atb_charts", _recording_render(elements, []))
+        monkeypatch.setattr(ca, "update_size_field_from_atb_size", MagicMock())
+        monkeypatch.setattr(ca, "populate_default_battery_attributes", MagicMock())
+
+        ca.populate_atb_picker()
+
+        assert elements["atbTechSelect"].options == ["Biopower"]
+        assert elements["atbTechSelect"].value == "Biopower"
+
+    def test_existing_valid_selection_is_not_forced_back_to_natural_gas(
+        self, atb_env, monkeypatch
+    ):
+        ca = atb_env["ca"]
+        elements = atb_env["elements"]
+        _install_startup_picker(elements, year="2024", tech="Biopower")
+        ca.state.atb_years = [2023, 2024]
+        ca.state.atb_index = _atb_index_payload()
+        ca.state.atb_load_error = None
+
+        monkeypatch.setattr(ca, "render_atb_charts", _recording_render(elements, []))
+        monkeypatch.setattr(ca, "update_size_field_from_atb_size", MagicMock())
+        monkeypatch.setattr(ca, "populate_default_battery_attributes", MagicMock())
+
+        ca.populate_atb_picker()
+
+        assert elements["atbTechSelect"].value == "Biopower"
+
+
+class TestAtbPickerRebuildOnWorkflowImport:
+    def test_import_rebuilds_atb_picker_options_and_redraws_charts(
+        self, atb_env, monkeypatch
+    ):
+        """Imported year/tech/detail/case values survive the rebuild, and the
+        charts redraw with those values visible."""
+        ca = atb_env["ca"]
+        elements = atb_env["elements"]
+        _install_startup_picker(elements)
+        ca.state.atb_years = [2023, 2024]
+        ca.state.atb_index = _atb_index_payload()
+        ca.state.atb_load_error = None
+
+        renders = []
+        monkeypatch.setattr(
+            ca, "render_atb_charts", _recording_render(elements, renders)
+        )
+
+        ca._restore_workflow_state(_minimal_manifest(forms=dict(_ATB_IMPORT_FORMS)))
+
+        assert elements["atbYearSelect"].value == "2023"
+        assert elements["atbTechSelect"].value == "NaturalGas"
+        assert elements["atbTechDetailSelect"].value == "F-Frame CC"
+        assert elements["atbCostCaseSelect"].value == "Advanced"
+        # The detail list was rebuilt for the imported technology, so the
+        # imported detail had an option to select.
+        assert elements["atbTechDetailSelect"].options == [
+            "F-Frame CC",
+            "H-Frame CC",
+        ]
+        assert renders, "restore must redraw the ATB charts"
+        assert renders[-1] == {
+            "atbYearSelect": "2023",
+            "atbTechSelect": "NaturalGas",
+            "atbTechDetailSelect": "F-Frame CC",
+            "atbCostCaseSelect": "Advanced",
+        }
+
+    def test_import_preserves_atb_size_overrides_and_ccs_cost(
+        self, atb_env, monkeypatch
+    ):
+        """Restored size/override/CCS fields survive the import unchanged and
+        the import path never calls populate_atb_picker()."""
+        ca = atb_env["ca"]
+        elements = atb_env["elements"]
+        _install_startup_picker(elements)
+        elements["atbSizeMw"] = _FakeInput("100")
+        elements["atbOverrideCapex"] = _FakeInput("")
+        elements["atbCcsDisposalCost"] = _FakeInput("20")
+        ca.state.atb_years = [2023, 2024]
+        ca.state.atb_index = _atb_index_payload()
+        ca.state.atb_load_error = None
+        # If the picker path ran, update_size_field_from_atb_size() would write
+        # 500 here and clobber the imported 250.
+        ca.state.atb_size_map = {2023: {("NaturalGas", "F-Frame CC"): 500.0}}
+
+        monkeypatch.setattr(ca, "render_atb_charts", MagicMock())
+        monkeypatch.setattr(
+            ca,
+            "populate_atb_picker",
+            MagicMock(side_effect=AssertionError("import must not reset the picker")),
+        )
+
+        forms = dict(_ATB_IMPORT_FORMS)
+        forms.update(
+            {"atbSizeMw": "250", "atbOverrideCapex": "777", "atbCcsDisposalCost": "12"}
+        )
+
+        ca._restore_workflow_state(_minimal_manifest(forms=forms))
+
+        assert elements["atbSizeMw"].value == "250"
+        assert elements["atbOverrideCapex"].value == "777"
+        assert elements["atbCcsDisposalCost"].value == "12"
+
+    def test_import_with_empty_atb_index_renders_error_path(self, atb_env, monkeypatch):
+        """A missing ATB index still redraws the charts and shows the load
+        error text, without clearing state.atb_load_error."""
+        ca = atb_env["ca"]
+        elements = atb_env["elements"]
+        _install_startup_picker(elements)
+        container = _FakeContainer(client_width=700)
+        elements["atbCharts"] = container
+        ca.state.atb_years = []
+        ca.state.atb_index = {}
+        ca.state.atb_load_error = "ATB index unavailable"
+
+        renders = []
+        real_render = ca.render_atb_charts
+        monkeypatch.setattr(
+            ca,
+            "render_atb_charts",
+            _recording_render(elements, renders, real=real_render),
+        )
+
+        ca._restore_workflow_state(_minimal_manifest())
+
+        assert renders, "restore must redraw even when the ATB index is empty"
+        assert "ATB index unavailable" in container.innerHTML
+        assert container.attributes.get("aria-busy") == "false"
+        assert ca.state.atb_load_error == "ATB index unavailable"
+        assert elements["atbYearSelect"].options == ["(no ATB index found)"]
+
+    def test_picker_change_still_rebuilds_cascade_and_renders(
+        self, atb_env, monkeypatch
+    ):
+        """The interactive picker path keeps its form-reset side effects and
+        cascade rebuild after the restore path was split out."""
+        ca = atb_env["ca"]
+        elements = atb_env["elements"]
+        # Stale dependent lists: only one detail/case option exists.
+        _install_startup_picker(
+            elements,
+            year="2023",
+            tech="NaturalGas",
+            detail="Dedicated",
+            case="Advanced",
+        )
+        ca.state.atb_years = [2023, 2024]
+        ca.state.atb_index = _atb_index_payload()
+        ca.state.atb_load_error = None
+
+        renders = []
+        monkeypatch.setattr(
+            ca, "render_atb_charts", _recording_render(elements, renders)
+        )
+        size_updates = MagicMock()
+        battery_updates = MagicMock()
+        monkeypatch.setattr(ca, "update_size_field_from_atb_size", size_updates)
+        monkeypatch.setattr(ca, "populate_default_battery_attributes", battery_updates)
+
+        ca.populate_atb_picker()
+
+        assert elements["atbTechDetailSelect"].options == ["F-Frame CC", "H-Frame CC"]
+        assert elements["atbTechDetailSelect"].value == "F-Frame CC"
+        assert elements["atbCostCaseSelect"].options == [
+            "Advanced",
+            "Conservative",
+            "Moderate",
+        ]
+        assert elements["atbCostCaseSelect"].value == "Advanced"
+        size_updates.assert_called_once_with()
+        battery_updates.assert_called_once_with()
+        assert renders[-1] == {
+            "atbYearSelect": "2023",
+            "atbTechSelect": "NaturalGas",
+            "atbTechDetailSelect": "F-Frame CC",
+            "atbCostCaseSelect": "Advanced",
+        }
