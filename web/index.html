@@ -3153,18 +3153,15 @@
             const fixedRow = document.getElementById('fixedTargetRow');
             const rangeRow = document.getElementById('rangeTargetRow');
             const methodSection = document.getElementById('clusteringMethodSection');
-            const demandSection = document.getElementById('demandWeightSection');
 
             if (checkbox.checked) {
                 fixedRow.style.display = 'none';
                 rangeRow.style.display = 'block';
                 if (methodSection) methodSection.style.display = 'none';
-                if (demandSection) demandSection.style.display = 'none';
             } else {
                 fixedRow.style.display = 'block';
                 rangeRow.style.display = 'none';
                 if (methodSection) methodSection.style.display = 'block';
-                if (demandSection) demandSection.style.display = 'block';
             }
         }
 

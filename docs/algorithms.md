@@ -200,7 +200,7 @@ flowchart TD
 
 ### Using Demand Weighting in the UI
 
-The **Demand Weighting** dropdown appears in the **Clustering** settings panel (Step 1), directly below the **Clustering Method** dropdown. It is hidden when Auto-optimize mode is enabled.
+The **Demand Weighting** dropdown appears in the **Clustering** settings panel (Step 1). It applies in both fixed-target and Auto-optimize modes, and switching between them keeps the selected weighting. Auto-optimize hides **Clustering Method** because it uses Louvain, but you can still change **Demand Weighting**.
 
 | Option | Method | When to use |
 |--------|--------|-------------|
