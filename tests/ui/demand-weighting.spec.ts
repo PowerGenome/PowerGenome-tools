@@ -69,20 +69,16 @@ async function readTransgrpByBa(page: Page): Promise<Record<string, string>> {
 /**
  * Restore the Regions step to the defaults asserted by this file.
  *
- * The dropdown tests share one booted app and only mutate the demand weighting
- * dropdown and the auto-optimize checkbox, so resetting those two (plus the BA
- * selection, for any future test that selects regions) is cheaper and just as
- * correct as reloading the page.
- *
- * The shared-app fixture does not run this before the first test, so boot
- * defaults are asserted there rather than here.
+ * The shared-app fixture skips this reset before the first test so it can
+ * assert boot defaults. Keep the Auto-optimize run last: this reset does not
+ * clear clustering results or restore every clustering input.
  */
 async function resetRegionsStep(page: Page) {
     await goToWizardStep(page, 1);
 
     const autoOptimize = page.locator('#autoOptimize');
     if (await autoOptimize.isChecked()) {
-        // Fires the change handler that re-shows the demand weighting section.
+        // Restore fixed mode before resetting the demand weight.
         await autoOptimize.uncheck();
     }
 
@@ -156,34 +152,47 @@ test.describe('Demand Weighting Dropdown (Step 1)', () => {
         await expect(dropdown).toHaveValue('demand-log');
     });
 
-    test('demand weight section is hidden when auto-optimize is enabled', async () => {
+    test('Auto-optimize keeps demand weighting editable and uses it for clustering', async () => {
+        test.setTimeout(270000);
+
         const page = suite.getPage();
+        const dropdown = page.locator('#demandWeightMethod');
+        const autoOptimize = page.locator('#autoOptimize');
 
-        const autoOptimizeCheckbox = page.locator('#autoOptimize');
-        const demandSection = page.locator('#demandWeightSection');
+        await dropdown.selectOption('demand-sqrt');
+        await autoOptimize.check();
+        await expect(dropdown).toBeVisible();
+        await expect(dropdown).toBeEnabled();
+        await expect(dropdown).toHaveValue('demand-sqrt');
+        await expect(page.locator('#clusteringMethodSection')).toBeHidden();
 
-        // Initially visible
-        await expect(demandSection).toBeVisible();
+        await page.locator('#selectAllBtn').click();
+        await expect(page.locator('#selectedCount')).toHaveText('134');
+        await page.locator('#groupingColumn').selectOption('transgrp');
+        await page.locator('#esrCompatibleClustering').uncheck();
+        await page.locator('#minRegions').fill('5');
+        await page.locator('#maxRegions').fill('75');
 
-        // Enable auto-optimize
-        await autoOptimizeCheckbox.check();
+        const yamlOut = page.locator('#yamlOut');
+        const runAndReadMemberships = async () => {
+            // A failed rerun can leave the previous YAML in the read-only output.
+            await yamlOut.evaluate((output: HTMLTextAreaElement) => { output.value = ''; });
+            await page.locator('#runBtn').click({ timeout: 120000 });
+            await expect(yamlOut).toHaveValue(/region_aggregations:/, { timeout: 120000 });
 
-        // Demand weight section should be hidden
-        await expect(demandSection).toBeHidden();
-    });
+            const aggregations = parseRegionAggregations(await yamlOut.inputValue());
+            // Ignore region names and ordering; compare only which BAs cluster together.
+            return Object.values(aggregations).map((members) => JSON.stringify(members.sort())).sort();
+        };
 
-    test('demand weight section reappears when auto-optimize is disabled', async () => {
-        const page = suite.getPage();
+        const weighted = await runAndReadMemberships();
 
-        const autoOptimizeCheckbox = page.locator('#autoOptimize');
-        const demandSection = page.locator('#demandWeightSection');
+        await dropdown.selectOption('none');
+        await expect(dropdown).toHaveValue('none');
+        await expect(autoOptimize).toBeChecked();
+        const unweighted = await runAndReadMemberships();
 
-        // Enable then disable auto-optimize
-        await autoOptimizeCheckbox.check();
-        await expect(demandSection).toBeHidden();
-
-        await autoOptimizeCheckbox.uncheck();
-        await expect(demandSection).toBeVisible();
+        expect(weighted).not.toEqual(unweighted);
     });
 });
 
