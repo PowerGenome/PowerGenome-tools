@@ -1376,6 +1376,68 @@ class TestLivePlantClusteringOutputs:
         assert {g["tech_group"] for g in ca.state.plant_groups} == {related_tech}
         assert ca.state.omit_selected == {_PLANT_CC_TECH}
 
+    def test_omitting_all_technologies_clears_outputs_and_reincluding_one_recovers(
+        self, plant_env
+    ):
+        ca, elements = plant_env
+        other_tech = "Natural Gas Fired Combustion Turbine"
+        ca.state.plants_df.loc[4, "technology"] = other_tech
+        # One cluster per region/technology pair leaves a real split candidate.
+        elements["plantBudget"].value = "3"
+        ca.render_omit_editor()
+        ca.on_run_plant_clustering(None)
+
+        initial_settings = {
+            "num_clusters": {_PLANT_CC_TECH: 1, other_tech: 1},
+            "group_technologies": False,
+            "tech_groups": {},
+            "alt_num_clusters": {},
+        }
+        assert yaml.safe_load(elements["plantYamlOut"].value) == initial_settings
+        assert ca.state.plant_cluster_settings == initial_settings
+        assert ca.state.plant_candidates
+
+        elements["omitAvailableList"].selectedOptions = [
+            SimpleNamespace(value=_PLANT_CC_TECH),
+            SimpleNamespace(value=other_tech),
+        ]
+        ca.on_omit_move_to_selected(None)
+
+        assert elements["plantYamlOut"].value == ""
+        assert ca.state.plant_cluster_settings is None
+        assert ca.state.plant_groups == []
+        assert ca.state.plant_candidates == []
+        result = elements["plantResultText"]
+        assert result.textContent == (
+            "Plant clustering error: No plants found for current model regions"
+        )
+        assert result.className == "status error"
+
+        elements["omitSelectedList"].selectedOptions = [
+            SimpleNamespace(value=_PLANT_CC_TECH)
+        ]
+        ca.on_omit_move_to_available(None)
+
+        recovered_settings = {
+            "num_clusters": {_PLANT_CC_TECH: 1},
+            "group_technologies": False,
+            "tech_groups": {},
+            "alt_num_clusters": {"ba1": {_PLANT_CC_TECH: 2}},
+        }
+        assert yaml.safe_load(elements["plantYamlOut"].value) == recovered_settings
+        assert ca.state.plant_cluster_settings == recovered_settings
+        groups = {(g["model_region"], g["tech_group"]) for g in ca.state.plant_groups}
+        assert groups == {("ba1", _PLANT_CC_TECH), ("ba2", _PLANT_CC_TECH)}
+        assert {
+            (g["model_region"], g["tech_group"]) for g in ca.state.plant_candidates
+        } == {("ba1", _PLANT_CC_TECH)}
+        assert ca.state.omit_selected == {other_tech}
+        assert (
+            result.textContent
+            == "Plant clustering ready: 3 clusters across technologies."
+        )
+        assert result.className == "status success"
+
     def test_including_last_omission_refreshes_yaml_without_reapplying_defaults(
         self, plant_env
     ):

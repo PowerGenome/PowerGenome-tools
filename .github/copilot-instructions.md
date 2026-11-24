@@ -76,7 +76,7 @@ The web app has many AppState attributes that depend on upstream selections. Whe
 ### Current Dependencies
 
 **Region-Dependent State** (depends on `region_aggregations`, `is_clustered`, `ba_to_region`):
-- Plant clustering settings (`plant_cluster_settings`)
+- Plant clustering settings and whether clustering has started (`plant_cluster_settings`, `plant_clustering_started`)
 - Resource group files and assignments (`resource_group_files`, `resource_group_assignments`)
 - Renewables clustering and all capacity attributes (`renewables_clusters`, `renewables_clusters_info`, `renewables_region_capacity_mw`, etc.)
 - ESR zones and policies (`esr_zones`, `esr_map`, `esr_type_map`, `esr_policy_states`, `emission_policies_df`)

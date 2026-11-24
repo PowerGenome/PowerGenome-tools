@@ -211,6 +211,7 @@ class AppState:
         self.plant_cluster_settings = (
             None  # parsed YAML dict from plant clustering output
         )
+        self.plant_clustering_started = False
         self.ccs_disposal_cost = 20  # Default CCS disposal cost in $/metric ton
         self.ccs_disposal_cost_map = {}  # tech_name -> disposal cost override
 
@@ -2431,6 +2432,7 @@ def reset_region_dependent_state():
     """
     # Plant clustering settings depend on region mapping
     state.plant_cluster_settings = None
+    state.plant_clustering_started = False
     state.plant_candidates = []
     state.plant_groups = []
     state.plant_candidate_overrides = {}
@@ -3503,9 +3505,9 @@ def update_default_cluster_budget(event=None):
 
 
 def on_plant_technology_change(event=None):
-    """Refresh existing results after a grouping or omission edit."""
+    """Rerun after a grouping or omission edit once clustering has started."""
     update_default_cluster_budget()
-    if state.plant_cluster_settings is not None:
+    if state.plant_clustering_started:
         on_run_plant_clustering(event)
 
 
@@ -3744,6 +3746,7 @@ def refresh_groups_for_omit_change(event=None):
 
 def on_run_plant_clustering(event):
     """Handle plant clustering run."""
+    state.plant_clustering_started = True
     yaml_el = document.getElementById("plantYamlOut")
     try:
         budget_val = int(document.getElementById("plantBudget").value)
@@ -10311,6 +10314,7 @@ def _restore_workflow_state(manifest, settings_yamls=None, resource_group_files=
         state_payload.get("modified_new_resources") or {}
     )
     state.plant_cluster_settings = state_payload.get("plant_cluster_settings")
+    state.plant_clustering_started = bool(state.plant_cluster_settings)
     state.plant_candidate_overrides = {
         (str(item["model_region"]), str(item["tech_group"])): int(item["num_clusters"])
         for item in state_payload.get("plant_candidate_overrides") or []
