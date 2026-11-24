@@ -83,8 +83,10 @@ class TestResetRegionDependentState:
     def test_resets_plant_cluster_settings(self, cluster_app):
         """Test that plant clustering settings are reset."""
         cluster_app.state.plant_cluster_settings = {"num_clusters": 100}
+        cluster_app.state.plant_clustering_started = True
         cluster_app.reset_region_dependent_state()
         assert cluster_app.state.plant_cluster_settings is None
+        assert cluster_app.state.plant_clustering_started is False
 
     def test_resets_resource_group_files(self, cluster_app):
         """Test that resource group files are reset."""

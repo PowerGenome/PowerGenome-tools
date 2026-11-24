@@ -23,6 +23,7 @@ import sys
 import zipfile
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -1100,8 +1101,63 @@ class TestImportResetsAndRecomputesCurveData:
 
 
 # ---------------------------------------------------------------------------
-# _restore_plant_clustering_outputs: rebuild Step 3 outputs after import
+# Step 3 (Existing Plants) clustering output
 # ---------------------------------------------------------------------------
+
+
+_PLANT_CC_TECH = "Natural Gas Fired Combined Cycle"
+
+
+@pytest.fixture
+def plant_env(cluster_app, monkeypatch):
+    """Run real plant clustering with isolated app state and browser stubs."""
+    import pandas as pd
+
+    ca = cluster_app
+    monkeypatch.setattr(ca, "state", ca.AppState())
+    monkeypatch.setattr(
+        ca, "CLUSTER_COLORS", ["#111111", "#222222", "#333333", "#444444"]
+    )
+
+    # 3 plants in ba1, 2 in ba2; all one technology unless a test varies them.
+    ca.state.selected_bas = {"ba1", "ba2"}
+    ca.state.plants_df = pd.DataFrame(
+        {
+            "plant_id": [1, 2, 3, 4, 5],
+            "technology": [_PLANT_CC_TECH] * 5,
+            "capacity_mw": [500.0, 600.0, 550.0, 400.0, 450.0],
+            "heat_rate_mmbtu_mwh": [6.0, 9.0, 7.0, 6.5, 8.5],
+            "fom_per_mwyr": [20.0, 25.0, 22.0, 18.0, 21.0],
+        }
+    )
+    ca.state.plant_region_map = pd.DataFrame(
+        {
+            "plant_id": [1, 2, 3, 4, 5],
+            "region": ["ba1", "ba1", "ba1", "ba2", "ba2"],
+        }
+    )
+
+    elements = {}
+
+    def _get_element(element_id):
+        el = elements.get(element_id)
+        if el is None:
+            el = MagicMock()
+            elements[element_id] = el
+        return el
+
+    _get_element("plantBudget").value = "10"
+    _get_element("capThreshold").value = "0"
+    _get_element("hrThreshold").value = "0.5"
+    _get_element("groupTechDefault").checked = True
+    _get_element("plantYamlOut").value = ""
+    for element_id in ("omitAvailableList", "omitSelectedList"):
+        el = _get_element(element_id)
+        el.options = []
+        el.selectedOptions = []
+    monkeypatch.setattr(ca.document, "getElementById", _get_element)
+
+    return ca, elements
 
 
 class TestRestorePlantClusteringOutputs:
@@ -1115,70 +1171,7 @@ class TestRestorePlantClusteringOutputs:
     export still uses them.
     """
 
-    _COLORS = ["#111111", "#222222", "#333333", "#444444"]
-    _TECH = "Natural Gas Fired Combined Cycle"
-
-    _STATE_ATTRS = [
-        "plants_df",
-        "plant_region_map",
-        "plant_cluster_settings",
-        "plant_candidate_overrides",
-        "plant_groups",
-        "plant_candidates",
-        "region_aggregations",
-        "ba_to_region",
-        "selected_bas",
-        "all_bas",
-        "is_clustered",
-        "omit_selected",
-    ]
-
-    @pytest.fixture
-    def plant_env(self, cluster_app, monkeypatch):
-        """Set up plant data + DOM stubs so on_run_plant_clustering can run
-        for real, then restore global state afterwards."""
-        import pandas as pd
-
-        ca = cluster_app
-        ca.CLUSTER_COLORS = self._COLORS  # prevent ZeroDivisionError
-        saved = {name: getattr(ca.state, name) for name in self._STATE_ATTRS}
-
-        # 3 plants in ba1 (RegA), 2 in ba2 (RegB); all one tech group.
-        ca.state.plants_df = pd.DataFrame(
-            {
-                "plant_id": [1, 2, 3, 4, 5],
-                "technology": [self._TECH] * 5,
-                "capacity_mw": [500.0, 600.0, 550.0, 400.0, 450.0],
-                "heat_rate_mmbtu_mwh": [6.0, 9.0, 7.0, 6.5, 8.5],
-                "fom_per_mwyr": [20.0, 25.0, 22.0, 18.0, 21.0],
-            }
-        )
-        ca.state.plant_region_map = pd.DataFrame(
-            {
-                "plant_id": [1, 2, 3, 4, 5],
-                "region": ["ba1", "ba1", "ba1", "ba2", "ba2"],
-            }
-        )
-
-        elements = {}
-
-        def _get_element(element_id):
-            el = elements.get(element_id)
-            if el is None:
-                el = MagicMock()
-                elements[element_id] = el
-            return el
-
-        _get_element("plantBudget").value = "10"
-        _get_element("capThreshold").value = "0"
-        _get_element("hrThreshold").value = "0.5"
-        _get_element("groupTechDefault").checked = True
-        monkeypatch.setattr(ca.document, "getElementById", _get_element)
-
-        yield ca, elements
-
-        for name, value in saved.items():
-            setattr(ca.state, name, value)
+    _TECH = _PLANT_CC_TECH
 
     def _manifest(self, settings=None, overrides=None, include_settings=True):
         state = {
@@ -1311,6 +1304,165 @@ class TestRestorePlantClusteringOutputs:
         runner.assert_not_called()
         assert ca.state.plant_cluster_settings is None
         assert ca.state.plant_groups == []
+
+
+class TestLivePlantClusteringOutputs:
+    def test_clear_groups_waits_for_first_run_then_refreshes_ungrouped_yaml(
+        self, plant_env
+    ):
+        ca, elements = plant_env
+        standalone_tech = "Petroleum Liquids"
+        ca.state.plants_df.loc[0, "technology"] = standalone_tech
+        ca.on_reset_groups(None)
+
+        ca.on_clear_groups(None)
+
+        assert elements["plantYamlOut"].value == ""
+        assert ca.state.plant_cluster_settings is None
+        assert ca.state.plant_groups == []
+
+        ca.on_reset_groups(None)
+        ca.on_run_plant_clustering(None)
+        grouped = yaml.safe_load(elements["plantYamlOut"].value)
+        assert grouped["group_technologies"] is True
+        assert standalone_tech in grouped["tech_groups"]["Other_peaker"]
+        assert set(grouped["num_clusters"]) == {_PLANT_CC_TECH, "Other_peaker"}
+
+        ca.on_clear_groups(None)
+
+        ungrouped = yaml.safe_load(elements["plantYamlOut"].value)
+        assert ungrouped == ca.state.plant_cluster_settings
+        assert ungrouped["group_technologies"] is False
+        assert ungrouped["tech_groups"] == {}
+        assert set(ungrouped["num_clusters"]) == {_PLANT_CC_TECH, standalone_tech}
+        assert ca.state.custom_tech_groups == {}
+        assert {g["tech_group"] for g in ca.state.plant_groups} == {
+            _PLANT_CC_TECH,
+            standalone_tech,
+        }
+
+    def test_omit_refreshes_yaml_and_excludes_all_aliases_but_not_related_tech(
+        self, plant_env
+    ):
+        ca, elements = plant_env
+        alias = "Natural Gas Combined Cycle"
+        related_tech = "Natural Gas Fired Combustion Turbine"
+        ca.state.plants_df["technology"] = [
+            _PLANT_CC_TECH,
+            alias,
+            related_tech,
+            alias,
+            related_tech,
+        ]
+        ca.render_omit_editor()
+        ca.on_run_plant_clustering(None)
+        before = yaml.safe_load(elements["plantYamlOut"].value)
+        assert set(before["num_clusters"]) == {_PLANT_CC_TECH, related_tech}
+        cc_units = sum(
+            g["n_units"]
+            for g in ca.state.plant_groups
+            if g["tech_group"] == _PLANT_CC_TECH
+        )
+        assert cc_units == 3
+
+        elements["omitAvailableList"].selectedOptions = [
+            SimpleNamespace(value=_PLANT_CC_TECH)
+        ]
+        ca.on_omit_move_to_selected(None)
+
+        after = yaml.safe_load(elements["plantYamlOut"].value)
+        assert after == ca.state.plant_cluster_settings
+        assert set(after["num_clusters"]) == {related_tech}
+        assert {g["tech_group"] for g in ca.state.plant_groups} == {related_tech}
+        assert ca.state.omit_selected == {_PLANT_CC_TECH}
+
+    def test_omitting_all_technologies_clears_outputs_and_reincluding_one_recovers(
+        self, plant_env
+    ):
+        ca, elements = plant_env
+        other_tech = "Natural Gas Fired Combustion Turbine"
+        ca.state.plants_df.loc[4, "technology"] = other_tech
+        # One cluster per region/technology pair leaves a real split candidate.
+        elements["plantBudget"].value = "3"
+        ca.render_omit_editor()
+        ca.on_run_plant_clustering(None)
+
+        initial_settings = {
+            "num_clusters": {_PLANT_CC_TECH: 1, other_tech: 1},
+            "group_technologies": False,
+            "tech_groups": {},
+            "alt_num_clusters": {},
+        }
+        assert yaml.safe_load(elements["plantYamlOut"].value) == initial_settings
+        assert ca.state.plant_cluster_settings == initial_settings
+        assert ca.state.plant_candidates
+
+        elements["omitAvailableList"].selectedOptions = [
+            SimpleNamespace(value=_PLANT_CC_TECH),
+            SimpleNamespace(value=other_tech),
+        ]
+        ca.on_omit_move_to_selected(None)
+
+        assert elements["plantYamlOut"].value == ""
+        assert ca.state.plant_cluster_settings is None
+        assert ca.state.plant_groups == []
+        assert ca.state.plant_candidates == []
+        result = elements["plantResultText"]
+        assert result.textContent == (
+            "Plant clustering error: No plants found for current model regions"
+        )
+        assert result.className == "status error"
+
+        elements["omitSelectedList"].selectedOptions = [
+            SimpleNamespace(value=_PLANT_CC_TECH)
+        ]
+        ca.on_omit_move_to_available(None)
+
+        recovered_settings = {
+            "num_clusters": {_PLANT_CC_TECH: 1},
+            "group_technologies": False,
+            "tech_groups": {},
+            "alt_num_clusters": {"ba1": {_PLANT_CC_TECH: 2}},
+        }
+        assert yaml.safe_load(elements["plantYamlOut"].value) == recovered_settings
+        assert ca.state.plant_cluster_settings == recovered_settings
+        groups = {(g["model_region"], g["tech_group"]) for g in ca.state.plant_groups}
+        assert groups == {("ba1", _PLANT_CC_TECH), ("ba2", _PLANT_CC_TECH)}
+        assert {
+            (g["model_region"], g["tech_group"]) for g in ca.state.plant_candidates
+        } == {("ba1", _PLANT_CC_TECH)}
+        assert ca.state.omit_selected == {other_tech}
+        assert (
+            result.textContent
+            == "Plant clustering ready: 3 clusters across technologies."
+        )
+        assert result.className == "status success"
+
+    def test_including_last_omission_refreshes_yaml_without_reapplying_defaults(
+        self, plant_env
+    ):
+        ca, elements = plant_env
+        default_omission = "Solar Thermal with Energy Storage"
+        ca.state.plants_df.loc[0, "technology"] = default_omission
+        ca.render_omit_editor()
+        ca.on_run_plant_clustering(None)
+        before = yaml.safe_load(elements["plantYamlOut"].value)
+        assert set(before["num_clusters"]) == {_PLANT_CC_TECH}
+        assert ca.state.omit_selected == {default_omission}
+
+        elements["omitSelectedList"].selectedOptions = [
+            SimpleNamespace(value=default_omission)
+        ]
+        ca.on_omit_move_to_available(None)
+
+        after = yaml.safe_load(elements["plantYamlOut"].value)
+        assert after == ca.state.plant_cluster_settings
+        assert set(after["num_clusters"]) == {_PLANT_CC_TECH, default_omission}
+        assert {g["tech_group"] for g in ca.state.plant_groups} == {
+            _PLANT_CC_TECH,
+            default_omission,
+        }
+        assert ca.state.omit_selected == set()
 
 
 # ---------------------------------------------------------------------------

@@ -211,6 +211,7 @@ class AppState:
         self.plant_cluster_settings = (
             None  # parsed YAML dict from plant clustering output
         )
+        self.plant_clustering_started = False
         self.ccs_disposal_cost = 20  # Default CCS disposal cost in $/metric ton
         self.ccs_disposal_cost_map = {}  # tech_name -> disposal cost override
 
@@ -1846,7 +1847,7 @@ def apply_default_grouping(tech_group, enabled=True, group_map=None):
 def prepare_plants_dataframe(
     *,
     group_enabled=True,
-    omit_tokens=None,
+    omitted_techs=None,
     group_map=None,
 ):
     """Merge plant data with BA mapping and apply technology grouping."""
@@ -1861,11 +1862,14 @@ def prepare_plants_dataframe(
     df["model_region"] = df["region"].map(ba_to_region)
     df = df.dropna(subset=["model_region"])
 
-    # Normalize technologies and optionally group/omit
+    # The omit editor lists canonical technologies, not raw plant labels.
+    omit_tokens = () if omitted_techs is not None else None
     df["tech_group"] = df["technology"].apply(
         lambda t: normalize_technology(t, omit_tokens=omit_tokens)
     )
-    df = df[df["tech_group"].notna()].copy()
+    df = df[
+        df["tech_group"].notna() & ~df["tech_group"].isin(omitted_techs or ())
+    ].copy()
     df["tech_group"] = df["tech_group"].apply(
         lambda t: apply_default_grouping(t, enabled=group_enabled, group_map=group_map)
     )
@@ -1886,13 +1890,13 @@ def suggest_plant_clusters(
     hr_iqr_threshold=0.8,
     *,
     group_enabled=True,
-    omit_tokens=None,
+    omitted_techs=None,
     group_map=None,
 ):
     """Suggest cluster counts per (model_region, tech_group) under a hard budget."""
     df = prepare_plants_dataframe(
         group_enabled=group_enabled,
-        omit_tokens=omit_tokens,
+        omitted_techs=omitted_techs,
         group_map=group_map,
     )
 
@@ -2054,7 +2058,9 @@ def suggest_plant_clusters(
     if group_enabled:
         active_map = group_map if group_map is not None else DEFAULT_TECH_GROUPS
         tech_groups = {
-            name: sorted(list(members)) for name, members in active_map.items()
+            name: sorted(included)
+            for name, members in active_map.items()
+            if (included := set(members).difference(omitted_techs or ()))
         }
     else:
         tech_groups = {
@@ -2426,6 +2432,7 @@ def reset_region_dependent_state():
     """
     # Plant clustering settings depend on region mapping
     state.plant_cluster_settings = None
+    state.plant_clustering_started = False
     state.plant_candidates = []
     state.plant_groups = []
     state.plant_candidate_overrides = {}
@@ -3307,6 +3314,10 @@ def render_plant_candidates():
     if not container:
         return
 
+    if state.plant_cluster_settings is None:
+        container.innerHTML = "<em>Run plant clustering to see suggestions.</em>"
+        return
+
     if not state.plant_candidates:
         container.innerHTML = (
             "<em>No additional splits recommended within the current budget.</em>"
@@ -3438,55 +3449,37 @@ window.onCandidateClusterChange = create_proxy(on_candidate_cluster_change)
 # --------------------------------------------------------------------------
 
 
-def get_normalized_techs(omit_tokens=None):
-    """Return sorted list of normalized technologies from the plant data."""
+def get_normalized_techs():
+    """Return all normalized technologies from the plant data."""
     if state.plants_df is None:
-        return []
+        return set()
 
     techs = set()
     for tech in state.plants_df.get("technology", []):
-        normalized = normalize_technology(tech, omit_tokens=omit_tokens)
+        normalized = normalize_technology(tech, omit_tokens=())
         if normalized:
             techs.add(normalized)
-    return sorted(techs)
+    return techs
 
 
-def get_selected_omit_tokens():
-    """Return list of technologies currently marked for omission."""
-    # Prefer state cache populated by the dual-list UI
-    if state.omit_selected:
-        return sorted(state.omit_selected)
-
-    selected_el = document.getElementById("omitSelectedList")
-    tokens = []
-    if selected_el and hasattr(selected_el, "options"):
-        tokens = [opt.value for opt in selected_el.options]
-
-    if not tokens:
-        tokens = sorted(DEFAULT_OMIT_TOKENS)
-
-    return tokens
+def get_plant_technology_options():
+    """Read the same technology filters for the budget and clustering."""
+    group_checkbox = document.getElementById("groupTechDefault")
+    group_enabled = group_checkbox.checked if group_checkbox else True
+    # Both sets are empty before initialization; an empty selection alone is valid.
+    omitted_techs = (
+        state.omit_selected if state.omit_selected or state.omit_available else None
+    )
+    return {
+        "group_enabled": group_enabled,
+        "group_map": state.custom_tech_groups,
+        "omitted_techs": omitted_techs,
+    }
 
 
 def calculate_min_clusters_and_default():
     """Return (min_clusters, default_clusters) based on current tech grouping/omits."""
-    group_checkbox = document.getElementById("groupTechDefault")
-    group_enabled = group_checkbox.checked if group_checkbox else True
-    omit_tokens = get_selected_omit_tokens()
-
-    active_group_map = None
-    if group_enabled:
-        active_group_map = (
-            clone_group_map(state.custom_tech_groups)
-            if state.custom_tech_groups
-            else clone_group_map(DEFAULT_TECH_GROUPS)
-        )
-
-    df = prepare_plants_dataframe(
-        group_enabled=group_enabled,
-        omit_tokens=omit_tokens,
-        group_map=active_group_map,
-    )
+    df = prepare_plants_dataframe(**get_plant_technology_options())
 
     # One cluster per (model_region, tech_group) is the floor
     min_clusters = int(df.groupby(["model_region", "tech_group"]).ngroups)
@@ -3511,6 +3504,13 @@ def update_default_cluster_budget(event=None):
         helper_text.textContent = f"Minimum clusters: {min_clusters}. Default set to {default_clusters} (+15%)."
 
 
+def on_plant_technology_change(event=None):
+    """Rerun after a grouping or omission edit once clustering has started."""
+    update_default_cluster_budget()
+    if state.plant_clustering_started:
+        on_run_plant_clustering(event)
+
+
 def ensure_current_group():
     """Ensure the currently selected group exists."""
     if state.current_group and state.current_group in state.custom_tech_groups:
@@ -3521,26 +3521,23 @@ def ensure_current_group():
         state.current_group = None
 
 
-def reset_custom_groups(omit_tokens=None):
+def reset_custom_groups():
     """Reset custom grouping to defaults and recompute available tech list."""
     state.custom_tech_groups = clone_group_map(DEFAULT_TECH_GROUPS)
-    state.current_group = sorted(state.custom_tech_groups.keys())[0]
-    normalized = set(get_normalized_techs(omit_tokens=omit_tokens))
-    grouped = set()
     for members in state.custom_tech_groups.values():
-        grouped.update(members)
-    state.available_techs = normalized - grouped
+        members.difference_update(state.omit_selected)
+    state.current_group = sorted(state.custom_tech_groups.keys())[0]
+    grouped = set().union(*state.custom_tech_groups.values())
+    state.available_techs = get_normalized_techs() - state.omit_selected - grouped
     render_group_editor()
-    update_default_cluster_budget()
 
 
-def clear_custom_groups(omit_tokens=None):
-    """Clear all groupings; make all techs available."""
+def clear_custom_groups():
+    """Clear all groupings and make non-omitted techs available."""
     state.custom_tech_groups = {}
     state.current_group = None
-    state.available_techs = set(get_normalized_techs(omit_tokens=omit_tokens))
+    state.available_techs = get_normalized_techs() - state.omit_selected
     render_group_editor()
-    update_default_cluster_budget()
 
 
 def render_group_editor():
@@ -3599,7 +3596,7 @@ def render_omit_editor():
 
     # Initialize omit sets if empty
     if not state.omit_selected and not state.omit_available:
-        all_techs = set(get_normalized_techs(omit_tokens=[]))
+        all_techs = get_normalized_techs()
         default_selected = {
             tech
             for tech in all_techs
@@ -3635,7 +3632,6 @@ def on_omit_move_to_selected(event):
         return
     state.omit_available -= set(chosen)
     state.omit_selected |= set(chosen)
-    render_omit_editor()
     refresh_groups_for_omit_change()
 
 
@@ -3649,13 +3645,12 @@ def on_omit_move_to_available(event):
         return
     state.omit_selected -= set(chosen)
     state.omit_available |= set(chosen)
-    render_omit_editor()
     refresh_groups_for_omit_change()
 
 
 def on_reset_omit_defaults(event=None):
     """Reset omitted technologies to defaults."""
-    all_techs = set(get_normalized_techs(omit_tokens=[]))
+    all_techs = get_normalized_techs()
     default_selected = {
         tech
         for tech in all_techs
@@ -3663,13 +3658,11 @@ def on_reset_omit_defaults(event=None):
     }
     state.omit_selected = default_selected
     state.omit_available = all_techs - default_selected
-    render_omit_editor()
     refresh_groups_for_omit_change()
 
 
 def on_add_group(event):
     name_input = document.getElementById("newGroupName")
-    omit_tokens = get_selected_omit_tokens()
     if not name_input:
         return
     group_name = name_input.value.strip()
@@ -3679,12 +3672,9 @@ def on_add_group(event):
         state.custom_tech_groups[group_name] = set()
     state.current_group = group_name
     name_input.value = ""
-    # Ensure available list is up to date
-    state.available_techs = set(get_normalized_techs(omit_tokens=omit_tokens))
-    for members in state.custom_tech_groups.values():
-        state.available_techs -= members
+    assigned = set().union(*state.custom_tech_groups.values())
+    state.available_techs = get_normalized_techs() - state.omit_selected - assigned
     render_group_editor()
-    update_default_cluster_budget()
 
 
 def on_add_tech_to_group(event):
@@ -3700,7 +3690,7 @@ def on_add_tech_to_group(event):
     state.custom_tech_groups.setdefault(state.current_group, set()).update(selected)
     state.available_techs -= set(selected)
     render_group_editor()
-    update_default_cluster_budget()
+    on_plant_technology_change()
 
 
 def on_remove_tech_from_group(event):
@@ -3718,7 +3708,7 @@ def on_remove_tech_from_group(event):
             state.custom_tech_groups[state.current_group].remove(tech)
             state.available_techs.add(tech)
     render_group_editor()
-    update_default_cluster_budget()
+    on_plant_technology_change()
 
 
 def on_group_change(event):
@@ -3729,71 +3719,55 @@ def on_group_change(event):
 
 
 def on_reset_groups(event):
-    omit_tokens = get_selected_omit_tokens()
-    reset_custom_groups(omit_tokens=omit_tokens)
+    reset_custom_groups()
+    on_plant_technology_change()
 
 
 def on_clear_groups(event):
-    omit_tokens = get_selected_omit_tokens()
-    clear_custom_groups(omit_tokens=omit_tokens)
+    clear_custom_groups()
+    on_plant_technology_change()
 
 
 def refresh_groups_for_omit_change(event=None):
     """Recompute available techs when omit setting changes."""
-    omit_tokens = get_selected_omit_tokens()
-    normalized = set(get_normalized_techs(omit_tokens=omit_tokens))
     # Keep omit state in sync with current tech universe
-    all_techs = set(get_normalized_techs(omit_tokens=[]))
-    state.omit_selected = {t for t in state.omit_selected if t in all_techs}
+    all_techs = get_normalized_techs()
+    state.omit_selected &= all_techs
     state.omit_available = all_techs - state.omit_selected
     render_omit_editor()
     # Keep existing assignments if still valid
-    for group, members in list(state.custom_tech_groups.items()):
-        state.custom_tech_groups[group] = {m for m in members if m in normalized}
-    assigned = (
-        set().union(*state.custom_tech_groups.values())
-        if state.custom_tech_groups
-        else set()
-    )
-    state.available_techs = normalized - assigned
-    ensure_current_group()
+    for members in state.custom_tech_groups.values():
+        members.intersection_update(state.omit_available)
+    assigned = set().union(*state.custom_tech_groups.values())
+    state.available_techs = state.omit_available - assigned
     render_group_editor()
-    update_default_cluster_budget()
+    on_plant_technology_change()
 
 
 def on_run_plant_clustering(event):
     """Handle plant clustering run."""
+    state.plant_clustering_started = True
+    yaml_el = document.getElementById("plantYamlOut")
     try:
         budget_val = int(document.getElementById("plantBudget").value)
         cap_thresh = float(document.getElementById("capThreshold").value)
         hr_thresh = float(document.getElementById("hrThreshold").value)
-        group_checkbox = document.getElementById("groupTechDefault")
-        omit_tokens = get_selected_omit_tokens()
-        group_enabled = group_checkbox.checked if group_checkbox else True
-
-        active_group_map = None
-        if group_enabled:
-            # If user customized groups, prefer those; otherwise fall back to defaults
-            active_group_map = (
-                clone_group_map(state.custom_tech_groups)
-                if state.custom_tech_groups
-                else clone_group_map(DEFAULT_TECH_GROUPS)
-            )
 
         yaml_str, total_clusters, effective_budget = suggest_plant_clusters(
             budget=budget_val,
             cap_threshold=cap_thresh,
             hr_iqr_threshold=hr_thresh,
-            group_enabled=group_enabled,
-            omit_tokens=omit_tokens,
-            group_map=active_group_map,
+            **get_plant_technology_options(),
         )
-
-        try:
-            state.plant_cluster_settings = yaml.safe_load(yaml_str)
-        except Exception:
-            state.plant_cluster_settings = None
+        state.plant_cluster_settings = yaml.safe_load(yaml_str)
     except Exception as exc:
+        state.plant_cluster_settings = None
+        state.plant_groups = []
+        state.plant_candidates = []
+        state.plant_candidate_overrides = {}
+        if yaml_el is not None:
+            yaml_el.value = ""
+        render_plant_candidates()
         set_status(f"Plant clustering error: {exc}", "error")
         result_el = document.getElementById("plantResultText")
         if result_el:
@@ -3801,7 +3775,6 @@ def on_run_plant_clustering(event):
             result_el.className = "status error"
         return
 
-    yaml_el = document.getElementById("plantYamlOut")
     if yaml_el is not None:
         yaml_el.value = yaml_str
 
@@ -10328,7 +10301,9 @@ def _restore_workflow_state(manifest, settings_yamls=None, resource_group_files=
     state.cluster_colors = dict(state_payload.get("cluster_colors") or {})
     state.custom_tech_groups = {
         str(name): set(values or [])
-        for name, values in (state_payload.get("custom_tech_groups") or {}).items()
+        for name, values in (
+            state_payload.get("custom_tech_groups", DEFAULT_TECH_GROUPS) or {}
+        ).items()
     }
     state.available_techs = set(state_payload.get("available_techs") or [])
     state.current_group = state_payload.get("current_group")
@@ -10339,6 +10314,7 @@ def _restore_workflow_state(manifest, settings_yamls=None, resource_group_files=
         state_payload.get("modified_new_resources") or {}
     )
     state.plant_cluster_settings = state_payload.get("plant_cluster_settings")
+    state.plant_clustering_started = bool(state.plant_cluster_settings)
     state.plant_candidate_overrides = {
         (str(item["model_region"]), str(item["tech_group"])): int(item["num_clusters"])
         for item in state_payload.get("plant_candidate_overrides") or []
@@ -11004,7 +10980,7 @@ async def main():
             "click", create_proxy(on_download_plant_yaml)
         )
         document.getElementById("groupTechDefault").addEventListener(
-            "change", create_proxy(update_default_cluster_budget)
+            "change", create_proxy(on_plant_technology_change)
         )
         document.getElementById("groupingColumn").addEventListener(
             "change", create_proxy(on_grouping_change)
@@ -11163,7 +11139,7 @@ async def main():
 
         # Initialize omit list and grouping editor with defaults
         render_omit_editor()
-        reset_custom_groups(omit_tokens=get_selected_omit_tokens())
+        reset_custom_groups()
 
         # Seed the plant budget with a 15% buffer above the minimum clusters
         update_default_cluster_budget()
