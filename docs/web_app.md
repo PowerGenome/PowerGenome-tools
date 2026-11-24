@@ -526,10 +526,10 @@ The Existing Plants step allows you to cluster existing generators within each m
 
 1. **Select technologies to omit**: Choose which technology types to exclude from clustering (e.g., "All Other", "Solar thermal", "Flywheel" are pre-selected).
 2. **Group similar technologies**: Check "Group similar technologies" to automatically group related tech types (Biomass and Other peaker by default). Uncheck to treat each technology individually.
-3. **Customize groups (optional)**: Add new groups and move technologies between "Available" and "In selected group" lists to create custom groupings.
+3. **Customize groups (optional)**: Add new groups and move technologies between "Available" and "In selected group" lists to create custom groupings. Use **Clear Groups** to remove all groupings, or **Reset Defaults** to bring them back.
 4. **Set cluster budget**: Specify the total number of clusters across all technologies and regions. The default is automatically set to 15% above the minimum required (one cluster per tech/region combination).
 5. **Adjust thresholds (optional)**: Modify *Capacity Threshold* (MW) and *Heat-rate IQR Threshold* to control when generators are suggested for splitting.
-6. **Run clustering**: Click *Run Plant Clustering* to generate cluster assignments.
+6. **Run clustering**: Click *Run Plant Clustering* to generate cluster assignments. If results are already displayed, grouping and omission edits rerun clustering and refresh the Plant YAML. Like a manual rerun, this resets any split overrides.
 7. **Review suggestions**: Above the Plant YAML output, click **Show** next to "Top candidates for more splits" to expand the section (it is hidden by default). Each row shows a tech/region group that could benefit from additional clusters, along with:
     * A **bubble chart** (to the right of each row) showing individual generators in the group. The x-axis is heat rate (MMBtu/MWh), all bubbles share the same vertical position, bubble size reflects plant capacity, and bubble color indicates cluster assignment.
     * A **Clusters** number input pre-filled with the current cluster count for that group. Change this value to immediately re-assign clusters — both the bubble chart and the Plant YAML update in real time.
